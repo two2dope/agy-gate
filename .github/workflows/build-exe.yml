@@ -1,0 +1,49 @@
+name: Gerar AntigravityGate.exe
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "AntigravityGate.py"
+      - "packaging/**"
+      - ".github/workflows/build-exe.yml"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar PyInstaller
+        run: python -m pip install --upgrade pip pyinstaller
+
+      - name: Gerar o .exe
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name AntigravityGate AntigravityGate.py
+
+      - name: Teste de fumaça (abre o .exe sem janela e confere a carga)
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "selftest.txt"
+          $env:ANTIGRAVITY_HOME = Join-Path $env:RUNNER_TEMP "gemini-vazio"
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP "localappdata"
+          New-Item -ItemType Directory -Force -Path $env:LOCALAPPDATA | Out-Null
+          $p = Start-Process -FilePath ".\dist\AntigravityGate.exe" -ArgumentList "--selftest", "`"$out`"" -Wait -PassThru
+          if (Test-Path $out) { Get-Content $out } else { Write-Host "O .exe não gravou o resultado do autoteste" }
+          if ($p.ExitCode -ne 0 -or -not (Test-Path $out) -or -not ((Get-Content $out -Raw) -like "OK*")) { throw "Autoteste do .exe falhou (código $($p.ExitCode))" }
+
+      - name: Impressão digital (SHA-256) e tamanho
+        shell: pwsh
+        run: |
+          Get-FileHash .\dist\AntigravityGate.exe -Algorithm SHA256 | Format-List
+          "{0:N1} MB" -f ((Get-Item .\dist\AntigravityGate.exe).Length / 1MB)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AntigravityGate-windows
+          path: dist/AntigravityGate.exe
+          if-no-files-found: error
+          retention-days: 30

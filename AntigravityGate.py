@@ -18,7 +18,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
-BASE_DIR = os.environ.get("ANTIGRAVITY_HOME", r"C:\Users\Thomáz\.gemini")
+BASE_DIR = os.environ.get("ANTIGRAVITY_HOME") or os.path.join(os.path.expanduser("~"), ".gemini")
 ACTIVE_SUM_DB = os.path.join(BASE_DIR, "antigravity", "conversation_summaries.db")
 ACTIVE_CONV_DIR = os.path.join(BASE_DIR, "antigravity", "conversations")
 ACTIVE_LABEL = "Ativas (antigravity/conversations)"
@@ -1675,7 +1675,48 @@ class AntigravityGateApp(tk.Tk):
             messagebox.showinfo("Arquivo gerado", f"Salvo em:\n{payload}\n\nNão abriu automaticamente: {e}")
 
 
-if __name__ == "__main__":
+def selftest(out_path):
+    """Abre o app sem mostrar a janela, espera a carga e grava o resultado em `out_path`.
+    Usado para verificar o .exe empacotado (tk, sqlite3 e FTS5 presentes). Devolve o código de saída."""
+    try:
+        try:
+            sqlite3.connect(":memory:").execute("CREATE VIRTUAL TABLE t USING fts5(x)")
+            fts = "com FTS5"
+        except sqlite3.Error:
+            fts = "SEM FTS5 (busca por conteúdo indisponível)"
+        pb_parse(b"\x08\x01")
+        app = AntigravityGateApp()
+        app.withdraw()
+        end = time.time() + 60
+        while app.loading and time.time() < end:
+            app.update()
+            time.sleep(0.05)
+        done = not app.loading
+        app.update()
+        app.destroy()
+        msg = f"OK ({fts})" if done else "FALHA: a carga não terminou em 60 s"
+    except Exception as e:
+        msg = f"FALHA: {type(e).__name__}: {e}"
+    with open(out_path, "w", encoding="utf-8") as fh:
+        fh.write(msg + "\n")
+    return 0 if msg.startswith("OK") else 1
+
+
+def main(argv):
     setup_logging()
-    app = AntigravityGateApp()
-    app.mainloop()
+    if len(argv) >= 3 and argv[1] == "--selftest":
+        return selftest(argv[2])
+    try:
+        AntigravityGateApp().mainloop()
+    except Exception:
+        log.exception("Falha fatal")
+        try:
+            messagebox.showerror("AntigravityGate", f"O app fechou por um erro.\nDetalhes em: {LOG_FILE}")
+        except Exception:
+            pass
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(__import__("sys").argv))

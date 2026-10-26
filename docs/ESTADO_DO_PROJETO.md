@@ -1,14 +1,14 @@
 # AntigravityGate: estado do projeto
 
-Atualizado em 2026-10-26 (M4 fechado). Ao retomar, leia só a seção "Snapshot".
+Atualizado em 2026-10-26 (M4, Auto-Run e empacotamento .exe). Ao retomar, leia só a seção "Snapshot".
 
 ## Snapshot
 
 | | |
 |---|---|
-| **Feito** | M1 (honestidade e robustez), seletor de fontes (ativas e backups separados), M2 (carga em segundo plano, cache, alerta por tokens), M3a (estado de aprovação), M3b (árvore de sub-agentes, busca, ordenação, menu de contexto), M4 (diálogo completo e dossiê de retomada) |
-| **Faltando** | Auto-Run opção B (usa o dossiê do M4) |
-| **Próximo passo único** | Auto-Run, com um `agy` simulado nos testes. O teste real depende da cota voltar |
+| **Feito** | M1 (honestidade e robustez), seletor de fontes (ativas e backups separados), M2 (carga em segundo plano, cache, alerta por tokens), M3a (estado de aprovação), M3b (árvore de sub-agentes, busca, ordenação, menu de contexto), M4 (diálogo completo e dossiê de retomada), Auto-Run opção B (testado só com `agy` simulado), empacotamento em `.exe` |
+| **Faltando** | Teste real do Auto-Run com o `agy` (depende da cota voltar); decisão do limite Rot; revisão de um dossiê real |
+| **Próximo passo único** | Baixar e abrir o `.exe` (ver "Gerar o .exe") |
 
 O dossiê é extração local (sem modelo). Resumo feito pelo modelo fica como opção futura.
 
@@ -78,3 +78,18 @@ Usado pelo Auto-Run:
 ## Como testar
 
 Os testes rodam em Xvfb com Python 3.12 e `python3-tk`. Estão fora do repositório, no diretório temporário da sessão. Os scripts `tools/inspect_*.py` dão a estrutura (sem conteúdo) de qualquer banco de sessão.
+
+## Auto-Run (implementado)
+
+- Botão `⚡ Auto-Run`: pega as sessões **aprovadas** da fonte aberta, pede confirmação (simulação marcada por padrão) e, para cada uma, gera o dossiê em `%LOCALAPPDATA%\AntigravityGate\handoffs` e abre uma sessão nova com `agy --print ... --mode plan --output-format json`.
+- Erro 429 interrompe o lote e mostra o reset. Três falhas seguidas interrompem. Sessões vazias criadas por tentativas com erro vão para arquivadas. Retomadas concluídas aparecem como `↪ retomada <id>` e ficam gravadas em `gate_state.db`.
+- **Só foi testado com um `agy` simulado** que imita a saída real do erro de cota. A saída de sucesso real do `agy` ainda não foi vista: o código lê `status`, `conversation_id`, `response` e `error`, e aceita variações, mas isso é **não verificado**.
+- Variável `AGY_EXE` aponta para outro `agy.exe` se ele não estiver no PATH.
+
+## Gerar o .exe
+
+- **Pronto no GitHub (recomendado):** a ação `Gerar AntigravityGate.exe` (`.github/workflows/build-exe.yml`) monta o `.exe` num servidor Windows, abre-o em modo de autoteste e só então publica o arquivo. Baixe em Actions, execução mais recente, seção Artifacts, `AntigravityGate-windows`.
+- **No seu computador:** copie `packaging/build_exe.bat` para a pasta do `AntigravityGate.py` e dê duplo clique. O PyInstaller 6.16 ou mais novo suporta Python 3.14.
+- O `.exe` não abre janela de terminal. Erros fatais gravam em `%LOCALAPPDATA%\AntigravityGate\gate.log` e mostram um aviso.
+- `AntigravityGate.exe --selftest saida.txt` abre o app sem janela, espera a carga e grava `OK` ou `FALHA` em `saida.txt`.
+- O Windows pode mostrar o aviso do SmartScreen ("editor desconhecido") e alguns antivírus desconfiam de `.exe` feito com PyInstaller. O arquivo não é assinado. A impressão digital SHA-256 aparece no log da ação.
