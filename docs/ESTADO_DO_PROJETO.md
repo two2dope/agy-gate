@@ -1,6 +1,6 @@
 # AntigravityGate: estado do projeto
 
-Atualizado em 2026-10-26 (M4, Auto-Run e empacotamento .exe). Ao retomar, leia só a seção "Snapshot".
+Atualizado em 2026-10-26 (M4, Auto-Run, .exe e interface visual). Ao retomar, leia só a seção "Snapshot".
 
 ## Snapshot
 
@@ -93,3 +93,13 @@ Os testes rodam em Xvfb com Python 3.12 e `python3-tk`. Estão fora do repositó
 - O `.exe` não abre janela de terminal. Erros fatais gravam em `%LOCALAPPDATA%\AntigravityGate\gate.log` e mostram um aviso.
 - `AntigravityGate.exe --selftest saida.txt` abre o app sem janela, espera a carga e grava `OK` ou `FALHA` em `saida.txt`.
 - O Windows pode mostrar o aviso do SmartScreen ("editor desconhecido") e alguns antivírus desconfiam de `.exe` feito com PyInstaller. O arquivo não é assinado. A impressão digital SHA-256 aparece no log da ação.
+
+## Interface visual
+
+- **8 temas**, escolhidos em `Tema`: Escuro, Claro e seis inspirados nas skins do Cyber-HUD do `navigator-agy` (Mil-Spec, Cyber Synthwave, Vidro Aero, Brutalista, Obsidiana, Mecha). O tema fica salvo em `%LOCALAPPDATA%\AntigravityGate\settings.json`. Prévia: `docs/temas_preview.png` (renderizada no Linux, com outra fonte).
+- Todas as combinações de texto das paletas passam em contraste WCAG AA (4,5:1). O teste `test_theme` confere isso para cada tema.
+- **Botões** desenhados no app (cantos do tema, ícone e texto): medem o próprio texto e **viram só ícone** quando a janela estreita, com dica ao passar o mouse. Nunca cortam.
+- **Estados:** normal, passar o mouse, pressionado, foco do teclado, desabilitado (a dica explica o motivo), ocupado (spinner), selo de contagem (Auto-Run mostra quantas aprovadas faltam retomar) e confirmação em verde depois de aprovar, arquivar ou exportar.
+- Os botões habilitam e desabilitam conforme a seleção. Exportar e Dossiê só valem para uma sessão com arquivo. Aprovar, Arquivar e Pendente aceitam sessões ou pasta de projeto.
+- **Ícones:** usam `Segoe MDL2 Assets` quando existe (Windows 10 e 11). Os códigos dos glifos **não foram vistos num Windows**. Se algum aparecer errado, use `Tema` > `Símbolos Unicode` (ou `Sem ícones`). Variável `AGY_ICONS=mdl2|symbol|none` também vale.
+- Linhas da tabela: aprovada em verde, arquivada esmaecida, Rot em âmbar. Medidor de contexto de 6 células. Selos de contagem no rodapé. Rolagem horizontal para as colunas do fim.

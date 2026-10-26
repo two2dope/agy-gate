@@ -4,6 +4,7 @@ import glob
 import re
 import json
 import logging
+import math
 import queue
 import shutil
 import subprocess
@@ -17,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
+from tkinter import font as tkfont
 
 BASE_DIR = os.environ.get("ANTIGRAVITY_HOME") or os.path.join(os.path.expanduser("~"), ".gemini")
 ACTIVE_SUM_DB = os.path.join(BASE_DIR, "antigravity", "conversation_summaries.db")
@@ -29,7 +31,7 @@ EXPORT_DIR = os.path.join(LOG_DIR, "exports")
 HANDOFF_DIR = os.path.join(LOG_DIR, "handoffs")
 STATE_DB = os.path.join(LOG_DIR, "gate_state.db")  # estado do AntigravityGate; nunca grava nos bancos do Antigravity
 
-STATUS_LABEL = {"pendente": "💬 Pendente", "aprovada": "✅ Aprovada", "arquivada": "📦 Arquivada"}
+STATUS_LABEL = {"pendente": "○ Pendente", "aprovada": "✔ Aprovada", "arquivada": "▣ Arquivada"}
 
 # Alerta de Context Rot: tokens de entrada da última resposta do modelo (f2 + f5 de step_payload.f5.f9).
 # Padrão provisório; ajuste com a variável de ambiente AGY_ROT_TOKENS.
@@ -104,6 +106,15 @@ def as_text(col):
 
 def fmt_tokens(n):
     return "-" if not n else (f"{n / 1000:.0f}k" if n >= 1000 else str(n))
+
+
+def ctx_label(ctx):
+    """Contexto em tokens com um medidor de 6 células em relação ao limite do alerta Rot."""
+    if not ctx:
+        return "-"
+    cells = 6
+    filled = min(cells, max(1, math.ceil(ctx / ROT_TOKENS * cells)))
+    return f"{fmt_tokens(ctx)}  " + "■" * filled + "□" * (cells - filled) + (" ⚠" if ctx >= ROT_TOKENS else "")
 
 
 # --- protobuf mínimo (somente leitura) --------------------------------------------------------
@@ -580,7 +591,7 @@ def build_dossier(meta, qm, steps, progress=None):
         o.append("\n".join(f"- `{p}` ({n}x)" for p, n in list(files_read.items())[:40]) + "\n")
     if commands:
         o.append(f"## Comandos executados (últimos {min(len(commands), 25)} de {len(commands)})\n")
-        o.append("\n".join(f"- {fmt_ts(ts)} {'ok' if ok else '⚠ falhou'}: `{c[:200]}`" for ts, c, ok in commands[-25:]) + "\n")
+        o.append("\n".join(f"- {fmt_ts(ts)} {'ok' if ok else '⚠ falhou'}: `{' '.join(c.split())[:200]}`" for ts, c, ok in commands[-25:]) + "\n")
     if errors:
         o.append(f"## Falhas de ferramenta (últimas {min(len(errors), 10)} de {len(errors)})\n")
         o.append("\n".join(f"- {fmt_ts(ts)} `{name}` (status {stt}): {summ}" for ts, name, stt, summ in errors[-10:]) + "\n")
@@ -711,11 +722,21 @@ def find_agy():
 def workspace_dirs(uris):
     """Pastas existentes citadas em workspace_uris (file:///...)."""
     out = []
-    for uri in re.findall(r"file://[^\s,;]+", uris or ""):  # URIs vêm codificadas (%20), sem espaço literal
+    for uri in re.findall(r"file://[^\s,;\"'\[\]<>]+", uris or ""):  # URIs vêm codificadas (%20), às vezes dentro de uma lista JSON
         path = urllib.request.url2pathname(urllib.parse.urlparse(uri).path)
         if os.path.isdir(path) and path not in out:
             out.append(path)
     return out[:3]
+
+
+def uri_paths(uris):
+    """Caminhos citados em workspace_uris (sem exigir que existam), para exibição."""
+    out = []
+    for uri in re.findall(r"file://[^\s,;\"'\[\]<>]+", uris or ""):
+        path = urllib.request.url2pathname(urllib.parse.urlparse(uri).path)
+        if path not in out:
+            out.append(path)
+    return out
 
 
 def build_agy_args(agy, dossier_path, extra_dirs, mode="plan", timeout_s=AGY_TIMEOUT_S):
@@ -1045,13 +1066,323 @@ def scan_source(conv_dir, sum_db, is_active, progress=None, is_stale=None):
             'proj_map': proj_map, 'summaries': summaries, 'db_files': db_files}
 
 
+# --- temas, ícones e widgets visuais ----------------------------------------------------------
+
+SETTINGS_FILE = os.path.join(LOG_DIR, "settings.json")
+
+# Paletas inspiradas nas 6 skins do Cyber-HUD do navigator-agy (cores sólidas: o Tk não faz gradiente nem transparência).
+# Todas as combinações de texto foram checadas para contraste >= 4,5:1 (WCAG AA).
+_BASE = dict(radius=8, title_fonts=("Segoe UI Semibold", "Segoe UI"))
+THEMES = {
+    "escuro": dict(name="Escuro", bg="#1e1e1e", panel="#252526", panel2="#333333", border="#454545", fg="#d4d4d4", muted="#9da0a6",
+                   accent="#007acc", accent_fg="#ffffff", accent_text="#4daafc", success="#3fb950", warning="#e3b341", danger="#f85149",
+                   sel_bg="#094771", sel_fg="#ffffff", header_bg="#252526", header_fg="#d4d4d4", **_BASE),
+    "claro": dict(name="Claro", bg="#f5f5f5", panel="#ffffff", panel2="#e6e6e6", border="#cfcfcf", fg="#222222", muted="#5f6368",
+                  accent="#005a9e", accent_fg="#ffffff", accent_text="#005a9e", success="#1a7f37", warning="#855300", danger="#cf222e",
+                  sel_bg="#cfe4f7", sel_fg="#111111", header_bg="#ffffff", header_fg="#222222", **_BASE),
+    "milspec": dict(name="Mil-Spec", bg="#111216", panel="#17181f", panel2="#232732", border="#3c4250", fg="#e7ecf3", muted="#9aa4b5",
+                    accent="#4ade80", accent_fg="#07140c", accent_text="#4ade80", success="#4ade80", warning="#facc15", danger="#f87171",
+                    sel_bg="#28303e", sel_fg="#4ade80", header_bg="#232732", header_fg="#f1f5f9", radius=6, title_fonts=("Bahnschrift", "Consolas", "Segoe UI")),
+    "cyber": dict(name="Cyber Synthwave", bg="#04050e", panel="#0d0a1f", panel2="#17082c", border="#0e7f8f", fg="#e6fbff", muted="#8fb5c2",
+                  accent="#00f0ff", accent_fg="#001418", accent_text="#00f0ff", success="#39ff88", warning="#ffd166", danger="#ff4d94",
+                  sel_bg="#2a0a3d", sel_fg="#00f0ff", header_bg="#17082c", header_fg="#00f0ff", radius=4, title_fonts=("Bahnschrift", "Consolas", "Segoe UI")),
+    "vidro": dict(name="Vidro Aero", bg="#060f1e", panel="#0a1830", panel2="#10294a", border="#2b6a8f", fg="#f8fafc", muted="#9db4cc",
+                  accent="#38bdf8", accent_fg="#04121f", accent_text="#38bdf8", success="#34d399", warning="#fbbf24", danger="#f87171",
+                  sel_bg="#12406a", sel_fg="#ffffff", header_bg="#0d2140", header_fg="#f8fafc", radius=10, title_fonts=("Segoe UI Semibold", "Segoe UI")),
+    "brutal": dict(name="Brutalista", bg="#090a0e", panel="#000000", panel2="#1a1a1a", border="#ffffff", fg="#ffffff", muted="#b3b3b3",
+                   accent="#facc15", accent_fg="#000000", accent_text="#facc15", success="#4ade80", warning="#facc15", danger="#ff6b6b",
+                   sel_bg="#facc15", sel_fg="#000000", header_bg="#facc15", header_fg="#000000", radius=0, title_fonts=("Bahnschrift", "Arial Black", "Segoe UI")),
+    "obsidiana": dict(name="Obsidiana", bg="#020204", panel="#0b0614", panel2="#14091f", border="#3b2158", fg="#f3ecff", muted="#a99dbd",
+                      accent="#c084fc", accent_fg="#12081f", accent_text="#c084fc", success="#6ee7b7", warning="#fbbf24", danger="#fb7185",
+                      sel_bg="#2b1646", sel_fg="#e9d5ff", header_bg="#0a0312", header_fg="#f3ecff", radius=12, title_fonts=("Segoe UI Semibold", "Segoe UI")),
+    "mecha": dict(name="Mecha", bg="#080b12", panel="#0e131d", panel2="#1b1610", border="#7a3a10", fg="#f6ede4", muted="#b5a595",
+                  accent="#f97316", accent_fg="#1a0802", accent_text="#f97316", success="#84cc16", warning="#fbbf24", danger="#f87171",
+                  sel_bg="#3a1d08", sel_fg="#ffb066", header_bg="#140c07", header_fg="#f97316", radius=6, title_fonts=("Bahnschrift", "Consolas", "Segoe UI")),
+}
+THEME_ORDER = ["escuro", "claro", "milspec", "cyber", "vidro", "brutal", "obsidiana", "mecha"]
+
+# nome -> (Segoe MDL2 Assets, alternativa Unicode). Se os ícones do Windows aparecerem errados, use Tema > Ícones > Símbolos Unicode.
+ICONS = {
+    "refresh": ("", "↻"), "search": ("", "⌕"), "clear": ("", "✕"), "approve": ("", "✔"),
+    "archive": ("", "▣"), "pending": ("", "↶"), "export": ("", "▤"), "dossier": ("", "▶"),
+    "autorun": ("", "⚡"), "theme": ("", "◐"), "warn": ("", "⚠"),
+}
+
+
+def load_settings():
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as fh:
+            d = json.load(fh)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_settings(d):
+    try:
+        os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as fh:
+            json.dump(d, fh, ensure_ascii=False, indent=2)
+    except OSError as e:
+        log.warning("Não foi possível salvar as preferências: %s", e)
+
+
+def _rgb(h):
+    h = h.lstrip('#')
+    return [int(h[i:i + 2], 16) for i in (0, 2, 4)]
+
+
+def blend(a, b, t):
+    """Mistura a cor `a` com `b`: t=0 devolve a, t=1 devolve b."""
+    ra, rb = _rgb(a), _rgb(b)
+    return "#%02x%02x%02x" % tuple(round(x + (y - x) * t) for x, y in zip(ra, rb))
+
+
+def _luminance(h):
+    out = []
+    for v in _rgb(h):
+        v /= 255
+        out.append(v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * out[0] + 0.7152 * out[1] + 0.0722 * out[2]
+
+
+def contrast(a, b):
+    la, lb = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (la + 0.05) / (lb + 0.05)
+
+
+def ink_on(color):
+    """Preto ou branco, o que tiver mais contraste sobre `color`."""
+    return "#000000" if contrast("#000000", color) >= contrast("#ffffff", color) else "#ffffff"
+
+
+def round_rect(c, x1, y1, x2, y2, r, **kw):
+    if r <= 0:
+        return c.create_rectangle(x1, y1, x2, y2, **kw)
+    pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
+    return c.create_polygon(pts, smooth=True, **kw)
+
+
+class Tooltip:
+    def __init__(self, widget, app, text_fn, delay=450):
+        self.w, self.app, self.fn, self.delay = widget, app, text_fn, delay
+        self.tip = self.job = None
+        widget.bind("<Enter>", self._enter, add="+")
+        widget.bind("<Leave>", self._leave, add="+")
+        widget.bind("<ButtonPress>", self._leave, add="+")
+
+    def _enter(self, _e):
+        self._leave()
+        self.job = self.w.after(self.delay, self._show)
+
+    def _leave(self, _e=None):
+        if self.job:
+            self.w.after_cancel(self.job)
+            self.job = None
+        if self.tip:
+            self.tip.destroy()
+            self.tip = None
+
+    def _show(self):
+        text = self.fn()
+        if not text:
+            return
+        t = self.app.t
+        self.tip = tk.Toplevel(self.w)
+        self.tip.wm_overrideredirect(True)
+        self.tip.wm_geometry(f"+{self.w.winfo_rootx()}+{self.w.winfo_rooty() + self.w.winfo_height() + 6}")
+        tk.Label(self.tip, text=text, bg=t['panel2'], fg=t['fg'], font=self.app.f_small, padx=9, pady=5, justify=tk.LEFT,
+                 highlightthickness=1, highlightbackground=t['border'], wraplength=320).pack()
+
+
+class IconButton(tk.Canvas):
+    """Botão desenhado em Canvas: ícone + texto, cantos do tema, estados (normal, hover, pressionado, foco,
+    desabilitado, ocupado com spinner, selo de contagem, confirmação) e modo compacto só com o ícone."""
+
+    def __init__(self, master, app, icon, text, command, kind="normal", tip="", bg_token="bg", icon_token="btn_fg"):
+        super().__init__(master, highlightthickness=0, bd=0, takefocus=1, cursor="hand2")
+        self.app, self.icon, self.text, self.command = app, icon, text, command
+        self.kind, self.tip, self.bg_token, self.icon_token = kind, tip, bg_token, icon_token
+        self.enabled, self.reason, self.busy, self.compact = True, "", False, False
+        self.hover = self.pressed = self.focused = self.ok_flash = False
+        self.badge, self._spin, self._spin_job = 0, 0, None
+        self.bind("<Enter>", lambda e: self._set(hover=True))
+        self.bind("<Leave>", lambda e: self._set(hover=False, pressed=False))
+        self.bind("<ButtonPress-1>", lambda e: self._set(pressed=True) if self.enabled else None)
+        self.bind("<ButtonRelease-1>", self._release)
+        self.bind("<FocusIn>", lambda e: self._set(focused=True))
+        self.bind("<FocusOut>", lambda e: self._set(focused=False))
+        self.bind("<space>", lambda e: self.invoke())
+        self.bind("<Return>", lambda e: self.invoke())
+        Tooltip(self, app, self.tooltip_text)
+        self.relayout()
+
+    # --- API ---
+    def tooltip_text(self):
+        if not self.enabled and self.reason:
+            return self.reason
+        return self.tip
+
+    def invoke(self):
+        if self.enabled and not self.busy and self.command:
+            self.command()
+
+    def set_enabled(self, flag, reason=""):
+        if (flag, reason) != (self.enabled, self.reason):
+            self.enabled, self.reason = flag, reason
+            self.configure(cursor="hand2" if flag else "arrow")
+            self.redraw()
+
+    def set_busy(self, flag, text=None):
+        self.busy = flag
+        if text is not None:
+            self.text = text
+        if flag and not self._spin_job:
+            self._tick()
+        self.relayout()
+
+    def set_text(self, text):
+        self.text = text
+        self.relayout()
+
+    def badge_text(self):
+        return str(self.badge) if self.badge < 100 else "99+"
+
+    def badge_width(self):
+        return max(self.app.px(18), self.app.f_small.measure(self.badge_text()) + self.app.px(10))
+
+    def set_badge(self, n):
+        if n != self.badge:
+            self.badge = n
+            self.relayout()
+
+    def set_compact(self, flag):
+        if flag != self.compact:
+            self.compact = flag
+            self.relayout()
+
+    def flash_ok(self):
+        self.ok_flash = True
+        self.redraw()
+        self.after(900, lambda: (setattr(self, "ok_flash", False), self.redraw()))
+
+    # --- desenho ---
+    def glyph(self):
+        mode = self.app.icon_mode
+        if self.icon not in ICONS or mode == "none":
+            return ""
+        return ICONS[self.icon][0 if mode == "mdl2" else 1]
+
+    def measure(self, compact=None):
+        compact = self.compact if compact is None else compact
+        pad, gap = self.app.px(12), self.app.px(8)
+        g = self.glyph()
+        w = pad * 2
+        if g:
+            w += self.app.f_icon.measure(g)
+        if self.text and (not compact or not g):
+            w += (gap if g else 0) + self.app.f_btn.measure(self.text)
+            if self.badge:
+                w += gap + self.badge_width()
+        elif self.badge:
+            w += self.app.px(10)  # espaço para o selo no canto do botão compacto
+        return w
+
+    def relayout(self):
+        self.configure(width=self.measure(), height=self.app.px(34))
+        self.redraw()
+
+    def _set(self, **kw):
+        for k, v in kw.items():
+            setattr(self, k, v)
+        self.redraw()
+
+    def _release(self, _e):
+        was = self.pressed
+        self._set(pressed=False)
+        if was and self.hover:
+            self.invoke()
+
+    def _tick(self):
+        if not self.busy:
+            self._spin_job = None
+            self.redraw()
+            return
+        self._spin = (self._spin + 30) % 360
+        self.redraw()
+        self._spin_job = self.after(70, self._tick)
+
+    def colors(self):
+        t = self.app.t
+        if self.kind == "primary":
+            base, hov, prs, fg = t['accent'], blend(t['accent'], "#ffffff", 0.18), blend(t['accent'], "#000000", 0.2), t['accent_fg']
+            border = base
+        else:
+            base, hov, prs, fg = t['panel2'], blend(t['panel2'], t['fg'], 0.12), blend(t['panel2'], t['fg'], 0.22), t['fg']
+            border = t['border']
+        if not self.enabled or self.busy:
+            return blend(t[self.bg_token], base, 0.45), blend(t[self.bg_token], border, 0.5), blend(t[self.bg_token], t['muted'], 0.55) if not self.busy else fg
+        bg = prs if self.pressed else (hov if self.hover else base)
+        return bg, (t['accent'] if self.focused else border), fg
+
+    def redraw(self):
+        t = self.app.t
+        self.configure(bg=t[self.bg_token])
+        self.delete("all")
+        w, h = int(self["width"]), int(self["height"])
+        bg, border, fg = self.colors()
+        r = self.app.px(t['radius'])
+        round_rect(self, 1, 1, w - 1, h - 1, r, fill=bg, outline=border, width=2 if self.focused and self.enabled else 1)
+        g = self.glyph()
+        off = 1 if self.pressed and self.enabled else 0
+        icon_fg = fg if (self.kind == "primary" or not self.enabled or self.busy) else t.get(self.icon_token, fg)
+        pad, gap = self.app.px(12), self.app.px(8)
+        x = pad
+        cy = h // 2 + off
+        if self.busy:
+            iw = max(self.app.f_icon.measure(g or "●"), self.app.px(16))
+            self.create_arc(x + 1, cy - iw // 2 + 1, x + iw - 1, cy + iw // 2 - 1, start=self._spin, extent=250, style=tk.ARC, outline=t['accent'] if self.kind != "primary" else fg, width=2)
+            x += iw
+        elif g or self.ok_flash:
+            shown = ICONS["approve"][0 if self.app.icon_mode == "mdl2" else 1] if self.ok_flash else g
+            self.create_text(x, cy, text=shown, font=self.app.f_icon, fill=t['success'] if self.ok_flash else icon_fg, anchor="w")
+            x += self.app.f_icon.measure(shown)
+        if self.text and (not self.compact or not g):
+            x += gap if (g or self.busy) else 0
+            self.create_text(x, cy, text=self.text, font=self.app.f_btn, fill=fg, anchor="w")
+        if self.badge:
+            bw, bh = self.badge_width(), self.app.px(18)
+            if self.text and (not self.compact or not g):   # selo ao lado do texto
+                x += self.app.f_btn.measure(self.text) + gap
+                bx1, by1 = x, cy - bh // 2
+            else:                                            # modo compacto: selo no canto superior direito
+                bx1, by1 = w - bw - 1, 1
+            pill, ink = (t['accent_fg'], t['accent']) if self.kind == "primary" else (t['warning'], ink_on(t['warning']))
+            round_rect(self, bx1, by1, bx1 + bw, by1 + bh, bh // 2, fill=pill, outline="")
+            self.create_text(bx1 + bw / 2, by1 + bh / 2, text=self.badge_text(), font=self.app.f_small, fill=ink)
+
+
+class Chip(tk.Label):
+    """Selo colorido de contagem na barra de status."""
+
+    def __init__(self, master, app, token):
+        super().__init__(master, font=app.f_small, padx=8, pady=2, highlightthickness=1)
+        self.app, self.token = app, token
+        self.repaint()
+
+    def repaint(self):
+        t = self.app.t
+        self.configure(bg=t['panel'], fg=t[self.token], highlightbackground=blend(t['panel2'], t[self.token], 0.4))
+
+
 class AntigravityGateApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("AntigravityGate 🚀 - Inspetor e Gestor Agêntico")
-        self.geometry("1200x650")
+        self.title("AntigravityGate")
+        self.geometry("1240x720")
+        self.minsize(760, 480)
 
-        self.themed = []
+        self.themed, self.icon_buttons, self.btn, self.chips = [], [], {}, {}
         self.queue = queue.Queue()
         self.gen = 0
         self.loading = False
@@ -1063,112 +1394,207 @@ class AntigravityGateApp(tk.Tk):
         self.proj_map, self.summaries, self.db_files = {}, {}, {}
         self.state = StateStore(STATE_DB)
         self.states = {}
-        self.grouped, self.total, self.sub_count = {}, 0, {}
+        self.grouped, self.total, self.sub_count, self.row_by_cid = {}, 0, {}, {}
         self.match, self.sort_col, self.sort_rev = None, "col_date", True
         self.search_note = ""
 
-        # Estado do Tema (Dark por padrão, com suporte a Light)
-        self.dark_mode = True
+        self.settings = load_settings()
+        self.families = set(tkfont.families(self))
+        self.base_family = next((f for f in ("Segoe UI", "Helvetica", "DejaVu Sans") if f in self.families),
+                                tkfont.nametofont("TkDefaultFont").actual("family"))
+        self.theme_key = self.settings.get("theme") if self.settings.get("theme") in THEMES else "escuro"
+        wanted = (os.environ.get("AGY_ICONS") or self.settings.get("icons") or "auto").lower()
+        self.icon_mode = wanted if wanted in ("mdl2", "symbol", "none") else ("mdl2" if "Segoe MDL2 Assets" in self.families else "symbol")
+        self.f_ui = tkfont.Font(self, family=self.base_family, size=10)
+        self.f_bold = tkfont.Font(self, family=self.base_family, size=10, weight="bold")
+        self.f_small = tkfont.Font(self, family=self.base_family, size=9)
+        self.f_btn = tkfont.Font(self, family=self.base_family, size=9, weight="bold")
+        self.f_title = tkfont.Font(self, family=self.base_family, size=15, weight="bold")
+        self.f_icon = tkfont.Font(self, family=self.base_family, size=11)
+        self.update_icon_font()
         self.apply_theme()
 
         self.sources = discover_sources()
         self.source_idx = 0
         self.create_widgets()
+        self.apply_theme()
+        self.bind("<Configure>", self.on_resize)
         self.poll()
         self.load_data()
 
-    def apply_theme(self):
-        if self.dark_mode:
-            self.bg_color = "#1e1e1e"
-            self.fg_color = "#d4d4d4"
-            self.panel_bg = "#252526"
-            self.header_bg = "#333333"
-            self.accent_color = "#007acc"
-        else:
-            self.bg_color = "#f5f5f5"
-            self.fg_color = "#222222"
-            self.panel_bg = "#ffffff"
-            self.header_bg = "#e0e0e0"
-            self.accent_color = "#005a9e"
+    # --- tema e ícones ---
 
-        self.configure(bg=self.bg_color)
+    def px(self, n):
+        """Tamanho em pixels escalado pelo DPI da tela (96 dpi = 1:1)."""
+        return max(1, round(n * self.winfo_fpixels('1i') / 96))
+
+    def update_icon_font(self):
+        if self.icon_mode == "mdl2" and "Segoe MDL2 Assets" in self.families:
+            self.f_icon.configure(family="Segoe MDL2 Assets", size=11)
+        else:
+            sym = next((f for f in ("Segoe UI Symbol", "DejaVu Sans", self.base_family) if f in self.families), self.base_family)
+            self.f_icon.configure(family=sym, size=11)
+
+    @property
+    def bg_color(self):
+        return self.t['bg']
+
+    def apply_theme(self):
+        t = self.t = dict(THEMES[self.theme_key])
+        t['header_sub'] = blend(t['header_fg'], t['header_bg'], 0.12)
+        t['btn_fg'] = t['fg']
+        self.configure(bg=t['bg'])
+        self.f_title.configure(family=next((f for f in t['title_fonts'] if f in self.families), self.base_family))
 
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure("Treeview", background=self.panel_bg, foreground=self.fg_color, fieldbackground=self.panel_bg, rowheight=28)
-        style.configure("Treeview.Heading", background=self.header_bg, foreground=self.fg_color, font=('Segoe UI', 10, 'bold'))
-        style.map("Treeview", background=[('selected', self.accent_color)])
-        style.configure("TCombobox", fieldbackground=self.panel_bg, background=self.header_bg, foreground=self.fg_color, arrowcolor=self.fg_color)
-        style.map("TCombobox", fieldbackground=[("readonly", self.panel_bg)], foreground=[("readonly", self.fg_color)])
-        style.configure("Vertical.TScrollbar", background=self.header_bg, troughcolor=self.bg_color, arrowcolor=self.fg_color)
+        style.configure("Treeview", background=t['panel'], fieldbackground=t['panel'], foreground=t['fg'], rowheight=self.px(30),
+                        borderwidth=1, bordercolor=t['border'], lightcolor=t['panel'], darkcolor=t['panel'], font=self.f_ui)
+        style.configure("Treeview.Heading", background=t['panel2'], foreground=t['fg'], relief="flat", font=self.f_bold,
+                        padding=(self.px(8), self.px(6)))
+        style.map("Treeview.Heading", background=[('active', blend(t['panel2'], t['fg'], 0.12))])
+        style.map("Treeview", background=[('selected', t['sel_bg'])], foreground=[('selected', t['sel_fg'])])
+        style.configure("TCombobox", fieldbackground=t['panel'], background=t['panel2'], foreground=t['fg'], arrowcolor=t['fg'],
+                        bordercolor=t['border'], lightcolor=t['border'], darkcolor=t['border'], padding=self.px(5))
+        style.map("TCombobox", fieldbackground=[("readonly", t['panel'])], foreground=[("readonly", t['fg'])],
+                  selectbackground=[("readonly", t['panel'])], selectforeground=[("readonly", t['fg'])])
+        self.option_add("*TCombobox*Listbox.background", t['panel'])
+        self.option_add("*TCombobox*Listbox.foreground", t['fg'])
+        self.option_add("*TCombobox*Listbox.selectBackground", t['sel_bg'])
+        self.option_add("*TCombobox*Listbox.selectForeground", t['sel_fg'])
+        thumb = blend(t['panel2'], t['fg'], 0.18)
+        for orient in ("Vertical", "Horizontal"):
+            style.configure(f"{orient}.TScrollbar", background=thumb, troughcolor=t['bg'], arrowcolor=t['fg'],
+                            bordercolor=t['bg'], lightcolor=thumb, darkcolor=thumb)
+            style.map(f"{orient}.TScrollbar", background=[('active', blend(t['panel2'], t['fg'], 0.35))])
 
-        # Widgets tk (não-ttk) já criados: reaplica as cores sem recarregar dados.
+        if hasattr(self, 'tree'):
+            self.tree.tag_configure('proj', foreground=t['accent_text'], font=self.f_bold)
+            self.tree.tag_configure('st_aprovada', foreground=t['success'])
+            self.tree.tag_configure('st_arquivada', foreground=t['muted'])
+            self.tree.tag_configure('rot', foreground=t['warning'])
+        # Widgets tk (não-ttk): reaplica as cores sem recarregar dados.
         for widget, opts in self.themed:
-            widget.configure(**{opt: getattr(self, attr) for opt, attr in opts.items()})
+            widget.configure(**{opt: t[tok] for opt, tok in opts.items()})
+        for b in self.icon_buttons:
+            b.redraw()
+        for c in self.chips.values():
+            c.repaint()
 
     def themed_widget(self, widget, **opts):
-        """Registra um widget tk para ser recolorido por apply_theme. opts: opção -> nome do atributo de cor."""
+        """Registra um widget tk para ser recolorido por apply_theme. opts: opção -> nome do token da paleta."""
         self.themed.append((widget, opts))
-        widget.configure(**{opt: getattr(self, attr) for opt, attr in opts.items()})
+        widget.configure(**{opt: self.t[tok] for opt, tok in opts.items()})
         return widget
 
-    def toggle_theme(self):
-        self.dark_mode = not self.dark_mode
+    def set_theme(self, key):
+        self.theme_key = key
+        self.settings['theme'] = key
+        save_settings(self.settings)
         self.apply_theme()
 
+    def toggle_theme(self):
+        """Passa para o próximo tema da lista."""
+        self.set_theme(THEME_ORDER[(THEME_ORDER.index(self.theme_key) + 1) % len(THEME_ORDER)])
+
+    def set_icon_mode(self, mode):
+        self.icon_mode = mode
+        self.settings['icons'] = mode
+        save_settings(self.settings)
+        self.update_icon_font()
+        for b in self.icon_buttons:
+            b.relayout()
+        self.on_resize()
+
+    def show_theme_menu(self):
+        m = tk.Menu(self, tearoff=0)
+        var = tk.StringVar(value=self.theme_key)
+        for key in THEME_ORDER:
+            m.add_radiobutton(label=THEMES[key]['name'], variable=var, value=key, command=lambda k=key: self.set_theme(k))
+        m.add_separator()
+        ivar = tk.StringVar(value=self.icon_mode)
+        for mode, label in (("mdl2", "Ícones do Windows (Segoe MDL2)"), ("symbol", "Símbolos Unicode"), ("none", "Sem ícones")):
+            m.add_radiobutton(label=label, variable=ivar, value=mode, command=lambda md=mode: self.set_icon_mode(md))
+        b = self.btn['theme']
+        m.tk_popup(b.winfo_rootx(), b.winfo_rooty() + b.winfo_height())
+
+    # --- widgets ---
+
+    def make_button(self, parent, name, icon, text, command, tip, kind="normal", bg_token="bg", icon_token="btn_fg"):
+        b = IconButton(parent, self, icon, text, command, kind=kind, tip=tip, bg_token=bg_token, icon_token=icon_token)
+        self.icon_buttons.append(b)
+        self.btn[name] = b
+        return b
+
     def create_widgets(self):
-        # Top Frame - Controles, Tema e Ações
-        self.top_frame = self.themed_widget(tk.Frame(self, pady=10, padx=10), bg="bg_color")
+        t = self.t
+        # Cabeçalho: marca à esquerda; atualizar e tema à direita
+        self.top_frame = self.themed_widget(tk.Frame(self, padx=self.px(16), pady=self.px(10)), bg="header_bg")
         self.top_frame.pack(fill=tk.X)
+        self.brand = self.themed_widget(tk.Frame(self.top_frame), bg="header_bg")
+        self.brand.pack(side=tk.LEFT)
+        self.themed_widget(tk.Label(self.brand, text="◆", font=self.f_title), bg="header_bg", fg="header_fg").pack(side=tk.LEFT)
+        self.title_lbl = self.themed_widget(tk.Label(self.brand, text="AntigravityGate", font=self.f_title), bg="header_bg", fg="header_fg")
+        self.title_lbl.pack(side=tk.LEFT, padx=(self.px(8), self.px(12)))
+        self.sub_lbl = self.themed_widget(tk.Label(self.brand, text="gestão de contexto e curadoria", font=self.f_small), bg="header_bg", fg="header_sub")
+        self.sub_lbl.pack(side=tk.LEFT, pady=(self.px(5), 0))
+        self.hdr_right = self.themed_widget(tk.Frame(self.top_frame), bg="header_bg")
+        self.hdr_right.pack(side=tk.RIGHT)
+        self.make_button(self.hdr_right, "theme", "theme", "Tema", self.show_theme_menu, "Escolher tema e estilo de ícones", bg_token="header_bg", icon_token="accent_text").pack(side=tk.RIGHT, padx=(self.px(8), 0))
+        self.make_button(self.hdr_right, "refresh", "refresh", "Atualizar", self.refresh, "Reler as pastas e recarregar as sessões (F5)", bg_token="header_bg").pack(side=tk.RIGHT)
 
-        lbl_title = self.themed_widget(tk.Label(self.top_frame, text="🚀 AntigravityGate - Gestão de Contexto e Curadoria", font=('Segoe UI', 12, 'bold')), bg="bg_color", fg="fg_color")
-        lbl_title.pack(side=tk.LEFT)
-
-        # Fonte: sessões ativas ou cada cópia de backup, lidas separadamente
-        self.src_box = ttk.Combobox(self.top_frame, state="readonly", width=48, values=[s[0] for s in self.sources])
+        # Filtros: fonte das sessões e busca
+        self.filter_frame = self.themed_widget(tk.Frame(self, padx=self.px(16), pady=self.px(10)), bg="bg")
+        self.filter_frame.pack(fill=tk.X)
+        self.src_box = ttk.Combobox(self.filter_frame, state="readonly", width=44, values=[s[0] for s in self.sources])
         self.src_box.current(self.source_idx)
         self.src_box.bind("<<ComboboxSelected>>", lambda e: self.on_source_change())
-        self.src_box.pack(side=tk.LEFT, padx=(20, 5))
-        btn_refresh = self.themed_widget(tk.Button(self.top_frame, text="🔄 Atualizar", font=('Segoe UI', 9), relief=tk.FLAT, command=self.refresh), bg="header_bg", fg="fg_color")
-        btn_refresh.pack(side=tk.LEFT, padx=5)
-
-        btn_auto = tk.Button(self.top_frame, text="⚡ Auto-Run", bg="#1e7e34", fg="#ffffff", font=('Segoe UI', 9, 'bold'), relief=tk.FLAT, command=self.start_autorun)
-        btn_auto.pack(side=tk.RIGHT, padx=5)
-
-        for status, text in (("pendente", "↩ Pendente"), ("arquivada", "📦 Arquivar"), ("aprovada", "✅ Aprovar")):
-            btn = self.themed_widget(tk.Button(self.top_frame, text=text, font=('Segoe UI', 9), relief=tk.FLAT,
-                                               command=lambda st=status: self.mark_selected(st)), bg="header_bg", fg="fg_color")
-            btn.pack(side=tk.RIGHT, padx=3)
-
-        btn_theme = self.themed_widget(tk.Button(self.top_frame, text="🌓 Alternar Tema", font=('Segoe UI', 9), relief=tk.FLAT, command=self.toggle_theme), bg="header_bg", fg="fg_color")
-        btn_theme.pack(side=tk.RIGHT, padx=5)
-
-        btn_dossier = self.themed_widget(tk.Button(self.top_frame, text="📋 Dossiê de retomada", fg="#ffffff", font=('Segoe UI', 9, 'bold'), relief=tk.FLAT, command=lambda: self.start_export('dossier')), bg="accent_color")
-        btn_dossier.pack(side=tk.RIGHT, padx=5)
-        btn_open = self.themed_widget(tk.Button(self.top_frame, text="📄 Exportar diálogo", fg="#ffffff", font=('Segoe UI', 9, 'bold'), relief=tk.FLAT, command=self.open_selected), bg="accent_color")
-        btn_open.pack(side=tk.RIGHT, padx=5)
-
-        # Barra de status: fonte, contagem de sessões, carga em andamento e avisos de leitura
-        self.status = self.themed_widget(tk.Label(self, anchor=tk.W, padx=10, pady=4, font=('Segoe UI', 9)), bg="header_bg", fg="fg_color")
-        self.status.pack(side=tk.BOTTOM, fill=tk.X)
-
-        # Busca: título, pasta, agente, UUID (metadados) e conteúdo das conversas (índice do Antigravity)
-        self.search_frame = self.themed_widget(tk.Frame(self, padx=10), bg="bg_color")
-        self.search_frame.pack(fill=tk.X, before=self.status)
-        self.themed_widget(tk.Label(self.search_frame, text="Buscar:", font=('Segoe UI', 9)), bg="bg_color", fg="fg_color").pack(side=tk.LEFT)
+        self.src_box.pack(side=tk.LEFT)
+        self.make_button(self.filter_frame, "clear", "clear", "Limpar", self.clear_search, "Limpar a busca (Esc)").pack(side=tk.RIGHT, padx=(self.px(6), 0))
+        self.make_button(self.filter_frame, "search", "search", "Buscar", self.run_search, "Buscar em título, pasta, agente, UUID e no conteúdo das conversas (Enter)", icon_token="accent_text").pack(side=tk.RIGHT, padx=(self.px(10), 0))
+        box = self.themed_widget(tk.Frame(self.filter_frame, padx=1, pady=1), bg="border")
+        box.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(self.px(12), 0), ipady=self.px(2))
+        inner = self.themed_widget(tk.Frame(box), bg="panel")
+        inner.pack(fill=tk.BOTH, expand=True)
+        self.search_icon = self.themed_widget(tk.Label(inner, font=self.f_icon, text=ICONS["search"][0 if self.icon_mode == "mdl2" else 1]), bg="panel", fg="muted")
+        self.search_icon.pack(side=tk.LEFT, padx=(self.px(8), self.px(4)))
         self.search_var = tk.StringVar()
-        self.search_entry = self.themed_widget(tk.Entry(self.search_frame, textvariable=self.search_var, width=50, relief=tk.FLAT, font=('Segoe UI', 10)),
-                                               bg="panel_bg", fg="fg_color", insertbackground="fg_color")
-        self.search_entry.pack(side=tk.LEFT, padx=6, ipady=3)
+        self.search_entry = self.themed_widget(tk.Entry(inner, textvariable=self.search_var, relief=tk.FLAT, font=self.f_ui, highlightthickness=0),
+                                               bg="panel", fg="fg", insertbackground="fg")
+        self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=self.px(4))
         self.search_entry.bind("<Return>", lambda e: self.run_search())
         self.search_entry.bind("<Escape>", lambda e: self.clear_search())
         self.bind("<Control-f>", lambda e: (self.search_entry.focus_set(), "break")[1])
-        self.themed_widget(tk.Button(self.search_frame, text="🔍 Buscar", font=('Segoe UI', 9), relief=tk.FLAT, command=self.run_search), bg="header_bg", fg="fg_color").pack(side=tk.LEFT, padx=3)
-        self.themed_widget(tk.Button(self.search_frame, text="✖ Limpar", font=('Segoe UI', 9), relief=tk.FLAT, command=self.clear_search), bg="header_bg", fg="fg_color").pack(side=tk.LEFT, padx=3)
+
+        # Ações sobre a seleção
+        self.actions_frame = self.themed_widget(tk.Frame(self, padx=self.px(16), pady=0), bg="bg")
+        self.actions_frame.pack(fill=tk.X, pady=(0, self.px(8)))
+        gap = self.px(8)
+        mk = lambda *a, **k: self.make_button(self.actions_frame, *a, **k)
+        mk("approve", "approve", "Aprovar", lambda: self.mark_selected("aprovada"), "Marcar a seleção como aprovada (entra no Auto-Run)", icon_token="success").pack(side=tk.LEFT)
+        mk("archive", "archive", "Arquivar", lambda: self.mark_selected("arquivada"), "Marcar a seleção como arquivada", icon_token="warning").pack(side=tk.LEFT, padx=(gap, 0))
+        mk("pending", "pending", "Pendente", lambda: self.mark_selected("pendente"), "Voltar a seleção para pendente", icon_token="muted").pack(side=tk.LEFT, padx=(gap, 0))
+        self.sep1 = self.themed_widget(tk.Frame(self.actions_frame, width=1, height=self.px(22)), bg="border")
+        self.sep1.pack(side=tk.LEFT, padx=self.px(14))
+        mk("export", "export", "Exportar diálogo", self.open_selected, "Salvar a conversa completa em Markdown (duplo clique na sessão)").pack(side=tk.LEFT)
+        mk("dossier", "dossier", "Dossiê de retomada", lambda: self.start_export('dossier'), "Salvar um resumo local para retomar a sessão (segredos mascarados)", icon_token="accent_text").pack(side=tk.LEFT, padx=(gap, 0))
+        mk("autorun", "autorun", "Auto-Run", self.start_autorun, "Retomar as sessões aprovadas em sessões novas com o agy", kind="primary").pack(side=tk.RIGHT)
+
+        # Barra de status: fonte, carga, avisos e selos de contagem
+        self.footer = self.themed_widget(tk.Frame(self, padx=self.px(14), pady=self.px(6)), bg="panel2")
+        self.footer.pack(side=tk.BOTTOM, fill=tk.X)
+        self.status = self.themed_widget(tk.Label(self.footer, anchor=tk.W, font=self.f_small), bg="panel2", fg="fg")
+        self.status.pack(side=tk.LEFT)
+        for token, key in (("warning", "rot"), ("muted", "arquivada"), ("success", "aprovada"), ("accent_text", "pendente")):
+            chip = Chip(self.footer, self, token)
+            chip.pack(side=tk.RIGHT, padx=(self.px(6), 0))
+            self.chips[key] = chip
 
         # Tabela (Treeview) com métricas de contexto
+        holder = self.themed_widget(tk.Frame(self, padx=self.px(16)), bg="bg")
+        holder.pack(fill=tk.BOTH, expand=True, pady=(0, self.px(10)))
         columns = ("col_date", "col_size", "col_ctx", "col_steps", "col_title", "col_agent", "col_uuid")
-        self.tree = ttk.Treeview(self, columns=columns, show="tree headings", selectmode="extended")
+        self.tree = ttk.Treeview(holder, columns=columns, show="tree headings", selectmode="extended")
 
         self.tree.heading("#0", text="Projeto / Sessão", anchor=tk.W)
         for col in columns:
@@ -1177,25 +1603,101 @@ class AntigravityGateApp(tk.Tk):
             self.tree.heading(col, text=HEADINGS[col], anchor=anchor, command=cmd)
 
         self.tree.heading("col_date", text=HEADINGS["col_date"] + " ▼")  # ordenação inicial: mais recentes primeiro
-        self.tree.column("#0", width=230, anchor=tk.W)
-        self.tree.column("col_date", width=130, anchor=tk.W)
-        self.tree.column("col_size", width=80, anchor=tk.CENTER)
-        self.tree.column("col_ctx", width=130, anchor=tk.CENTER)
-        self.tree.column("col_steps", width=60, anchor=tk.CENTER)
-        self.tree.column("col_title", width=330, anchor=tk.W)
-        self.tree.column("col_agent", width=140, anchor=tk.W)
-        self.tree.column("col_uuid", width=150, anchor=tk.W)
+        self.tree.column("#0", width=self.px(300), anchor=tk.W)
+        self.tree.column("col_date", width=self.px(155), anchor=tk.W)
+        self.tree.column("col_size", width=self.px(95), anchor=tk.CENTER)
+        self.tree.column("col_ctx", width=self.px(175), anchor=tk.CENTER)
+        self.tree.column("col_steps", width=self.px(75), anchor=tk.CENTER)
+        self.tree.column("col_title", width=self.px(330), anchor=tk.W)
+        self.tree.column("col_agent", width=self.px(140), anchor=tk.W)
+        self.tree.column("col_uuid", width=self.px(150), anchor=tk.W)
 
-        scrollbar = ttk.Scrollbar(self, orient=tk.VERTICAL, command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar = ttk.Scrollbar(holder, orient=tk.VERTICAL, command=self.tree.yview)
+        hscroll = ttk.Scrollbar(holder, orient=tk.HORIZONTAL, command=self.tree.xview)
+        self.tree.configure(yscrollcommand=scrollbar.set, xscrollcommand=hscroll.set)
 
-        # Barra empacotada antes da árvore: não some quando a janela encolhe.
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=10)
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Barras empacotadas antes da árvore: não somem quando a janela encolhe. A horizontal dá acesso às colunas do fim.
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        hscroll.pack(side=tk.BOTTOM, fill=tk.X)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         self.tree.bind("<Double-1>", self.on_double_click)
         self.tree.bind("<Button-3>", self.show_menu)
+        self.tree.bind("<<TreeviewSelect>>", lambda e: self.update_actions())
         self.bind("<F5>", lambda e: self.refresh())
+        self.update_actions()
+
+    # --- responsividade e estados ---
+
+    def fit_buttons(self, frame, buttons, reserved=0):
+        """Se os botões não cabem na largura, todos viram só ícone (com dica ao passar o mouse): nada é cortado."""
+        avail = frame.winfo_width() - reserved
+        if avail <= 1 or self.icon_mode == "none":
+            return
+        need = sum(b.measure(False) + self.px(8) for b in buttons)
+        for b in buttons:
+            b.set_compact(need > avail)
+
+    def on_resize(self, _e=None):
+        if getattr(self, "_fit_job", None):
+            self.after_cancel(self._fit_job)
+        self._fit_job = self.after(60, self._fit_all)
+
+    def _fit_all(self):
+        self._fit_job = None
+        if not self.btn:
+            return
+        names = ("approve", "archive", "pending", "export", "dossier", "autorun")
+        self.fit_buttons(self.actions_frame, [self.btn[n] for n in names], reserved=self.px(60) + self.px(32))
+        hdr_room = self.top_frame.winfo_width() - self.brand.winfo_reqwidth() - self.px(32)
+        both = [self.btn["refresh"], self.btn["theme"]]
+        compact = sum(b.measure(False) for b in both) + self.px(16) > hdr_room
+        for b in both:
+            b.set_compact(compact)
+        # O subtítulo some antes de a marca ficar apertada
+        show_sub = self.top_frame.winfo_width() > self.px(980)
+        if show_sub and not self.sub_lbl.winfo_manager():
+            self.sub_lbl.pack(side=tk.LEFT, pady=(self.px(5), 0))
+        elif not show_sub and self.sub_lbl.winfo_manager():
+            self.sub_lbl.pack_forget()
+
+    def autorun_candidates(self):
+        return [r for grp in self.grouped.values() for r in grp if self.states.get(r['cid']) == "aprovada" and r['fpath']]
+
+    def update_actions(self):
+        """Habilita ou desabilita cada botão conforme a seleção e o que está em andamento, e explica o motivo na dica."""
+        if not self.btn:
+            return
+        sel = self.tree.selection()
+        first_session = bool(sel) and self.is_session(sel[0])
+        fpath = self.db_files.get(self.cid_of(sel[0]), '') if first_session else ''
+        for name in ("approve", "archive", "pending"):
+            self.btn[name].set_enabled(bool(sel) and not self.loading, "" if sel else "Selecione uma ou mais sessões (ou uma pasta de projeto).")
+        if self.exporting:
+            reason = "Exportação em andamento."
+        elif not first_session:
+            reason = "Selecione uma sessão na tabela."
+        elif not fpath:
+            reason = "Esta sessão não tem arquivo de banco nesta fonte."
+        else:
+            reason = ""
+        for name in ("export", "dossier"):
+            self.btn[name].set_enabled(not reason, reason)
+        cands = self.autorun_candidates()
+        pend = [r for r in cands if r['cid'] not in self.handoffs]
+        ar_reason = "Auto-Run em andamento." if self.autorunning else ("" if cands else "Nenhuma sessão aprovada com arquivo nesta fonte. Aprove sessões primeiro.")
+        self.btn["autorun"].set_enabled(not ar_reason, ar_reason)
+        self.btn["autorun"].set_badge(len(pend))
+
+    def update_chips(self):
+        shown = [self.row_by_cid[self.cid_of(i)] for i in self.iter_sessions() if self.cid_of(i) in self.row_by_cid]
+        st = lambda r: self.states.get(r['cid'], "pendente")
+        counts = {k: sum(1 for r in shown if st(r) == k) for k in ("pendente", "aprovada", "arquivada")}
+        rot = sum(1 for r in shown if r['ctx'] >= ROT_TOKENS)
+        self.chips['pendente'].configure(text=f"○ {counts['pendente']} pendentes")
+        self.chips['aprovada'].configure(text=f"✔ {counts['aprovada']} aprovadas")
+        self.chips['arquivada'].configure(text=f"▣ {counts['arquivada']} arquivadas")
+        self.chips['rot'].configure(text=f"⚠ {rot} em Rot")
 
     def is_session(self, iid):
         v = self.tree.item(iid, 'values') if iid else ()
@@ -1246,6 +1748,13 @@ class AntigravityGateApp(tk.Tk):
             messagebox.showwarning("Aviso", "O estado não pôde ser salvo em disco e será perdido ao fechar o app.")
         self.states = self.state.load()
         self.refresh_labels()
+        self.btn[{"aprovada": "approve", "arquivada": "archive", "pendente": "pending"}[status]].flash_ok()
+
+    def row_tags(self, cid):
+        st = self.states.get(cid, "pendente")
+        if st in ("aprovada", "arquivada"):
+            return ("st_" + st,)
+        return ("rot",) if self.row_by_cid.get(cid, {}).get('ctx', 0) >= ROT_TOKENS else ()
 
     def leaf_text(self, cid):
         n = self.sub_count.get(cid, 0)
@@ -1255,7 +1764,8 @@ class AntigravityGateApp(tk.Tk):
 
     def refresh_labels(self):
         for iid in self.iter_sessions():
-            self.tree.item(iid, text=self.leaf_text(self.cid_of(iid)))
+            cid = self.cid_of(iid)
+            self.tree.item(iid, text=self.leaf_text(cid), tags=self.row_tags(cid))
         self.set_status(self.base_status)
 
     # --- ordenação, busca, menu de contexto ---
@@ -1356,12 +1866,9 @@ class AntigravityGateApp(tk.Tk):
 
     def set_status(self, text):
         self.base_status = text
-        shown = {self.cid_of(i) for i in self.iter_sessions()}
-        n_ok = sum(1 for c in shown if self.states.get(c) == "aprovada")
-        n_arq = sum(1 for c in shown if self.states.get(c) == "arquivada")
-        if n_ok or n_arq:
-            text += f"  |  ✅ {n_ok} aprovadas · 📦 {n_arq} arquivadas"
         self.status.configure(text=text)
+        self.update_chips()
+        self.update_actions()
 
     def load_data(self):
         """Dispara a leitura em thread de trabalho; a janela continua responsiva."""
@@ -1370,6 +1877,7 @@ class AntigravityGateApp(tk.Tk):
         label, conv_dir, sum_db = self.sources[self.source_idx]
         is_active = self.source_idx == 0
         self.loading = True
+        self.btn["refresh"].set_busy(True)
         for item in self.tree.get_children():
             self.tree.delete(item)
         self.set_status(f"{label}  |  carregando…")
@@ -1414,6 +1922,7 @@ class AntigravityGateApp(tk.Tk):
 
     def render(self, res):
         self.loading = False
+        self.btn["refresh"].set_busy(False)
         label = self.sources[self.source_idx][0]
         if 'error' in res:
             self.set_status(f"{label}  |  ⚠ erro ao carregar — ver {LOG_FILE}")
@@ -1421,6 +1930,7 @@ class AntigravityGateApp(tk.Tk):
         self.proj_map, self.summaries, self.db_files = res['proj_map'], res['summaries'], res['db_files']
         self.warnings = len(res['warnings'])
         self.grouped, self.total = res['grouped'], res['total']
+        self.row_by_cid = {r['cid']: r for grp in self.grouped.values() for r in grp}
         self.match, self.search_note = None, ""
         self.search_var.set("")
         try:
@@ -1452,16 +1962,15 @@ class AntigravityGateApp(tk.Tk):
                     roots.append(r)
             for parent, lst in kids.items():
                 self.sub_count[parent] = len(lst)
-            proj_node = self.tree.insert("", tk.END, text=f"📁 {pname} ({len(rows)} sessões)", values=("",) * 7)
+            proj_node = self.tree.insert("", tk.END, text=f"■ {pname} ({len(rows)} sessões)", values=("",) * 7, tags=('proj',))
             placed = set()
 
             def add(parent_iid, r):
                 if r['cid'] in placed:
                     return  # proteção contra ciclos de parentesco
                 placed.add(r['cid'])
-                ctx = fmt_tokens(r['ctx']) + (" ⚠️ [Rot]" if r['ctx'] >= ROT_TOKENS else "")
-                iid = self.tree.insert(parent_iid, tk.END, text=self.leaf_text(r['cid']),
-                                       values=(r['date'], r['size'], ctx, r['steps'], r['title'], r['agent'] or "-", r['cid']))
+                iid = self.tree.insert(parent_iid, tk.END, text=self.leaf_text(r['cid']), tags=self.row_tags(r['cid']),
+                                       values=(r['date'], r['size'], ctx_label(r['ctx']), r['steps'], r['title'], r['agent'] or "-", r['cid']))
                 for ch in sorted(kids.get(r['cid'], []), key=key, reverse=rev):
                     add(iid, ch)
 
@@ -1486,7 +1995,7 @@ class AntigravityGateApp(tk.Tk):
         row = next((r for grp in self.grouped.values() for r in grp if r['cid'] == cid), {})
         s = self.summaries.get(cid, {})
         return {'cid': cid, 'title': row.get('title') or cid, 'project': row.get('project', ''),
-                'workspace': urllib.parse.unquote(str(val(s, 'workspace_uris'))), 'agent': row.get('agent', ''),
+                'workspace': ", ".join(uri_paths(str(val(s, 'workspace_uris')))) or urllib.parse.unquote(str(val(s, 'workspace_uris'))), 'agent': row.get('agent', ''),
                 'parent': row.get('parent', ''), 'status': self.states.get(cid, 'pendente'),
                 'source': self.sources[self.source_idx][0], 'fpath': self.db_files.get(cid, '')}
 
@@ -1518,6 +2027,9 @@ class AntigravityGateApp(tk.Tk):
         if not out:
             return
         self.exporting = True
+        self.exporting_btn = self.btn["export" if kind == 'full' else "dossier"]
+        self.exporting_btn.set_busy(True, "Exportando…")
+        self.update_actions()
         self.set_status(f"{self.base_status}  |  exportando…")
 
         def job():
@@ -1593,6 +2105,8 @@ class AntigravityGateApp(tk.Tk):
                                                  "ou defina AGY_EXE com o caminho do agy.exe.")
                 return
         self.autorunning = True
+        self.btn["autorun"].set_busy(True, "Executando…")
+        self.update_actions()
         self.open_autorun_window(len(items), opts['dry_run'])
         runner = AutoRunner(items, self.state, lambda line: self.queue.put((0, 'auto_log', line)), agy=agy, dry_run=opts['dry_run'])
         self.runner = runner
@@ -1641,6 +2155,9 @@ class AntigravityGateApp(tk.Tk):
             self.append_auto(payload)
             return
         self.autorunning = False
+        self.btn["autorun"].set_busy(False, "Auto-Run")
+        if 'error' not in payload:
+            self.btn["autorun"].flash_ok()
         if 'error' in payload:
             self.append_auto(f"Erro inesperado: {payload['error']}")
         else:
@@ -1660,6 +2177,11 @@ class AntigravityGateApp(tk.Tk):
             self.status.configure(text=f"{self.base_status}  |  exportando… {payload[0]}/{payload[1]}")
             return
         self.exporting = False
+        btn = getattr(self, "exporting_btn", None)
+        if btn:
+            btn.set_busy(False, "Exportar diálogo" if btn is self.btn["export"] else "Dossiê de retomada")
+            if kind == 'export_done':
+                btn.flash_ok()
         self.set_status(self.base_status)
         if kind == 'export_error':
             messagebox.showerror("Erro", f"Não foi possível exportar:\n{payload}")
