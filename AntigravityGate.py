@@ -32,7 +32,14 @@ ROT_TOKENS = int(os.environ.get("AGY_ROT_TOKENS", "150000"))
 UUID_DB_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.db$', re.IGNORECASE)
 
 # Posição das colunas na árvore (valores de cada linha de sessão)
-COL_DATE, COL_SIZE, COL_CTX, COL_STEPS, COL_TITLE, COL_UUID = range(6)
+COL_DATE, COL_SIZE, COL_CTX, COL_STEPS, COL_TITLE, COL_AGENT, COL_UUID = range(7)
+HEADINGS = {"col_date": "Modificação", "col_size": "Tamanho", "col_ctx": "Contexto (tokens)", "col_steps": "Passos",
+            "col_title": "Título / Contexto Inicial", "col_agent": "Agente", "col_uuid": "UUID"}
+SORT_FUNCS = {
+    "col_date": lambda r: r["date"], "col_size": lambda r: r["size_kb"], "col_ctx": lambda r: r["ctx"],
+    "col_steps": lambda r: r["steps"], "col_title": lambda r: r["title"].lower(), "col_agent": lambda r: r["agent"].lower(),
+}
+NUMERIC_COLS = ("col_date", "col_size", "col_ctx", "col_steps")  # primeiro clique ordena do maior para o menor
 
 # Cache por (caminho, mtime_ns, tamanho): só reabre o banco de uma sessão se ele mudou.
 METRICS_CACHE = {}
@@ -435,10 +442,15 @@ def scan_source(conv_dir, sum_db, is_active, progress=None, is_stale=None):
             'cid': cid,
             'date': last_mod[:19],
             'size': f"{file_size_kb} KB" if fpath else "sem arquivo",
+            'size_kb': file_size_kb,
             'ctx': ctx,
             'steps': step_count,
             'title': title,
             'fpath': fpath,
+            'agent': str(val(s, 'agent_name')),
+            'parent': str(val(s, 'parent_conversation_id')),
+            'project': proj_name,
+            'hay': " ".join((title, preview, cid, str(val(s, 'agent_name')), proj_name, w_decoded)).lower(),
         })
 
     return {'grouped': grouped, 'total': len(all_cids), 'warnings': warnings,
@@ -460,6 +472,9 @@ class AntigravityGateApp(tk.Tk):
         self.proj_map, self.summaries, self.db_files = {}, {}, {}
         self.state = StateStore(STATE_DB)
         self.states = {}
+        self.grouped, self.total, self.sub_count = {}, 0, {}
+        self.match, self.sort_col, self.sort_rev = None, "col_date", True
+        self.search_note = ""
 
         # Estado do Tema (Dark por padrão, com suporte a Light)
         self.dark_mode = True
@@ -545,25 +560,39 @@ class AntigravityGateApp(tk.Tk):
         self.status = self.themed_widget(tk.Label(self, anchor=tk.W, padx=10, pady=4, font=('Segoe UI', 9)), bg="header_bg", fg="fg_color")
         self.status.pack(side=tk.BOTTOM, fill=tk.X)
 
+        # Busca: título, pasta, agente, UUID (metadados) e conteúdo das conversas (índice do Antigravity)
+        self.search_frame = self.themed_widget(tk.Frame(self, padx=10), bg="bg_color")
+        self.search_frame.pack(fill=tk.X, before=self.status)
+        self.themed_widget(tk.Label(self.search_frame, text="Buscar:", font=('Segoe UI', 9)), bg="bg_color", fg="fg_color").pack(side=tk.LEFT)
+        self.search_var = tk.StringVar()
+        self.search_entry = self.themed_widget(tk.Entry(self.search_frame, textvariable=self.search_var, width=50, relief=tk.FLAT, font=('Segoe UI', 10)),
+                                               bg="panel_bg", fg="fg_color", insertbackground="fg_color")
+        self.search_entry.pack(side=tk.LEFT, padx=6, ipady=3)
+        self.search_entry.bind("<Return>", lambda e: self.run_search())
+        self.search_entry.bind("<Escape>", lambda e: self.clear_search())
+        self.bind("<Control-f>", lambda e: (self.search_entry.focus_set(), "break")[1])
+        self.themed_widget(tk.Button(self.search_frame, text="🔍 Buscar", font=('Segoe UI', 9), relief=tk.FLAT, command=self.run_search), bg="header_bg", fg="fg_color").pack(side=tk.LEFT, padx=3)
+        self.themed_widget(tk.Button(self.search_frame, text="✖ Limpar", font=('Segoe UI', 9), relief=tk.FLAT, command=self.clear_search), bg="header_bg", fg="fg_color").pack(side=tk.LEFT, padx=3)
+
         # Tabela (Treeview) com métricas de contexto
-        columns = ("col_date", "col_size", "col_ctx", "col_steps", "col_title", "col_uuid")
+        columns = ("col_date", "col_size", "col_ctx", "col_steps", "col_title", "col_agent", "col_uuid")
         self.tree = ttk.Treeview(self, columns=columns, show="tree headings", selectmode="extended")
 
         self.tree.heading("#0", text="Projeto / Sessão", anchor=tk.W)
-        self.tree.heading("col_date", text="Modificação", anchor=tk.W)
-        self.tree.heading("col_size", text="Tamanho", anchor=tk.CENTER)
-        self.tree.heading("col_ctx", text="Contexto (tokens)", anchor=tk.CENTER)
-        self.tree.heading("col_steps", text="Passos", anchor=tk.CENTER)
-        self.tree.heading("col_title", text="Título / Contexto Inicial", anchor=tk.W)
-        self.tree.heading("col_uuid", text="UUID", anchor=tk.W)
+        for col in columns:
+            anchor = tk.CENTER if col in ("col_size", "col_ctx", "col_steps") else tk.W
+            cmd = (lambda c=col: self.sort_by(c)) if col in SORT_FUNCS else ""
+            self.tree.heading(col, text=HEADINGS[col], anchor=anchor, command=cmd)
 
-        self.tree.column("#0", width=200, anchor=tk.W)
+        self.tree.heading("col_date", text=HEADINGS["col_date"] + " ▼")  # ordenação inicial: mais recentes primeiro
+        self.tree.column("#0", width=230, anchor=tk.W)
         self.tree.column("col_date", width=130, anchor=tk.W)
-        self.tree.column("col_size", width=90, anchor=tk.CENTER)
+        self.tree.column("col_size", width=80, anchor=tk.CENTER)
         self.tree.column("col_ctx", width=130, anchor=tk.CENTER)
         self.tree.column("col_steps", width=60, anchor=tk.CENTER)
-        self.tree.column("col_title", width=380, anchor=tk.W)
-        self.tree.column("col_uuid", width=170, anchor=tk.W)
+        self.tree.column("col_title", width=330, anchor=tk.W)
+        self.tree.column("col_agent", width=140, anchor=tk.W)
+        self.tree.column("col_uuid", width=150, anchor=tk.W)
 
         scrollbar = ttk.Scrollbar(self, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
@@ -573,11 +602,25 @@ class AntigravityGateApp(tk.Tk):
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
 
         self.tree.bind("<Double-1>", self.on_double_click)
+        self.tree.bind("<Button-3>", self.show_menu)
         self.bind("<F5>", lambda e: self.refresh())
+
+    def is_session(self, iid):
+        v = self.tree.item(iid, 'values') if iid else ()
+        return len(v) > COL_UUID and v[COL_UUID] != ''
+
+    def iter_sessions(self, root=''):
+        for iid in self.tree.get_children(root):
+            if self.is_session(iid):
+                yield iid
+            yield from self.iter_sessions(iid)
+
+    def cid_of(self, iid):
+        return self.tree.item(iid, 'values')[COL_UUID]
 
     def on_double_click(self, event):
         iid = self.tree.identify_row(event.y)
-        if not iid or not self.tree.parent(iid):
+        if not self.is_session(iid):
             return  # cabeçalho, área vazia ou pasta de projeto: o duplo clique padrão só expande/recolhe
         self.tree.selection_set(iid)
         self.open_selected()
@@ -586,11 +629,11 @@ class AntigravityGateApp(tk.Tk):
         """UUIDs das sessões selecionadas; selecionar uma pasta de projeto vale para todas as sessões dela."""
         cids, from_project = [], False
         for iid in self.tree.selection():
-            if self.tree.parent(iid):
-                cids.append(self.tree.item(iid, 'values')[COL_UUID])
+            if self.is_session(iid):
+                cids.append(self.cid_of(iid))
             else:
                 from_project = True
-                cids.extend(self.tree.item(c, 'values')[COL_UUID] for c in self.tree.get_children(iid))
+                cids.extend(self.cid_of(i) for i in self.iter_sessions(iid))
         return list(dict.fromkeys(cids)), from_project
 
     def mark_selected(self, status):
@@ -612,12 +655,97 @@ class AntigravityGateApp(tk.Tk):
         self.states = self.state.load()
         self.refresh_labels()
 
+    def leaf_text(self, cid):
+        n = self.sub_count.get(cid, 0)
+        sub = f"  (+{n} sub-agente{'s' if n != 1 else ''})" if n else ""
+        return "    " + STATUS_LABEL[self.states.get(cid, "pendente")] + sub
+
     def refresh_labels(self):
-        for proj in self.tree.get_children():
-            for iid in self.tree.get_children(proj):
-                cid = self.tree.item(iid, 'values')[COL_UUID]
-                self.tree.item(iid, text="    " + STATUS_LABEL[self.states.get(cid, "pendente")])
+        for iid in self.iter_sessions():
+            self.tree.item(iid, text=self.leaf_text(self.cid_of(iid)))
         self.set_status(self.base_status)
+
+    # --- ordenação, busca, menu de contexto ---
+
+    def sort_by(self, col):
+        self.sort_rev = (not self.sort_rev) if col == self.sort_col else (col in NUMERIC_COLS)
+        self.sort_col = col
+        for c in SORT_FUNCS:
+            arrow = (" ▼" if self.sort_rev else " ▲") if c == col else ""
+            self.tree.heading(c, text=HEADINGS[c] + arrow)
+        self.populate()
+
+    @staticmethod
+    def fts_hits(sum_db, query):
+        terms = re.findall(r"\w+", query)
+        if not terms:
+            return set()
+        match = " ".join(f'"{t}"*' for t in terms)
+        with open_ro(sum_db) as c:
+            return {r[0] for r in c.execute("SELECT DISTINCT conversation_id FROM conversations_fts WHERE conversations_fts MATCH ?", (match,))}
+
+    def run_search(self):
+        q = self.search_var.get().strip()
+        if not q:
+            self.clear_search()
+            return
+        terms = q.lower().split()
+        rows = [r for grp in self.grouped.values() for r in grp]
+        hits = {r['cid'] for r in rows if all(t in r['hay'] for t in terms)}
+        content_ok = True
+        sum_db = self.sources[self.source_idx][2]
+        if sum_db:
+            try:
+                hits |= self.fts_hits(sum_db, q)
+            except sqlite3.Error as e:
+                content_ok = False
+                log.info("Busca por conteúdo indisponível: %s", e)
+        else:
+            content_ok = False
+        self.match = hits & {r['cid'] for r in rows}
+        self.search_note = f"{len(self.match)} resultado(s) para “{q}”" + ("" if content_ok else " (só metadados: sem índice de conteúdo nesta fonte)")
+        self.populate()
+
+    def clear_search(self):
+        self.search_var.set("")
+        self.match = None
+        self.search_note = ""
+        if self.grouped:
+            self.populate()
+
+    def show_menu(self, event):
+        iid = self.tree.identify_row(event.y)
+        if not iid:
+            return
+        if iid not in self.tree.selection():
+            self.tree.selection_set(iid)
+        m = tk.Menu(self, tearoff=0)
+        if self.is_session(iid):
+            m.add_command(label="Copiar UUID", command=lambda: self.copy_uuid(iid))
+            m.add_command(label="Abrir pasta do banco", command=lambda: self.open_folder(iid))
+            m.add_command(label="Exportar diálogo", command=self.open_selected)
+            m.add_separator()
+        for status, text in (("aprovada", "✅ Aprovar"), ("arquivada", "📦 Arquivar"), ("pendente", "↩ Pendente")):
+            m.add_command(label=text, command=lambda st=status: self.mark_selected(st))
+        m.tk_popup(event.x_root, event.y_root)
+
+    def copy_uuid(self, iid):
+        self.clipboard_clear()
+        self.clipboard_append(self.cid_of(iid))
+
+    def open_folder(self, iid):
+        fpath = self.db_files.get(self.cid_of(iid), '')
+        if not fpath:
+            messagebox.showinfo("Aviso", "Esta sessão não tem arquivo nesta fonte.")
+            return
+        opener = getattr(os, "startfile", None)
+        if opener is None:
+            messagebox.showinfo("Pasta do banco", os.path.dirname(fpath))
+            return
+        try:
+            opener(os.path.dirname(fpath))
+        except OSError as e:
+            messagebox.showinfo("Pasta do banco", f"{os.path.dirname(fpath)}\n\nNão abriu automaticamente: {e}")
 
     def on_source_change(self):
         self.source_idx = self.src_box.current()
@@ -634,7 +762,7 @@ class AntigravityGateApp(tk.Tk):
 
     def set_status(self, text):
         self.base_status = text
-        shown = {self.tree.item(i, 'values')[COL_UUID] for p in self.tree.get_children() for i in self.tree.get_children(p)}
+        shown = {self.cid_of(i) for i in self.iter_sessions()}
         n_ok = sum(1 for c in shown if self.states.get(c) == "aprovada")
         n_arq = sum(1 for c in shown if self.states.get(c) == "arquivada")
         if n_ok or n_arq:
@@ -692,23 +820,59 @@ class AntigravityGateApp(tk.Tk):
             return
         self.proj_map, self.summaries, self.db_files = res['proj_map'], res['summaries'], res['db_files']
         self.warnings = len(res['warnings'])
-        grouped = res['grouped']
+        self.grouped, self.total = res['grouped'], res['total']
+        self.match, self.search_note = None, ""
+        self.search_var.set("")
         try:
             self.states = self.state.load()
         except sqlite3.Error as e:
             log.warning("Falha ao ler estado: %s", e)
             self.states = {}
+        self.populate()
 
-        for pname in sorted(grouped.keys()):
-            proj_node = self.tree.insert("", tk.END, text=f"📁 {pname} ({len(grouped[pname])} sessões)", values=("",) * 6)
-            for c in sorted(grouped[pname], key=lambda x: x['date'], reverse=True):
-                ctx = fmt_tokens(c['ctx']) + (" ⚠️ [Rot]" if c['ctx'] >= ROT_TOKENS else "")
-                self.tree.insert(proj_node, tk.END, text="    " + STATUS_LABEL[self.states.get(c['cid'], "pendente")], values=(c['date'], c['size'], ctx, c['steps'], c['title'], c['cid']))
+    def populate(self):
+        """Monta a árvore a partir dos dados carregados, aplicando ordenação e busca. Não toca no disco."""
+        label = self.sources[self.source_idx][0]
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        self.sub_count = {}
+        key, rev = SORT_FUNCS[self.sort_col], self.sort_rev
+        flat = self.match is not None  # com busca ativa a lista é plana; sem busca, sub-agentes ficam sob o pai
+        for pname in sorted(self.grouped):
+            rows = [r for r in self.grouped[pname] if not flat or r['cid'] in self.match]
+            if not rows:
+                continue
+            ids = {r['cid'] for r in rows}
+            kids, roots = {}, []
+            for r in rows:
+                if not flat and r['parent'] in ids and r['parent'] != r['cid']:
+                    kids.setdefault(r['parent'], []).append(r)
+                else:
+                    roots.append(r)
+            for parent, lst in kids.items():
+                self.sub_count[parent] = len(lst)
+            proj_node = self.tree.insert("", tk.END, text=f"📁 {pname} ({len(rows)} sessões)", values=("",) * 7)
+            placed = set()
+
+            def add(parent_iid, r):
+                if r['cid'] in placed:
+                    return  # proteção contra ciclos de parentesco
+                placed.add(r['cid'])
+                ctx = fmt_tokens(r['ctx']) + (" ⚠️ [Rot]" if r['ctx'] >= ROT_TOKENS else "")
+                iid = self.tree.insert(parent_iid, tk.END, text=self.leaf_text(r['cid']),
+                                       values=(r['date'], r['size'], ctx, r['steps'], r['title'], r['agent'] or "-", r['cid']))
+                for ch in sorted(kids.get(r['cid'], []), key=key, reverse=rev):
+                    add(iid, ch)
+
+            for r in sorted(roots, key=key, reverse=rev):
+                add(proj_node, r)
+            for r in sorted(rows, key=key, reverse=rev):  # sobras de um ciclo viram raízes
+                add(proj_node, r)
 
         if self.tree.get_children():
             self.tree.item(self.tree.get_children()[0], open=True)
 
-        text = f"{label}  |  {res['total']} sessões"
+        text = f"{label}  |  " + (self.search_note if self.match is not None else f"{self.total} sessões")
         if self.warnings:
             text += f"  |  ⚠ {self.warnings} aviso(s) de leitura — ver {LOG_FILE}"
         self.set_status(text)
@@ -720,15 +884,11 @@ class AntigravityGateApp(tk.Tk):
             return
 
         node_id = selected[0]
-        if not self.tree.parent(node_id):
+        if not self.is_session(node_id):
             messagebox.showinfo("Aviso", "Clique numa conversa específica dentro da pasta do projeto.")
             return
 
-        values = self.tree.item(node_id, 'values')
-        if not values or len(values) <= COL_UUID:
-            return
-
-        cid = values[COL_UUID]
+        cid = self.cid_of(node_id)
         s = self.summaries.get(cid, {})
         fpath = self.db_files.get(cid, '')
 
