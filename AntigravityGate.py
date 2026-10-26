@@ -1317,21 +1317,45 @@ WIN_DEFAULT = (1240, 820)  # tamanho de projeto, em pixels a 96 dpi
 WIN_MIN = (760, 520)
 
 
-def window_geometry(sw, sh, scale, saved=None):
-    """(largura, altura, x, y) da janela. Parte do tamanho de projeto (ou do salvo), nunca passa da área útil da tela
-    (sobra para barra de título e barra de tarefas) e fica inteira à vista. Sem posição salva, centraliza."""
-    max_w = int(sw * 0.94)
-    max_h = max(1, min(int(sh * 0.88), sh - round(110 * scale)))
+def screen_areas(root):
+    """(área útil do monitor principal, desktop virtual, (largura, altura) do monitor principal); retângulos em (x, y, largura, altura).
+    A área útil exclui a barra de tarefas, em qualquer lado. Fora do Windows (ou se a consulta falhar), vale a tela inteira."""
+    sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+    work, virt = (0, 0, sw, sh), (0, 0, sw, sh)
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            r = wintypes.RECT()
+            if ctypes.windll.user32.SystemParametersInfoW(48, 0, ctypes.byref(r), 0) and r.right - r.left >= 300 and r.bottom - r.top >= 300:  # SPI_GETWORKAREA
+                work = (r.left, r.top, r.right - r.left, r.bottom - r.top)
+            gm = ctypes.windll.user32.GetSystemMetrics
+            if gm(78) >= 300 and gm(79) >= 300:  # SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN
+                virt = (gm(76), gm(77), gm(78), gm(79))
+        except Exception as e:
+            log.warning("Não foi possível consultar a área útil da tela: %s", e)
+    return work, virt, (sw, sh)
+
+
+def window_geometry(areas, scale, saved=None):
+    """(largura, altura, x, y) da janela. Parte do tamanho de projeto (ou do salvo) e nunca passa da área útil, já descontados a barra de
+    título e uma folga; a posição fica inteira à vista. Sem posição salva, centraliza na área útil do monitor principal.
+    Posição salva em outro monitor vale dentro do desktop virtual (monitor desligado => é puxada para dentro)."""
+    (wl, wt, ww, wh), (vl, vt, vw, vh), (sw, sh) = areas
+    frame, gap = round(40 * scale), round(10 * scale)  # barra de título + bordas; folga
     w, h, x, y = round(WIN_DEFAULT[0] * scale), round(WIN_DEFAULT[1] * scale), None, None
     if isinstance(saved, dict):
         vals = [saved.get(k) for k in ("w", "h", "x", "y")]
         if all(isinstance(v, int) and not isinstance(v, bool) for v in vals) and 300 <= vals[0] <= 20000 and 300 <= vals[1] <= 20000:
             w, h, x, y = vals
-    w = max(min(w, max_w), min(WIN_MIN[0], max_w))
-    h = max(min(h, max_h), min(WIN_MIN[1], max_h))
+    bl, bt, bw, bh = (wl, wt, ww, wh)
+    if x is not None and not (0 <= x + w // 2 < sw and 0 <= y + h // 2 < sh):
+        bl, bt, bw, bh = vl, vt, vw, vh  # estava em outro monitor
+    max_w, max_h = max(1, int(bw * 0.96)), max(1, bh - frame - gap)
+    w, h = max(min(w, max_w), min(WIN_MIN[0], max_w)), max(min(h, max_h), min(WIN_MIN[1], max_h))
     if x is None:
-        return w, h, (sw - w) // 2, max(0, (sh - h) // 2 - round(20 * scale))
-    return w, h, min(max(x, 0), max(0, sw - w)), min(max(y, 0), max(0, sh - h - round(48 * scale)))
+        return w, h, bl + (bw - w) // 2, bt + max(0, (bh - h - frame) // 2)
+    return w, h, min(max(x, bl), max(bl, bl + bw - w)), min(max(y, bt), max(bt, bt + bh - h - frame))
 
 
 def _rgb(h):
@@ -1940,10 +1964,10 @@ class AntigravityGateApp(tk.Tk):
         self.search_note = ""
 
         self.settings = load_settings()
-        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        w, h, x, y = window_geometry(sw, sh, self.winfo_fpixels('1i') / 96, self.settings.get("window"))
+        areas = screen_areas(self)
+        w, h, x, y = window_geometry(areas, self.winfo_fpixels('1i') / 96, self.settings.get("window"))
         self.geometry(f"{w}x{h}+{x}+{y}")
-        self.minsize(min(WIN_MIN[0], sw), min(WIN_MIN[1], sh))
+        self.minsize(min(WIN_MIN[0], areas[0][2]), min(WIN_MIN[1], areas[0][3]))
         self.limit_preset, att, crit = limits_from_settings(self.settings)
         set_context_limits(att, crit)
         c = self.settings.get("context") if isinstance(self.settings.get("context"), dict) else {}

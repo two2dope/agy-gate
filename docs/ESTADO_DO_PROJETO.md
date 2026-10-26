@@ -140,7 +140,8 @@ Os testes rodam em Xvfb com Python 3.12 e `python3-tk`. Estão fora do repositó
 
 ## Tamanho e posição da janela
 
-- A janela abria com 1240×820 px fixos. Em tela baixa (notebook 1366×768) passava da borda: a barra de título e a de tarefas cobriam partes e as alças de redimensionar ficavam fora da tela.
-- Agora o tamanho de projeto é escalado pelo DPI e limitado à área útil (94% da largura; 88% da altura, descontando ~110 px). Abre centralizada.
-- O app lembra tamanho e posição em `settings.json` (chave `window`), gravados 0,7 s depois de mexer e ao fechar. Maximizada não é gravada. Posição salva fora da tela é puxada para dentro.
-- Não verificado no Windows real: tela com vários monitores e escala 125% a 150%. Testado só com funções de cálculo e Xvfb.
+- A janela abria com 1240×820 px fixos e centralizada na tela inteira. Em tela baixa passava da borda; com a barra de tarefas no topo (caso real: notebook 1366×768 como monitor principal), a barra de título ficava sob ela.
+- Agora o tamanho de projeto é escalado pelo DPI e limitado à **área útil do monitor principal** (`SystemParametersInfoW(SPI_GETWORKAREA)`, que exclui a barra de tarefas em qualquer lado), descontando barra de título e folga. Abre centralizada nessa área.
+- O app lembra tamanho e posição em `settings.json` (chave `window`), gravados 0,7 s depois de mexer e ao fechar. Maximizada não é gravada.
+- Posição salva no monitor principal é puxada para a área útil (corrige o `y` salvo sob a barra). Posição em outro monitor vale dentro do desktop virtual; se o monitor sumir, a janela volta para dentro.
+- Não verificado no Windows real: escala 125% a 150% e a posição entre monitores de tamanhos diferentes. Testado com a função de cálculo e Xvfb.
