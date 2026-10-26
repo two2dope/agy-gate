@@ -130,3 +130,10 @@ Os testes rodam em Xvfb com Python 3.12 e `python3-tk`. Estão fora do repositó
 - **Notificações** no canto da janela, sem travar o uso: salvar (com `Abrir arquivo` e `Abrir pasta`), marcar (com **`Desfazer`**), copiar UUID, limites aplicados, aviso de leitura (com `Abrir log`) e resultado do Auto-Run. Erros continuam em janela. O arquivo exportado ainda abre sozinho no Windows.
 - **Estados vazios** no centro da tabela: carregando, busca sem resultado (com `Limpar busca`) e fonte vazia (com `Atualizar`).
 - **Lista de arquivos** nos arquivos exportados: ícone por tipo, ordem do mais mexido para o menos, e coluna `No disco` (existe ou não neste computador). O diálogo completo ganhou o índice `Arquivos citados` (alterado e lido). O dossiê separa alterados e consultados em tabelas. Alterado ou lido é classificação por nome da ferramenta: heurística.
+
+## Seletor de tema (lista suspensa)
+
+- O botão do cabeçalho mostra o tema atual (`Escuro ▾`) e abre uma **lista suspensa própria**, no visual do tema. O menu nativo do Windows ficava branco nos temas escuros.
+- Cada tema aparece com amostra de 4 cores (fundo, painel, destaque, texto) e marca de seleção. Abaixo, o estilo de ícones (Segoe MDL2, Símbolos Unicode, Sem ícones).
+- Setas, Enter e Esc funcionam. Clicar fora ou no botão de novo fecha. Escolher aplica na hora e grava em `settings.json`.
+- Não verificado no Windows real: posição da lista perto da borda da tela (testado só em Linux/Xvfb).

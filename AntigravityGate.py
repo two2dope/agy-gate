@@ -1706,6 +1706,110 @@ class Toast(tk.Frame):
         self.app.layout_toasts()
 
 
+class ThemePicker(tk.Toplevel):
+    """Lista suspensa no visual do app: temas com amostra de cores e estilo de ícones. Setas, Enter e Esc funcionam; clicar fora fecha."""
+
+    ICON_MODES = (("mdl2", "Ícones do Windows (Segoe MDL2)"), ("symbol", "Símbolos Unicode"), ("none", "Sem ícones"))
+
+    def __init__(self, app, anchor):
+        super().__init__(app)
+        self.app, self.anchor = app, anchor
+        t = self.t = app.t
+        self.overrideredirect(True)
+        self.configure(bg=t['border'], padx=1, pady=1)
+        body = tk.Frame(self, bg=t['panel'], padx=app.px(4), pady=app.px(4))
+        body.pack()
+        self.rows = []  # [frame, [labels], comando]
+        self.cur = -1
+        self.heading(body, "Tema")
+        for key in THEME_ORDER:
+            self.add_row(body, THEMES[key]['name'], key == app.theme_key, lambda k=key: app.set_theme(k), swatch=THEMES[key])
+        tk.Frame(body, bg=t['border'], height=1).pack(fill=tk.X, pady=app.px(5), padx=app.px(4))
+        self.heading(body, "Ícones")
+        for mode, label in self.ICON_MODES:
+            self.add_row(body, label, mode == app.icon_mode, lambda m=mode: app.set_icon_mode(m), radio=True)
+        self.cur = next((i for i, r in enumerate(self.rows) if r[3]), 0)
+        self.highlight(self.cur)
+        self.update_idletasks()
+        w, h = max(self.winfo_reqwidth(), anchor.winfo_width()), self.winfo_reqheight()
+        x = min(max(0, anchor.winfo_rootx() + anchor.winfo_width() - w), max(0, self.winfo_screenwidth() - w))
+        y = min(anchor.winfo_rooty() + anchor.winfo_height() + app.px(2), max(0, self.winfo_screenheight() - h))
+        self.geometry(f"{w}x{h}+{x}+{y}")
+        self.bind("<Escape>", lambda e: self.close())
+        self.bind("<Up>", lambda e: self.move(-1))
+        self.bind("<Down>", lambda e: self.move(1))
+        self.bind("<Return>", lambda e: self.choose(self.cur))
+        self.bind("<Button-1>", self.click_outside)
+        self.focus_force()
+        try:
+            self.grab_set()
+        except tk.TclError:
+            pass
+
+    def heading(self, body, text):
+        tk.Label(body, text=text.upper(), bg=self.t['panel'], fg=self.t['muted'], font=self.app.f_small, anchor="w").pack(fill=tk.X, padx=self.app.px(8), pady=(self.app.px(2), self.app.px(2)))
+
+    def add_row(self, body, text, selected, command, swatch=None, radio=False):
+        app, t = self.app, self.t
+        row = tk.Frame(body, bg=t['panel'], padx=app.px(8), pady=app.px(5), cursor="hand2")
+        row.pack(fill=tk.X)
+        widgets = []
+        if swatch:
+            sw = tk.Canvas(row, width=app.px(52), height=app.px(14), bg=t['panel'], highlightthickness=0)
+            for i, tok in enumerate(("bg", "panel2", "accent", "fg")):
+                sw.create_rectangle(i * app.px(13), 0, (i + 1) * app.px(13), app.px(14), fill=swatch[tok], outline=blend(swatch['border'], swatch['bg'], 0.5))
+            sw.pack(side=tk.LEFT, padx=(0, app.px(10)))
+            widgets.append(sw)
+        else:
+            mark = tk.Label(row, text="●" if selected else "○", bg=t['panel'], fg=t['accent_text'], font=app.f_ui, width=3)
+            mark.pack(side=tk.LEFT, padx=(0, app.px(7)))
+            widgets.append(mark)
+        name = tk.Label(row, text=text, bg=t['panel'], fg=t['fg'], font=app.f_bold if selected else app.f_ui, anchor="w")
+        name.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tick = tk.Label(row, text="✓" if selected and swatch else "", bg=t['panel'], fg=t['accent_text'], font=app.f_bold, width=2)
+        tick.pack(side=tk.RIGHT, padx=(app.px(12), 0))
+        widgets += [name, tick]
+        idx = len(self.rows)
+        self.rows.append([row, widgets, command, selected])
+        for w in [row] + widgets:
+            w.bind("<Enter>", lambda e, i=idx: self.highlight(i))
+            w.bind("<ButtonRelease-1>", lambda e, i=idx: self.choose(i))
+
+    def highlight(self, i):
+        t = self.t
+        self.cur = i
+        for n, (row, widgets, _cmd, _sel) in enumerate(self.rows):
+            on = n == i
+            bg = t['sel_bg'] if on else t['panel']
+            row.configure(bg=bg)
+            for w in widgets:
+                w.configure(bg=bg)
+                if isinstance(w, tk.Label):
+                    w.configure(fg=t['sel_fg'] if on else (t['fg'] if w is widgets[1] else t['accent_text']))
+
+    def move(self, step):
+        self.highlight((self.cur + step) % len(self.rows))
+
+    def choose(self, i):
+        command = self.rows[i][2]
+        self.close()
+        command()
+
+    def click_outside(self, e):
+        x0, y0 = self.winfo_rootx(), self.winfo_rooty()
+        if not (x0 <= e.x_root < x0 + self.winfo_width() and y0 <= e.y_root < y0 + self.winfo_height()):
+            self.close()
+
+    def close(self):
+        if self.app.theme_picker is self:
+            self.app.theme_picker = None
+        try:
+            self.grab_release()
+        except tk.TclError:
+            pass
+        self.destroy()
+
+
 class LimitDialog(tk.Toplevel):
     """Escolha dos níveis de alerta de contexto: três faixas prontas ou valores personalizados, com prévia sobre as sessões carregadas."""
 
@@ -1799,6 +1903,7 @@ class AntigravityGateApp(tk.Tk):
         self.themed, self.icon_buttons, self.btn, self.chips = [], [], {}, {}
         self.icon_cache = {}
         self.toasts, self.toast_log = [], []
+        self.theme_picker = None
         self.queue = queue.Queue()
         self.gen = 0
         self.loading = False
@@ -1944,6 +2049,11 @@ class AntigravityGateApp(tk.Tk):
         self.settings['theme'] = key
         save_settings(self.settings)
         self.apply_theme()
+        if 'theme' in self.btn:
+            b = self.btn['theme']
+            b.text = self.theme_button_text()
+            b.relayout()
+            self.on_resize()
 
     def toggle_theme(self):
         """Passa para o próximo tema da lista."""
@@ -2081,16 +2191,13 @@ class AntigravityGateApp(tk.Tk):
         self.update_banner()
 
     def show_theme_menu(self):
-        m = tk.Menu(self, tearoff=0)
-        var = tk.StringVar(value=self.theme_key)
-        for key in THEME_ORDER:
-            m.add_radiobutton(label=THEMES[key]['name'], variable=var, value=key, command=lambda k=key: self.set_theme(k))
-        m.add_separator()
-        ivar = tk.StringVar(value=self.icon_mode)
-        for mode, label in (("mdl2", "Ícones do Windows (Segoe MDL2)"), ("symbol", "Símbolos Unicode"), ("none", "Sem ícones")):
-            m.add_radiobutton(label=label, variable=ivar, value=mode, command=lambda md=mode: self.set_icon_mode(md))
-        b = self.btn['theme']
-        m.tk_popup(b.winfo_rootx(), b.winfo_rooty() + b.winfo_height())
+        if self.theme_picker is not None:
+            self.theme_picker.close()
+            return
+        self.theme_picker = ThemePicker(self, self.btn['theme'])
+
+    def theme_button_text(self):
+        return f"{THEMES[self.theme_key]['name']} ▾"
 
     # --- widgets ---
 
@@ -2114,7 +2221,7 @@ class AntigravityGateApp(tk.Tk):
         self.sub_lbl.pack(side=tk.LEFT, pady=(self.px(5), 0))
         self.hdr_right = self.themed_widget(tk.Frame(self.top_frame), bg="header_bg")
         self.hdr_right.pack(side=tk.RIGHT)
-        self.make_button(self.hdr_right, "theme", "theme", "Tema", self.show_theme_menu, "Escolher tema e estilo de ícones", bg_token="header_bg", icon_token="accent_text").pack(side=tk.RIGHT, padx=(self.px(8), 0))
+        self.make_button(self.hdr_right, "theme", "theme", self.theme_button_text(), self.show_theme_menu, "Escolher tema e estilo de ícones", bg_token="header_bg", icon_token="accent_text").pack(side=tk.RIGHT, padx=(self.px(8), 0))
         self.make_button(self.hdr_right, "limits", "limits", "Limites", self.open_limits, self.limits_tip(), bg_token="header_bg", icon_token="warning").pack(side=tk.RIGHT, padx=(self.px(8), 0))
         self.make_button(self.hdr_right, "refresh", "refresh", "Atualizar", self.refresh, "Reler as pastas e recarregar as sessões (F5)", bg_token="header_bg").pack(side=tk.RIGHT)
 
