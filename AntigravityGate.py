@@ -12,7 +12,9 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 BASE_DIR = os.environ.get("ANTIGRAVITY_HOME", r"C:\Users\Thomáz\.gemini")
-SUM_DB = os.path.join(BASE_DIR, "antigravity", "conversation_summaries.db")
+ACTIVE_SUM_DB = os.path.join(BASE_DIR, "antigravity", "conversation_summaries.db")
+ACTIVE_CONV_DIR = os.path.join(BASE_DIR, "antigravity", "conversations")
+ACTIVE_LABEL = "Ativas (antigravity/conversations)"
 PROJECTS_DIR = os.path.join(BASE_DIR, "config", "projects")
 DESKTOP_DIR = os.path.join(os.path.expanduser("~"), "Desktop")
 LOG_DIR = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "AntigravityGate")
@@ -72,6 +74,33 @@ def as_text(col):
     return col if isinstance(col, str) else ''
 
 
+def scandir_safe(folder):
+    try:
+        return list(os.scandir(folder))
+    except OSError:
+        return []
+
+
+def discover_sources():
+    """Fontes de sessões: (rótulo, pasta com os .db, conversation_summaries.db ou None).
+    A primeira é sempre a pasta ativa. Cópias de backup e quarentena ficam em fontes separadas,
+    nunca misturadas com as ativas."""
+    sources = [(ACTIVE_LABEL, ACTIVE_CONV_DIR, ACTIVE_SUM_DB if os.path.isfile(ACTIVE_SUM_DB) else None)]
+    seen = {os.path.normcase(os.path.abspath(ACTIVE_CONV_DIR))}
+    for top in sorted((e for e in scandir_safe(BASE_DIR) if e.is_dir()), key=lambda e: e.name.lower()):
+        for folder in [top] + sorted((e for e in scandir_safe(top.path) if e.is_dir()), key=lambda e: e.name.lower()):
+            key = os.path.normcase(os.path.abspath(folder.path))
+            if key in seen or not any(UUID_DB_RE.match(e.name) for e in scandir_safe(folder.path) if e.is_file()):
+                continue
+            seen.add(key)
+            parent = os.path.dirname(folder.path)
+            summ = next((p for p in (os.path.join(parent, "conversation_summaries.db"),
+                                     os.path.join(folder.path, "conversation_summaries.db")) if os.path.isfile(p)), None)
+            rel = os.path.relpath(folder.path, BASE_DIR).replace(os.sep, "/")
+            sources.append((f"Backup/outros: {rel}", folder.path, summ))
+    return sources
+
+
 class AntigravityGateApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -82,6 +111,8 @@ class AntigravityGateApp(tk.Tk):
         self.dark_mode = True
         self.apply_theme()
 
+        self.sources = discover_sources()
+        self.source_idx = 0
         self.create_widgets()
         self.load_data()
 
@@ -119,6 +150,14 @@ class AntigravityGateApp(tk.Tk):
 
         lbl_title = tk.Label(self.top_frame, text="🚀 AntigravityGate - Gestão de Contexto e Curadoria", fg=self.fg_color, bg=self.bg_color, font=('Segoe UI', 12, 'bold'))
         lbl_title.pack(side=tk.LEFT)
+
+        # Fonte: sessões ativas ou cada cópia de backup, lidas separadamente
+        self.src_box = ttk.Combobox(self.top_frame, state="readonly", width=48, values=[s[0] for s in self.sources])
+        self.src_box.current(self.source_idx)
+        self.src_box.bind("<<ComboboxSelected>>", lambda e: self.on_source_change())
+        self.src_box.pack(side=tk.LEFT, padx=(20, 5))
+        btn_refresh = tk.Button(self.top_frame, text="🔄 Atualizar", bg=self.header_bg, fg=self.fg_color, font=('Segoe UI', 9), relief=tk.FLAT, command=self.refresh)
+        btn_refresh.pack(side=tk.LEFT, padx=5)
 
         # Ações ainda sem implementação: desabilitadas para não afirmar efeito que não ocorre.
         btn_auto = tk.Button(self.top_frame, text="⚡ Auto-Run (em breve)", bg=self.header_bg, disabledforeground="#888888", font=('Segoe UI', 9, 'bold'), relief=tk.FLAT, state=tk.DISABLED)
@@ -162,6 +201,20 @@ class AntigravityGateApp(tk.Tk):
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=10)
 
         self.tree.bind("<Double-1>", lambda e: self.open_selected())
+        self.bind("<F5>", lambda e: self.refresh())
+
+    def on_source_change(self):
+        self.source_idx = self.src_box.current()
+        self.load_data()
+
+    def refresh(self):
+        """Relê as fontes do disco (pode haver novas pastas) e recarrega a fonte selecionada."""
+        label = self.sources[self.source_idx][0]
+        self.sources = discover_sources()
+        self.source_idx = next((i for i, s in enumerate(self.sources) if s[0] == label), 0)
+        self.src_box.configure(values=[s[0] for s in self.sources])
+        self.src_box.current(self.source_idx)
+        self.load_data()
 
     def warn(self, msg, exc=None):
         """Registra falha de leitura no log e conta para a barra de status."""
@@ -172,13 +225,14 @@ class AntigravityGateApp(tk.Tk):
             log.warning("%s", msg)
 
     def set_status(self, total):
-        text = f"{total} sessões"
+        text = f"{self.sources[self.source_idx][0]}  |  {total} sessões"
         if self.warnings:
             text += f"  |  ⚠ {self.warnings} aviso(s) de leitura — ver {LOG_FILE}"
         self.status.configure(text=text, bg=self.header_bg, fg=self.fg_color)
 
     def load_data(self):
         self.warnings = 0
+        _label, conv_dir, sum_db = self.sources[self.source_idx]
         for item in self.tree.get_children():
             self.tree.delete(item)
 
@@ -205,21 +259,22 @@ class AntigravityGateApp(tk.Tk):
                     self.warn(f"Projeto ilegível: {p_file}", e)
 
         self.summaries = {}
-        if os.path.exists(SUM_DB):
+        if sum_db:
             try:
-                with open_ro(SUM_DB) as conn:
+                with open_ro(sum_db) as conn:
                     conn.row_factory = sqlite3.Row
                     for r in conn.execute("SELECT * FROM conversation_summaries").fetchall():
                         self.summaries[r['conversation_id']] = dict(r)
             except Exception as e:
-                self.warn(f"Falha ao ler {SUM_DB}", e)
+                self.warn(f"Falha ao ler {sum_db}", e)
 
+        # Só a pasta da fonte selecionada: uma sessão com cópias em várias pastas não é mais sobrescrita.
         self.db_files = {}
-        for root, _dirs, files in os.walk(BASE_DIR):
-            for f in files:
-                if UUID_DB_RE.match(f):
-                    cid = os.path.splitext(f)[0]
-                    self.db_files[cid] = os.path.join(root, f)
+        if not os.path.isdir(conv_dir):
+            self.warn(f"Pasta de sessões inexistente: {conv_dir}")
+        for entry in scandir_safe(conv_dir):
+            if entry.is_file() and UUID_DB_RE.match(entry.name):
+                self.db_files[os.path.splitext(entry.name)[0]] = entry.path
 
         grouped = {}
         all_cids = set(self.db_files.keys()) | set(self.summaries.keys())
@@ -272,7 +327,7 @@ class AntigravityGateApp(tk.Tk):
                 title = (preview[:60] + '...') if len(preview) > 60 else (preview or f"Conversa {cid[:8]}")
 
             # Alerta visual de Context Rot se tamanho > 1500 KB
-            size_label = f"{file_size_kb} KB" + (" ⚠️ [Rot]" if file_size_kb > 1500 else "")
+            size_label = f"{file_size_kb} KB" + (" ⚠️ [Rot]" if file_size_kb > 1500 else "") if fpath else "sem arquivo"
 
             if proj_name not in grouped:
                 grouped[proj_name] = []
@@ -315,12 +370,6 @@ class AntigravityGateApp(tk.Tk):
         cid = values[4]
         s = self.summaries.get(cid, {})
         fpath = self.db_files.get(cid, '')
-        if not fpath:
-            for root, _dirs, files in os.walk(BASE_DIR):
-                target_file = f"{cid}.db"
-                if target_file in files:
-                    fpath = os.path.join(root, target_file)
-                    break
 
         pid = str(val(s, 'project_id', 'Outside of Project'))
         proj_name = self.proj_map.get(pid, pid)
