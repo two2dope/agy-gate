@@ -21,6 +21,9 @@ PROJECTS_DIR = os.path.join(BASE_DIR, "config", "projects")
 DESKTOP_DIR = os.path.join(os.path.expanduser("~"), "Desktop")
 LOG_DIR = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "AntigravityGate")
 LOG_FILE = os.path.join(LOG_DIR, "gate.log")
+STATE_DB = os.path.join(LOG_DIR, "gate_state.db")  # estado do AntigravityGate; nunca grava nos bancos do Antigravity
+
+STATUS_LABEL = {"pendente": "💬 Pendente", "aprovada": "✅ Aprovada", "arquivada": "📦 Arquivada"}
 
 # Alerta de Context Rot: tokens de entrada da última resposta do modelo (f2 + f5 de step_payload.f5.f9).
 # Padrão provisório; ajuste com a variável de ambiente AGY_ROT_TOKENS.
@@ -218,6 +221,75 @@ def session_metrics(path):
         return cnt, ctx, preview
 
 
+# --- estado de aprovação (banco próprio) -----------------------------------------------------
+
+class StateStore:
+    """Status por sessão (pendente/aprovada/arquivada) + histórico, em gate_state.db.
+    Se o arquivo não puder ser criado, cai para memória e `persistent` fica False."""
+
+    def __init__(self, path):
+        self.path = path
+        self.persistent = True
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            self._init()
+        except (OSError, sqlite3.Error) as e:
+            log.warning("Estado não será salvo (%s): %s", path, e)
+            self.path, self.persistent = ":memory:", False
+            self._mem = sqlite3.connect(":memory:")
+            self._init()
+
+    def _connect(self):
+        if not self.persistent:
+            return closing(_NoClose(self._mem))
+        return closing(sqlite3.connect(self.path, timeout=5.0))
+
+    def _init(self):
+        if not self.persistent:
+            conn = self._mem
+        else:
+            conn = sqlite3.connect(self.path, timeout=5.0)
+        with conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS session_state(cid TEXT PRIMARY KEY, status TEXT NOT NULL, updated_at TEXT NOT NULL)")
+            conn.execute("CREATE TABLE IF NOT EXISTS state_log(id INTEGER PRIMARY KEY AUTOINCREMENT, cid TEXT NOT NULL, status TEXT NOT NULL, at TEXT NOT NULL)")
+        if self.persistent:
+            conn.close()
+
+    def load(self):
+        with self._connect() as c:
+            return dict(c.execute("SELECT cid, status FROM session_state").fetchall())
+
+    def set_many(self, cids, status):
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        with self._connect() as c:
+            with c:
+                for cid in cids:
+                    if status == "pendente":
+                        c.execute("DELETE FROM session_state WHERE cid=?", (cid,))
+                    else:
+                        c.execute("INSERT INTO session_state(cid, status, updated_at) VALUES(?,?,?) "
+                                  "ON CONFLICT(cid) DO UPDATE SET status=excluded.status, updated_at=excluded.updated_at", (cid, status, now))
+                    c.execute("INSERT INTO state_log(cid, status, at) VALUES(?,?,?)", (cid, status, now))
+
+
+class _NoClose:
+    """Envolve a conexão em memória para o `closing` não destruir o banco entre chamadas."""
+    def __init__(self, conn):
+        self._c = conn
+
+    def __getattr__(self, name):
+        return getattr(self._c, name)
+
+    def __enter__(self):
+        return self._c.__enter__()
+
+    def __exit__(self, *a):
+        return self._c.__exit__(*a)
+
+    def close(self):
+        pass
+
+
 # --- fontes e varredura -----------------------------------------------------------------------
 
 def scandir_safe(folder):
@@ -384,7 +456,10 @@ class AntigravityGateApp(tk.Tk):
         self.gen = 0
         self.loading = False
         self.warnings = 0
+        self.base_status = ""
         self.proj_map, self.summaries, self.db_files = {}, {}, {}
+        self.state = StateStore(STATE_DB)
+        self.states = {}
 
         # Estado do Tema (Dark por padrão, com suporte a Light)
         self.dark_mode = True
@@ -455,8 +530,10 @@ class AntigravityGateApp(tk.Tk):
         btn_auto = self.themed_widget(tk.Button(self.top_frame, text="⚡ Auto-Run (em breve)", disabledforeground="#888888", font=('Segoe UI', 9, 'bold'), relief=tk.FLAT, state=tk.DISABLED), bg="header_bg")
         btn_auto.pack(side=tk.RIGHT, padx=5)
 
-        btn_bulk_app = self.themed_widget(tk.Button(self.top_frame, text="✅ Aprovar (em breve)", disabledforeground="#888888", font=('Segoe UI', 9), relief=tk.FLAT, state=tk.DISABLED), bg="header_bg")
-        btn_bulk_app.pack(side=tk.RIGHT, padx=5)
+        for status, text in (("pendente", "↩ Pendente"), ("arquivada", "📦 Arquivar"), ("aprovada", "✅ Aprovar")):
+            btn = self.themed_widget(tk.Button(self.top_frame, text=text, font=('Segoe UI', 9), relief=tk.FLAT,
+                                               command=lambda st=status: self.mark_selected(st)), bg="header_bg", fg="fg_color")
+            btn.pack(side=tk.RIGHT, padx=3)
 
         btn_theme = self.themed_widget(tk.Button(self.top_frame, text="🌓 Alternar Tema", font=('Segoe UI', 9), relief=tk.FLAT, command=self.toggle_theme), bg="header_bg", fg="fg_color")
         btn_theme.pack(side=tk.RIGHT, padx=5)
@@ -470,7 +547,7 @@ class AntigravityGateApp(tk.Tk):
 
         # Tabela (Treeview) com métricas de contexto
         columns = ("col_date", "col_size", "col_ctx", "col_steps", "col_title", "col_uuid")
-        self.tree = ttk.Treeview(self, columns=columns, show="tree headings", selectmode="browse")
+        self.tree = ttk.Treeview(self, columns=columns, show="tree headings", selectmode="extended")
 
         self.tree.heading("#0", text="Projeto / Sessão", anchor=tk.W)
         self.tree.heading("col_date", text="Modificação", anchor=tk.W)
@@ -495,8 +572,52 @@ class AntigravityGateApp(tk.Tk):
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=10)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        self.tree.bind("<Double-1>", lambda e: self.open_selected())
+        self.tree.bind("<Double-1>", self.on_double_click)
         self.bind("<F5>", lambda e: self.refresh())
+
+    def on_double_click(self, event):
+        iid = self.tree.identify_row(event.y)
+        if not iid or not self.tree.parent(iid):
+            return  # cabeçalho, área vazia ou pasta de projeto: o duplo clique padrão só expande/recolhe
+        self.tree.selection_set(iid)
+        self.open_selected()
+
+    def selected_cids(self):
+        """UUIDs das sessões selecionadas; selecionar uma pasta de projeto vale para todas as sessões dela."""
+        cids, from_project = [], False
+        for iid in self.tree.selection():
+            if self.tree.parent(iid):
+                cids.append(self.tree.item(iid, 'values')[COL_UUID])
+            else:
+                from_project = True
+                cids.extend(self.tree.item(c, 'values')[COL_UUID] for c in self.tree.get_children(iid))
+        return list(dict.fromkeys(cids)), from_project
+
+    def mark_selected(self, status):
+        cids, from_project = self.selected_cids()
+        if not cids:
+            messagebox.showwarning("Aviso", "Selecione uma sessão ou uma pasta de projeto.")
+            return
+        if (len(cids) > 1 or from_project) and not messagebox.askyesno(
+                "Confirmar", f"Marcar {len(cids)} sessão(ões) como {STATUS_LABEL[status][2:]}?"):
+            return
+        try:
+            self.state.set_many(cids, status)
+        except sqlite3.Error as e:
+            log.exception("Falha ao gravar estado")
+            messagebox.showerror("Erro", f"Não foi possível gravar o estado:\n{e}")
+            return
+        if not self.state.persistent:
+            messagebox.showwarning("Aviso", "O estado não pôde ser salvo em disco e será perdido ao fechar o app.")
+        self.states = self.state.load()
+        self.refresh_labels()
+
+    def refresh_labels(self):
+        for proj in self.tree.get_children():
+            for iid in self.tree.get_children(proj):
+                cid = self.tree.item(iid, 'values')[COL_UUID]
+                self.tree.item(iid, text="    " + STATUS_LABEL[self.states.get(cid, "pendente")])
+        self.set_status(self.base_status)
 
     def on_source_change(self):
         self.source_idx = self.src_box.current()
@@ -512,6 +633,12 @@ class AntigravityGateApp(tk.Tk):
         self.load_data()
 
     def set_status(self, text):
+        self.base_status = text
+        shown = {self.tree.item(i, 'values')[COL_UUID] for p in self.tree.get_children() for i in self.tree.get_children(p)}
+        n_ok = sum(1 for c in shown if self.states.get(c) == "aprovada")
+        n_arq = sum(1 for c in shown if self.states.get(c) == "arquivada")
+        if n_ok or n_arq:
+            text += f"  |  ✅ {n_ok} aprovadas · 📦 {n_arq} arquivadas"
         self.status.configure(text=text)
 
     def load_data(self):
@@ -566,12 +693,17 @@ class AntigravityGateApp(tk.Tk):
         self.proj_map, self.summaries, self.db_files = res['proj_map'], res['summaries'], res['db_files']
         self.warnings = len(res['warnings'])
         grouped = res['grouped']
+        try:
+            self.states = self.state.load()
+        except sqlite3.Error as e:
+            log.warning("Falha ao ler estado: %s", e)
+            self.states = {}
 
         for pname in sorted(grouped.keys()):
             proj_node = self.tree.insert("", tk.END, text=f"📁 {pname} ({len(grouped[pname])} sessões)", values=("",) * 6)
             for c in sorted(grouped[pname], key=lambda x: x['date'], reverse=True):
                 ctx = fmt_tokens(c['ctx']) + (" ⚠️ [Rot]" if c['ctx'] >= ROT_TOKENS else "")
-                self.tree.insert(proj_node, tk.END, text="    💬 Sessão", values=(c['date'], c['size'], ctx, c['steps'], c['title'], c['cid']))
+                self.tree.insert(proj_node, tk.END, text="    " + STATUS_LABEL[self.states.get(c['cid'], "pendente")], values=(c['date'], c['size'], ctx, c['steps'], c['title'], c['cid']))
 
         if self.tree.get_children():
             self.tree.item(self.tree.get_children()[0], open=True)
