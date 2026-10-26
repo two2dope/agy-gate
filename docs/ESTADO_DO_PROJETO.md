@@ -1,16 +1,24 @@
 # AntigravityGate: estado do projeto
 
-Atualizado em 2026-10-26. Ao retomar, leia só a seção "Snapshot".
+Atualizado em 2026-10-26 (M4 fechado). Ao retomar, leia só a seção "Snapshot".
 
 ## Snapshot
 
 | | |
 |---|---|
-| **Feito** | M1 (honestidade e robustez), seletor de fontes (ativas e backups separados), M2 (carga em segundo plano, cache, alerta por tokens), M3a (estado de aprovação), M3b (árvore de sub-agentes, busca, ordenação, menu de contexto) |
-| **Faltando** | M4 (export fiel e dossiê de retomada), Auto-Run opção B |
-| **Próximo passo único** | M4 |
+| **Feito** | M1 (honestidade e robustez), seletor de fontes (ativas e backups separados), M2 (carga em segundo plano, cache, alerta por tokens), M3a (estado de aprovação), M3b (árvore de sub-agentes, busca, ordenação, menu de contexto), M4 (diálogo completo e dossiê de retomada) |
+| **Faltando** | Auto-Run opção B (usa o dossiê do M4) |
+| **Próximo passo único** | Auto-Run, com um `agy` simulado nos testes. O teste real depende da cota voltar |
 
-Ordem combinada: M4, depois Auto-Run. O Auto-Run depende do M4.
+O dossiê é extração local (sem modelo). Resumo feito pelo modelo fica como opção futura.
+
+## Exportação (M4)
+
+- **Diálogo completo:** todos os passos em ordem, com hora local, papel, ferramentas, argumentos e resultados. Resultados de ferramenta são cortados em 6000 caracteres e argumentos em 2000, com aviso do que foi omitido. Não mascara segredos (o cabeçalho avisa).
+- **Dossiê de retomada:** origem, pedidos do usuário, última resposta do modelo, arquivos alterados e consultados, comandos, falhas de ferramenta, mensagens entre agentes e instrução para quem retomar. **Mascara** chaves de API, tokens e senhas por padrões conhecidos (heurístico).
+- Ambos são salvos por diálogo "Salvar como" (pasta inicial `%LOCALAPPDATA%\AntigravityGate\exports`), em segundo plano, com progresso na barra de status. Medição sintética: 6000 passos e 37 MB em 0,5 s.
+- "Arquivos alterados" usa o nome da ferramenta (`write`, `edit`, `replace` etc.). É heurística e pode errar.
+- Passos de tipo desconhecido (17) aparecem como "não interpretado". Passos de tipo 90 são omitidos.
 
 ## Decisões tomadas
 
@@ -65,7 +73,7 @@ Usado pelo Auto-Run:
 
 - Quando a cota voltar (cerca de 31 h após 2026-10-26), repetir o teste `agy --print "responda apenas: ok" --output-format json --mode plan --print-timeout 60s` para ver o formato de sucesso.
 - Escolher o limite do alerta Rot em tokens.
-- Dizer se quer o dossiê só com extração local (padrão, sem usar cota) ou também com resumo feito pelo modelo.
+- Revisar um dossiê real de uma sessão sua e dizer o que falta ou sobra antes de ele alimentar o Auto-Run.
 
 ## Como testar
 

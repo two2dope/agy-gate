@@ -7,20 +7,21 @@ import logging
 import queue
 import threading
 import urllib.parse
+from collections import Counter
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 
 BASE_DIR = os.environ.get("ANTIGRAVITY_HOME", r"C:\Users\Thomáz\.gemini")
 ACTIVE_SUM_DB = os.path.join(BASE_DIR, "antigravity", "conversation_summaries.db")
 ACTIVE_CONV_DIR = os.path.join(BASE_DIR, "antigravity", "conversations")
 ACTIVE_LABEL = "Ativas (antigravity/conversations)"
 PROJECTS_DIR = os.path.join(BASE_DIR, "config", "projects")
-DESKTOP_DIR = os.path.join(os.path.expanduser("~"), "Desktop")
 LOG_DIR = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "AntigravityGate")
 LOG_FILE = os.path.join(LOG_DIR, "gate.log")
+EXPORT_DIR = os.path.join(LOG_DIR, "exports")
 STATE_DB = os.path.join(LOG_DIR, "gate_state.db")  # estado do AntigravityGate; nunca grava nos bancos do Antigravity
 
 STATUS_LABEL = {"pendente": "💬 Pendente", "aprovada": "✅ Aprovada", "arquivada": "📦 Arquivada"}
@@ -226,6 +227,383 @@ def session_metrics(path):
                     preview = chunks[0][:150]
                     break
         return cnt, ctx, preview
+
+
+# --- decodificação de passos e exportação -----------------------------------------------------
+
+EXPORT_MAX_RESULT = 6000   # caracteres por resultado de ferramenta no diálogo completo
+EXPORT_MAX_ARGS = 2000     # caracteres por argumentos de ferramenta
+DOSSIER_MAX_USER = 700     # caracteres por pedido do usuário no dossiê
+DOSSIER_MAX_FINAL = 3000   # caracteres da última resposta do modelo no dossiê
+DOSSIER_MAX_USER_MSGS = 35
+
+TOOL_WRITE_HINTS = ("write", "edit", "replace", "create", "delete", "remove", "move", "rename", "patch", "apply", "append", "insert")
+TOOL_CMD_HINTS = ("command", "exec", "shell", "terminal", "bash", "run_")
+PATH_KEYS = ("AbsolutePath", "TargetFile", "FilePath", "file_path", "Path", "path", "File", "SearchPath", "DirectoryPath", "Directory")
+CMD_KEYS = ("CommandLine", "command", "Command", "cmd")
+
+SECRET_PATTERNS = [
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S),
+    re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b"),
+    re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}"),
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/\-]{20,}=*"),
+    re.compile(r"(?i)((?:api[_-]?key|secret|token|password|passwd|senha)[\"']?\s*[:=]\s*[\"']?)[^\s\"',;}]{6,}"),
+]
+
+ROLE_LABEL = {'user': '👤 Usuário', 'model': '🤖 Modelo', 'tool': '🛠 Ferramenta', 'agent_msg': '📨 Mensagem de agente',
+              'system': '⚙ Sistema', 'unknown': '❔ Passo não interpretado'}
+
+
+def redact(text):
+    """Mascara padrões comuns de segredo (chaves de API, tokens, senhas). Heurístico: não garante cobertura total."""
+    for pat in SECRET_PATTERNS:
+        text = pat.sub(lambda m, g=pat.groups: (m.group(1) + "[REDACTED]") if g else "[REDACTED]", text)
+    return text
+
+
+def pb_all(fields, number):
+    return [v for f, w, v in fields if f == number and w == 2]
+
+
+def pb_strings(blob, depth=0):
+    """Todos os textos legíveis de um protobuf (usado só em blocos de erro, de estrutura desconhecida).
+    Tenta primeiro como mensagem aninhada: um texto curto que começa com tag+tamanho imprimíveis
+    (ex.: b'\\n$abc…') também decodifica como UTF-8 e traria o prefixo do protobuf junto."""
+    out = []
+    try:
+        fields = pb_parse(blob)
+    except ValueError:
+        return out
+    for _f, w, v in fields:
+        if w != 2:
+            continue
+        if depth < 6:
+            try:
+                if pb_parse(v):
+                    out += pb_strings(v, depth + 1)
+                    continue
+            except ValueError:
+                pass
+        try:
+            t = v.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        if len(t) >= 4 and all(ch.isprintable() or ch in "\n\r\t" for ch in t):
+            out.append(t)
+    return out
+
+
+def decode_step(idx, step_type, status, payload, err_blob=None):
+    """Converte um passo em dict com papel e conteúdo. Mapa dos campos: docs/ESTADO_DO_PROJETO.md."""
+    d = {'idx': idx, 'type': step_type, 'status': status, 'ts': None, 'kind': 'unknown', 'text': '', 'label': '',
+         'calls': [], 'result': '', 'error': '', 'skills': [], 'ctx': 0}
+    try:
+        f = pb_parse(payload or b"")
+    except ValueError:
+        return d
+    d['ts'] = pb_num(f, [5, 1, 1])
+    if err_blob:
+        strings = pb_strings(err_blob)
+        d['error'] = max(strings, key=len) if strings else "(erro sem texto legível)"
+
+    def call_from(path):
+        r = pb_dig(f, path)
+        if not r or r[0] != 2:
+            return None
+        try:
+            sub = pb_parse(r[1])
+        except ValueError:
+            return None
+        return {'id': pb_text(sub, [1]) or '', 'name': pb_text(sub, [2]) or '?', 'args': pb_text(sub, [3]) or ''}
+
+    if step_type == 14:
+        d['kind'], d['text'] = 'user', pb_text(f, [19, 2]) or ''
+        r = pb_dig(f, [19])
+        if r and r[0] == 2:
+            try:
+                for blob in pb_all(pb_parse(r[1]), 3):
+                    try:
+                        name = pb_text(pb_parse(blob), [2, 27, 1, 1])
+                    except ValueError:
+                        name = None
+                    if name:
+                        d['skills'].append(name)
+            except ValueError:
+                pass
+    elif step_type == 15:
+        d['kind'], d['text'] = 'model', pb_text(f, [20, 3]) or ''
+        r = pb_dig(f, [20])
+        if r and r[0] == 2:
+            try:
+                for blob in pb_all(pb_parse(r[1]), 7):
+                    sub = pb_parse(blob)
+                    d['calls'].append({'id': pb_text(sub, [1]) or '', 'name': pb_text(sub, [2]) or '?', 'args': pb_text(sub, [3]) or ''})
+            except ValueError:
+                pass
+        f2, f5 = pb_num(f, [5, 9, 2]), pb_num(f, [5, 9, 5])
+        d['ctx'] = (f2 + (f5 or 0)) if f2 is not None else 0
+    elif step_type == 132:
+        d['kind'] = 'tool'
+        c = call_from([5, 4])
+        d['calls'] = [c] if c else []
+        d['result'] = pb_text(f, [140, 2, 1]) or ''
+    elif step_type == 101:
+        sub = pb_text(f, [114, 3]) or ''
+        if sub == 'agent_message':
+            d['kind'], d['label'] = 'agent_msg', pb_text(f, [114, 2, 1]) or 'Mensagem de agente'
+            d['text'] = pb_text(f, [114, 2, 10, 1]) or pb_text(f, [114, 1]) or ''
+        else:
+            d['kind'], d['label'], d['text'] = 'system', sub or 'mensagem de sistema', pb_text(f, [114, 1]) or ''
+    elif step_type == 90:
+        d['kind'] = 'marker'
+    return d
+
+
+def iter_steps(conn):
+    """Gera (total, n, passo_decodificado) em ordem de idx, lendo em lotes."""
+    total = conn.execute("SELECT COUNT(*) FROM steps").fetchone()[0]
+    cur = conn.execute("SELECT idx, step_type, status, step_payload, error_details FROM steps ORDER BY idx")
+    n = 0
+    while True:
+        rows = cur.fetchmany(100)
+        if not rows:
+            return
+        for idx, t, st, payload, err in rows:
+            n += 1
+            yield total, n, decode_step(idx, t, st, payload, err)
+
+
+def quick_meta(conn):
+    """Início, fim, passos, contexto final e modelos de uma sessão, sem varrer tudo."""
+    m = {'steps': 0, 'started': None, 'ended': None, 'ctx': 0, 'models': []}
+    m['steps'] = conn.execute("SELECT COUNT(*) FROM steps").fetchone()[0]
+    for col, order in (('started', 'ASC'), ('ended', 'DESC')):
+        row = conn.execute(f"SELECT step_payload FROM steps ORDER BY idx {order} LIMIT 1").fetchone()
+        if row and row[0]:
+            try:
+                m[col] = pb_num(pb_parse(row[0]), [5, 1, 1])
+            except ValueError:
+                pass
+    try:
+        for (blob,) in conn.execute("SELECT step_payload FROM steps WHERE step_type=15 ORDER BY idx DESC LIMIT 5"):
+            f = pb_parse(blob or b"")
+            f2, f5 = pb_num(f, [5, 9, 2]), pb_num(f, [5, 9, 5])
+            if f2 is not None:
+                m['ctx'] = f2 + (f5 or 0)
+                break
+        names = []
+        for order in ("ASC", "DESC"):
+            row = conn.execute(f"SELECT data FROM gen_metadata ORDER BY idx {order} LIMIT 1").fetchone()
+            if row and row[0]:
+                n = pb_text(pb_parse(row[0]), [21])
+                if n and n not in names:
+                    names.append(n)
+        m['models'] = names
+    except (sqlite3.OperationalError, ValueError):
+        pass
+    return m
+
+
+def fmt_ts(ts, full=False):
+    if ts is None:
+        return "?"
+    try:
+        return datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S' if full else '%d/%m %H:%M:%S')
+    except (OverflowError, OSError, ValueError):
+        return str(ts)
+
+
+def fence(text):
+    longest = max((len(m) for m in re.findall(r"`+", text)), default=0)
+    ticks = "`" * max(3, longest + 1)
+    return f"{ticks}\n{text}\n{ticks}\n"
+
+
+def clip(text, n):
+    return text if len(text) <= n else text[:n] + f"\n[… {len(text) - n} caracteres omitidos]"
+
+
+def meta_table(meta, qm):
+    rows = [("UUID da sessão", meta['cid']), ("Projeto", meta.get('project') or '-'), ("Workspace", meta.get('workspace') or '-'),
+            ("Agente", meta.get('agent') or '-'), ("Sessão pai", meta.get('parent') or '-'),
+            ("Modelo(s)", ", ".join(qm['models']) or '-'), ("Início", fmt_ts(qm['started'], True)), ("Fim", fmt_ts(qm['ended'], True)),
+            ("Passos", qm['steps']), ("Contexto na última resposta", f"{qm['ctx']} tokens" if qm['ctx'] else '-'),
+            ("Status no AntigravityGate", meta.get('status') or 'pendente'), ("Fonte", meta.get('source') or '-'),
+            ("Banco", meta.get('fpath') or '-'), ("Gerado em", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))]
+    out = "| Campo | Valor |\n| :--- | :--- |\n"
+    for k, v in rows:
+        out += f"| {k} | {str(v).replace('|', '/').replace(chr(10), ' ')} |\n"
+    return out
+
+
+def write_full_export(fh, meta, qm, steps, progress=None):
+    fh.write(f"# Diálogo completo — {meta.get('title') or meta['cid']}\n\n")
+    fh.write("> Este arquivo reproduz o conteúdo da conversa e pode conter chaves, senhas e dados pessoais. "
+             "Revise antes de compartilhar. Horários no fuso local deste computador.\n\n")
+    fh.write(meta_table(meta, qm) + "\n---\n\n## Linha do tempo\n\n")
+    for total, n, st in steps:
+        if progress and n % 20 == 0:
+            progress(n, total)
+        kind = st['kind']
+        if kind == 'marker':
+            continue
+        head = f"### #{st['idx']} · {fmt_ts(st['ts'])} · {ROLE_LABEL.get(kind, kind)}"
+        if kind == 'tool':
+            ok = st['status'] == 3 and not st['error']
+            name = st['calls'][0]['name'] if st['calls'] else '?'
+            situacao = "ok" if ok else "⚠ status " + str(st['status'])
+            head += f" · `{name}` · {situacao}"
+        elif kind in ('agent_msg', 'system'):
+            head += f" · {st['label']}"
+        fh.write(head + "\n\n")
+        if kind == 'user':
+            fh.write((st['text'] or "(sem texto)") + "\n\n")
+            if st['skills']:
+                fh.write(f"_Skill invocada: {', '.join(st['skills'])}_\n\n")
+        elif kind == 'model':
+            if st['text']:
+                fh.write(st['text'] + "\n\n")
+            for c in st['calls']:
+                fh.write(f"Chamada de ferramenta `{c['name']}` (`{c['id']}`):\n\n" + fence(clip(c['args'], EXPORT_MAX_ARGS)) + "\n")
+            if not st['text'] and not st['calls']:
+                fh.write("_(resposta sem texto visível)_\n\n")
+        elif kind == 'tool':
+            if st['calls'] and st['calls'][0]['args']:
+                fh.write("Argumentos:\n\n" + fence(clip(st['calls'][0]['args'], EXPORT_MAX_ARGS)) + "\n")
+            if st['result']:
+                fh.write("Resultado:\n\n" + fence(clip(st['result'], EXPORT_MAX_RESULT)) + "\n")
+            if st['error']:
+                fh.write("Erro:\n\n" + fence(clip(st['error'], EXPORT_MAX_RESULT)) + "\n")
+            if not st['result'] and not st['error']:
+                fh.write("_(sem resultado textual)_\n\n")
+        elif kind in ('agent_msg', 'system'):
+            fh.write((clip(st['text'], EXPORT_MAX_RESULT) or "(sem texto)") + "\n\n")
+        else:
+            fh.write(f"_Passo de tipo {st['type']} não interpretado pelo AntigravityGate._\n\n")
+
+
+def tool_paths(args):
+    """Caminhos citados nos argumentos de uma ferramenta (JSON; se inválido, busca por regex)."""
+    found = []
+    try:
+        data = json.loads(args)
+        if isinstance(data, dict):
+            found = [str(data[k]) for k in PATH_KEYS if isinstance(data.get(k), str)]
+    except ValueError:
+        for k in PATH_KEYS:
+            found += re.findall(r'"%s"\s*:\s*"((?:[^"\\]|\\.)*)"' % k, args)
+        found = [x.replace("\\\\", "\\") for x in found]
+    return found
+
+
+def tool_command(args):
+    try:
+        data = json.loads(args)
+        if isinstance(data, dict):
+            for k in CMD_KEYS:
+                if isinstance(data.get(k), str):
+                    return data[k]
+    except ValueError:
+        for k in CMD_KEYS:
+            m = re.search(r'"%s"\s*:\s*"((?:[^"\\]|\\.)*)"' % k, args)
+            if m:
+                return m.group(1)
+    return ''
+
+
+def build_dossier(meta, qm, steps, progress=None):
+    users, final_text, parent_task = [], '', ''
+    tools, files_read, files_mod, commands, errors, agent_msgs = Counter(), {}, {}, [], [], []
+    for total, n, st in steps:
+        if progress and n % 20 == 0:
+            progress(n, total)
+        k = st['kind']
+        if k == 'user':
+            users.append((st['ts'], st['text'], st['skills']))
+        elif k == 'agent_msg':
+            if not parent_task and 'Parent' in st['label']:
+                parent_task = st['text']
+            else:
+                agent_msgs.append((st['ts'], st['label'], st['text']))
+        elif k == 'model' and st['text']:
+            final_text = st['text']
+        elif k == 'tool' and st['calls']:
+            c = st['calls'][0]
+            name, low = c['name'], c['name'].lower()
+            tools[name] += 1
+            ok = st['status'] == 3 and not st['error']
+            if any(h in low for h in TOOL_WRITE_HINTS):
+                for pth in tool_paths(c['args']):
+                    files_mod[pth] = files_mod.get(pth, 0) + 1
+            elif any(h in low for h in TOOL_CMD_HINTS):
+                cmd = tool_command(c['args'])
+                if cmd:
+                    commands.append((st['ts'], cmd, ok))
+            else:
+                for pth in tool_paths(c['args']):
+                    files_read[pth] = files_read.get(pth, 0) + 1
+            if not ok:
+                summary = (st['error'] or st['result'] or '(sem texto)').strip().splitlines()[0][:240]
+                errors.append((st['ts'], name, st['status'], summary))
+
+    o = [f"# Dossiê de retomada — {meta.get('title') or meta['cid']}\n",
+         "> Extração local feita pelo AntigravityGate: nenhum modelo foi usado para resumir, então nada aqui é interpretação. "
+         "Segredos conhecidos foram mascarados, mas revise antes de enviar a qualquer serviço.\n",
+         "## Origem\n", meta_table(meta, qm)]
+    if parent_task:
+        o += ["## Tarefa recebida do agente pai\n", clip(parent_task, 2000) + "\n"]
+    o.append(f"## Pedidos do usuário ({len(users)})\n")
+    if not users:
+        o.append("_Nenhuma fala direta do usuário nesta sessão._\n")
+    shown = users if len(users) <= DOSSIER_MAX_USER_MSGS else users[:5] + [None] + users[-(DOSSIER_MAX_USER_MSGS - 5):]
+    for i, u in enumerate(shown, 1):
+        if u is None:
+            o.append(f"_… {len(users) - DOSSIER_MAX_USER_MSGS} pedidos intermediários omitidos …_\n")
+            continue
+        ts, text, skills = u
+        extra = f" _(skill: {', '.join(skills)})_" if skills else ""
+        o.append(f"**{fmt_ts(ts)}**{extra}\n\n" + clip(" ".join(text.split()) if len(text) < 400 else text, DOSSIER_MAX_USER) + "\n")
+    o.append("## Última resposta do modelo\n")
+    o.append((clip(final_text, DOSSIER_MAX_FINAL) if final_text else "_(sem texto de resposta)_") + "\n")
+    if files_mod:
+        o.append(f"## Arquivos alterados ({len(files_mod)}) — por nome da ferramenta, heurístico\n")
+        o.append("\n".join(f"- `{p}` ({n}x)" for p, n in list(files_mod.items())[:40]) + "\n")
+    if files_read:
+        o.append(f"## Arquivos consultados ({len(files_read)})\n")
+        o.append("\n".join(f"- `{p}` ({n}x)" for p, n in list(files_read.items())[:40]) + "\n")
+    if commands:
+        o.append(f"## Comandos executados (últimos {min(len(commands), 25)} de {len(commands)})\n")
+        o.append("\n".join(f"- {fmt_ts(ts)} {'ok' if ok else '⚠ falhou'}: `{c[:200]}`" for ts, c, ok in commands[-25:]) + "\n")
+    if errors:
+        o.append(f"## Falhas de ferramenta (últimas {min(len(errors), 10)} de {len(errors)})\n")
+        o.append("\n".join(f"- {fmt_ts(ts)} `{name}` (status {stt}): {summ}" for ts, name, stt, summ in errors[-10:]) + "\n")
+    if agent_msgs:
+        o.append(f"## Mensagens entre agentes ({len(agent_msgs)}, últimas 8)\n")
+        o.append("\n".join(f"- {fmt_ts(ts)} **{lab}**: {clip(' '.join(t.split()), 400)}" for ts, lab, t in agent_msgs[-8:]) + "\n")
+    if tools:
+        o.append("## Ferramentas usadas\n")
+        o.append(", ".join(f"`{n}` ×{c}" for n, c in tools.most_common()) + "\n")
+    o.append("## Instrução para quem retomar\n")
+    o.append("Você está retomando este trabalho a partir do dossiê acima. Antes de agir: (1) diga em poucas linhas o que entendeu do "
+             "objetivo e do estado atual; (2) liste o que falta; (3) proponha os próximos passos e espere confirmação. "
+             "O dossiê é uma extração automática: confirme no código e nos arquivos antes de assumir qualquer detalhe.\n")
+    return redact("\n".join(o))
+
+
+def export_session(kind, fpath, meta, out_path, progress=None):
+    """Grava o diálogo completo ('full') ou o dossiê de retomada ('dossier') de uma sessão."""
+    with open_ro(fpath) as conn:
+        qm = quick_meta(conn)
+        steps = iter_steps(conn)
+        if kind == 'full':
+            with open(out_path, 'w', encoding='utf-8', newline='\n') as fh:
+                write_full_export(fh, meta, qm, steps, progress)
+        else:
+            text = build_dossier(meta, qm, steps, progress)
+            with open(out_path, 'w', encoding='utf-8', newline='\n') as fh:
+                fh.write(text)
 
 
 # --- estado de aprovação (banco próprio) -----------------------------------------------------
@@ -467,6 +845,7 @@ class AntigravityGateApp(tk.Tk):
         self.queue = queue.Queue()
         self.gen = 0
         self.loading = False
+        self.exporting = False
         self.warnings = 0
         self.base_status = ""
         self.proj_map, self.summaries, self.db_files = {}, {}, {}
@@ -553,7 +932,9 @@ class AntigravityGateApp(tk.Tk):
         btn_theme = self.themed_widget(tk.Button(self.top_frame, text="🌓 Alternar Tema", font=('Segoe UI', 9), relief=tk.FLAT, command=self.toggle_theme), bg="header_bg", fg="fg_color")
         btn_theme.pack(side=tk.RIGHT, padx=5)
 
-        btn_open = self.themed_widget(tk.Button(self.top_frame, text="📄 Exportar Diálogo Rico", fg="#ffffff", font=('Segoe UI', 9, 'bold'), relief=tk.FLAT, command=self.open_selected), bg="accent_color")
+        btn_dossier = self.themed_widget(tk.Button(self.top_frame, text="📋 Dossiê de retomada", fg="#ffffff", font=('Segoe UI', 9, 'bold'), relief=tk.FLAT, command=lambda: self.start_export('dossier')), bg="accent_color")
+        btn_dossier.pack(side=tk.RIGHT, padx=5)
+        btn_open = self.themed_widget(tk.Button(self.top_frame, text="📄 Exportar diálogo", fg="#ffffff", font=('Segoe UI', 9, 'bold'), relief=tk.FLAT, command=self.open_selected), bg="accent_color")
         btn_open.pack(side=tk.RIGHT, padx=5)
 
         # Barra de status: fonte, contagem de sessões, carga em andamento e avisos de leitura
@@ -724,6 +1105,7 @@ class AntigravityGateApp(tk.Tk):
             m.add_command(label="Copiar UUID", command=lambda: self.copy_uuid(iid))
             m.add_command(label="Abrir pasta do banco", command=lambda: self.open_folder(iid))
             m.add_command(label="Exportar diálogo", command=self.open_selected)
+            m.add_command(label="Dossiê de retomada", command=lambda: self.start_export('dossier'))
             m.add_separator()
         for status, text in (("aprovada", "✅ Aprovar"), ("arquivada", "📦 Arquivar"), ("pendente", "↩ Pendente")):
             m.add_command(label=text, command=lambda st=status: self.mark_selected(st))
@@ -798,6 +1180,9 @@ class AntigravityGateApp(tk.Tk):
         try:
             while True:
                 gen, kind, payload = self.queue.get_nowait()
+                if kind.startswith('export'):
+                    self.on_export_event(kind, payload)
+                    continue
                 if gen != self.gen:
                     continue  # resposta de uma carga antiga (o usuário trocou de fonte)
                 label = self.sources[self.source_idx][0]
@@ -878,76 +1263,75 @@ class AntigravityGateApp(tk.Tk):
         self.set_status(text)
 
     def open_selected(self):
-        selected = self.tree.selection()
-        if not selected:
+        """Exporta o diálogo completo da sessão selecionada."""
+        self.start_export('full')
+
+    def meta_for(self, cid):
+        row = next((r for grp in self.grouped.values() for r in grp if r['cid'] == cid), {})
+        s = self.summaries.get(cid, {})
+        return {'cid': cid, 'title': row.get('title') or cid, 'project': row.get('project', ''),
+                'workspace': urllib.parse.unquote(str(val(s, 'workspace_uris'))), 'agent': row.get('agent', ''),
+                'parent': row.get('parent', ''), 'status': self.states.get(cid, 'pendente'),
+                'source': self.sources[self.source_idx][0], 'fpath': self.db_files.get(cid, '')}
+
+    def start_export(self, kind):
+        if self.exporting:
+            messagebox.showinfo("Aviso", "Já existe uma exportação em andamento.")
+            return
+        sel = self.tree.selection()
+        if not sel:
             messagebox.showwarning("Aviso", "Selecione uma conversa na tabela.")
             return
-
-        node_id = selected[0]
-        if not self.is_session(node_id):
+        if not self.is_session(sel[0]):
             messagebox.showinfo("Aviso", "Clique numa conversa específica dentro da pasta do projeto.")
             return
-
-        cid = self.cid_of(node_id)
-        s = self.summaries.get(cid, {})
-        fpath = self.db_files.get(cid, '')
-
-        pid = str(val(s, 'project_id', 'Outside of Project'))
-        proj_name = self.proj_map.get(pid, pid)
-        w_uris = urllib.parse.unquote(str(val(s, 'workspace_uris', 'Não registado')))
-        last_mod = fmt_time(s.get('last_modified_time')) or 'Desconhecido'
-        step_count = val(s, 'step_count', 'Desconhecido')
-
-        out_md = os.path.join(DESKTOP_DIR, f"AntigravityGate_Relatorio_{cid[:8]}.md")
-        try:
-            with open(out_md, 'w', encoding='utf-8') as f:
-                f.write("# Relatório de Contexto e Localização (AntigravityGate 🚀)\n\n")
-                f.write("| Parâmetro Técnico | Registo do Sistema |\n")
-                f.write("| :--- | :--- |\n")
-                f.write(f"| UUID da Sessão | {cid} |\n")
-                f.write(f"| Projeto Vinculado | {proj_name} (ID: {pid}) |\n")
-                f.write(f"| Caminho Físico do Banco | {fpath} |\n")
-                f.write(f"| Workspace de Origem | {w_uris} |\n")
-                f.write(f"| Última Modificação | {last_mod} |\n")
-                f.write(f"| Total de Passos | {step_count} |\n\n")
-                f.write("---\n\n## Histórico de Interações\n\n")
-
-                if fpath and os.path.exists(fpath):
-                    with open_ro(fpath) as conn:
-                        tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
-                        if 'steps' in tables:
-                            cursor = conn.execute("SELECT * FROM steps")
-                            seen = set()
-                            for idx, row in enumerate(cursor):
-                                lines = []
-                                for col in row:
-                                    if isinstance(col, (bytes, str)):
-                                        txt = as_text(col)
-                                        for m in re.findall(r'[A-Za-zÀ-ÿ0-9_/\-\.,\?!:;\"\' \n\t\(\)\[\]#*+=<>]{30,}', txt):
-                                            c = m.strip()
-                                            if not any(x in c.lower() for x in ['google.protobuf', '.gemini', 'user_uploaded', 'editor_transcript']):
-                                                if len(c) > 30 and c not in seen:
-                                                    seen.add(c)
-                                                    lines.append(c)
-                                if lines:
-                                    f.write(f"### Interação #{idx}\n\n")
-                                    for l in lines:
-                                        f.write(f"{l}\n\n")
-                                    f.write("---\n\n")
-        except Exception as e:
-            log.exception("Falha ao exportar %s", cid)
-            messagebox.showerror("Erro", f"Não foi possível gravar {out_md}:\n{e}")
+        cid = self.cid_of(sel[0])
+        meta = self.meta_for(cid)
+        if not meta['fpath']:
+            messagebox.showinfo("Aviso", "Esta sessão não tem arquivo de banco nesta fonte.")
             return
+        try:
+            os.makedirs(EXPORT_DIR, exist_ok=True)
+        except OSError:
+            pass
+        nome = ("AntigravityGate_dialogo_" if kind == 'full' else "AntigravityGate_dossie_") + cid[:8] + ".md"
+        out = filedialog.asksaveasfilename(
+            title="Salvar diálogo completo" if kind == 'full' else "Salvar dossiê de retomada",
+            initialdir=EXPORT_DIR if os.path.isdir(EXPORT_DIR) else None, initialfile=nome,
+            defaultextension=".md", filetypes=[("Markdown", "*.md"), ("Todos os arquivos", "*.*")])
+        if not out:
+            return
+        self.exporting = True
+        self.set_status(f"{self.base_status}  |  exportando…")
 
+        def job():
+            try:
+                export_session(kind, meta['fpath'], meta, out, progress=lambda n, t: self.queue.put((0, 'export_progress', (n, t))))
+                self.queue.put((0, 'export_done', out))
+            except Exception as e:
+                log.exception("Falha ao exportar %s", cid)
+                self.queue.put((0, 'export_error', f"{type(e).__name__}: {e}"))
+
+        threading.Thread(target=job, daemon=True).start()
+
+    def on_export_event(self, kind, payload):
+        if kind == 'export_progress':
+            self.status.configure(text=f"{self.base_status}  |  exportando… {payload[0]}/{payload[1]}")
+            return
+        self.exporting = False
+        self.set_status(self.base_status)
+        if kind == 'export_error':
+            messagebox.showerror("Erro", f"Não foi possível exportar:\n{payload}")
+            return
         opener = getattr(os, "startfile", None)
         if opener is None:
-            messagebox.showinfo("Relatório gerado", f"Relatório salvo em:\n{out_md}")
+            messagebox.showinfo("Arquivo gerado", f"Salvo em:\n{payload}")
             return
         try:
-            opener(out_md)
+            opener(payload)
         except OSError as e:
-            log.warning("Relatório salvo, mas não abriu: %s", e)
-            messagebox.showinfo("Relatório gerado", f"Relatório salvo em:\n{out_md}\n\nNão abriu automaticamente: {e}")
+            log.warning("Arquivo salvo, mas não abriu: %s", e)
+            messagebox.showinfo("Arquivo gerado", f"Salvo em:\n{payload}\n\nNão abriu automaticamente: {e}")
 
 
 if __name__ == "__main__":
