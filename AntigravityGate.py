@@ -23,6 +23,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from tkinter import font as tkfont
 
+__version__ = "0.9.0"  # ver CHANGELOG.md; 1.0.0 = revisão final + Auto-Run real testado
+
 BASE_DIR = os.environ.get("ANTIGRAVITY_HOME") or os.path.join(os.path.expanduser("~"), ".gemini")
 ACTIVE_SUM_DB = os.path.join(BASE_DIR, "antigravity", "conversation_summaries.db")
 ACTIVE_CONV_DIR = os.path.join(BASE_DIR, "antigravity", "conversations")
@@ -2353,6 +2355,7 @@ class AntigravityGateApp(tk.Tk):
         # O nome do app já está na barra de título da janela; o cabeçalho diz para que serve.
         self.title_lbl = self.themed_widget(tk.Label(self.brand, text="Gestão de contexto e curadoria", font=self.f_title), bg="header_bg", fg="header_fg")
         self.title_lbl.pack(side=tk.LEFT, padx=(self.px(8), self.px(12)))
+        Tooltip(self.title_lbl, self, lambda: f"AntigravityGate v{__version__}")
         self.hdr_right = self.themed_widget(tk.Frame(self.top_frame), bg="header_bg")
         self.hdr_right.pack(side=tk.RIGHT)
         self.make_button(self.hdr_right, "theme", "theme", self.theme_button_text(), self.show_theme_menu, "Escolher tema e estilo de ícones", bg_token="header_bg", icon_token="accent_text").pack(side=tk.RIGHT, padx=(self.px(8), 0))
@@ -3288,7 +3291,7 @@ def selftest(out_path):
             primary, at = _win_work_area(), _win_work_area(app.winfo_x() + 50, app.winfo_y() + 50)
             area = f"; área útil principal {primary}, no ponto {at}; barra de título {style_titlebar(app, app.t)}"
         app.destroy()
-        msg = f"OK ({fts}{area})" if done else "FALHA: a carga não terminou em 60 s"
+        msg = f"OK (v{__version__}; {fts}{area})" if done else "FALHA: a carga não terminou em 60 s"
     except Exception as e:
         msg = f"FALHA: {type(e).__name__}: {e}"
     with open(out_path, "w", encoding="utf-8") as fh:
@@ -3297,7 +3300,11 @@ def selftest(out_path):
 
 
 def main(argv):
+    if len(argv) >= 2 and argv[1] == "--version":
+        print(f"AntigravityGate {__version__}")
+        return 0
     setup_logging()
+    log.info("AntigravityGate %s", __version__)
     if len(argv) >= 3 and argv[1] == "--selftest":
         return selftest(argv[2])
     try:

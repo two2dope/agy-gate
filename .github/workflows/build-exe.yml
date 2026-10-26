@@ -1,12 +1,15 @@
 name: Gerar AntigravityGate.exe
 
+# A cada push no main: monta o .exe, testa e guarda como artefato.
+# Ao criar uma tag vX.Y.Z: além disso, publica uma Release com o .exe e as notas do CHANGELOG.
 on:
   workflow_dispatch:
   push:
-    paths:
-      - "AntigravityGate.py"
-      - "packaging/**"
-      - ".github/workflows/build-exe.yml"
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -17,6 +20,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Ler a versão do código
+        id: ver
+        shell: pwsh
+        run: |
+          $m = Select-String -Path AntigravityGate.py -Pattern '^__version__ = "([^"]+)"' | Select-Object -First 1
+          if (-not $m) { throw "__version__ não encontrada em AntigravityGate.py" }
+          $v = $m.Matches[0].Groups[1].Value
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Versão do código: $v"
+          if ($env:GITHUB_REF_TYPE -eq "tag" -and $env:GITHUB_REF_NAME -ne "v$v") { throw "A tag $env:GITHUB_REF_NAME não bate com a versão do código ($v)" }
 
       - name: Instalar PyInstaller
         run: python -m pip install --upgrade pip pyinstaller
@@ -36,9 +50,12 @@ jobs:
           if ($p.ExitCode -ne 0 -or -not (Test-Path $out) -or -not ((Get-Content $out -Raw) -like "OK*")) { throw "Autoteste do .exe falhou (código $($p.ExitCode))" }
 
       - name: Impressão digital (SHA-256) e tamanho
+        id: hash
         shell: pwsh
         run: |
-          Get-FileHash .\dist\AntigravityGate.exe -Algorithm SHA256 | Format-List
+          $h = (Get-FileHash .\dist\AntigravityGate.exe -Algorithm SHA256).Hash
+          "sha256=$h" >> $env:GITHUB_OUTPUT
+          Write-Host "SHA-256: $h"
           "{0:N1} MB" -f ((Get-Item .\dist\AntigravityGate.exe).Length / 1MB)
 
       - uses: actions/upload-artifact@v4
@@ -47,3 +64,20 @@ jobs:
           path: dist/AntigravityGate.exe
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publicar a Release (só em tag)
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          SHA256: ${{ steps.hash.outputs.sha256 }}
+        run: |
+          $log = Get-Content CHANGELOG.md -Raw -Encoding UTF8
+          $m = [regex]::Match($log, "(?ms)^## \[$([regex]::Escape($env:VERSION))\][^\r\n]*\r?\n(.*?)(?=^## \[|\z)")
+          $notes = if ($m.Success) { $m.Groups[1].Value.Trim() } else { "Sem notas no CHANGELOG para esta versão." }
+          $notes += "`n`n**SHA-256 do .exe:** ``$($env:SHA256)```n`nO .exe não é assinado: o Windows pode mostrar o aviso do SmartScreen na primeira vez (Mais informações, Executar assim mesmo)."
+          Set-Content -Path release_notes.md -Value $notes -Encoding UTF8
+          $ghArgs = @("release", "create", $env:GITHUB_REF_NAME, "dist/AntigravityGate.exe", "--title", "AntigravityGate $env:GITHUB_REF_NAME", "--notes-file", "release_notes.md")
+          if ($env:VERSION -like "0.*") { $ghArgs += "--prerelease" }
+          gh @ghArgs

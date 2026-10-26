@@ -1,14 +1,14 @@
 # AntigravityGate: estado do projeto
 
-Atualizado em 2026-10-26 (M4, Auto-Run, .exe, interface visual, limites, ícones e detalhes). Ao retomar, leia só a seção "Snapshot".
+Atualizado em 2026-10-26, versão **0.9.0**. Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
 
 ## Snapshot
 
 | | |
 |---|---|
-| **Feito** | M1 (honestidade e robustez), seletor de fontes (ativas e backups separados), M2 (carga em segundo plano, cache, alerta por tokens), M3a (estado de aprovação), M3b (árvore de sub-agentes, busca, ordenação, menu de contexto), M4 (diálogo completo e dossiê de retomada), Auto-Run opção B (testado só com `agy` simulado), empacotamento em `.exe` |
-| **Faltando** | Teste real do Auto-Run com o `agy` (depende da cota voltar); decisão do limite Rot; revisão de um dossiê real |
-| **Próximo passo único** | Baixar e abrir o `.exe` (ver "Gerar o .exe") |
+| **Feito** | M1 a M4 (leitura, estado, exportação, dossiê), Auto-Run opção B (testado só com `agy` simulado), `.exe` no GitHub Actions com autoteste, interface visual completa (8 temas, ícones, painel de detalhes, notificações, limites de contexto, janelas dentro da área útil do monitor, barra de título nos temas), repositório próprio com testes, README, CHANGELOG e Release automática por tag |
+| **Faltando** | Teste real do Auto-Run com o `agy` (cota; depois de 27/10); revisão final; conferir no Windows do usuário os itens "Não verificado" abaixo; decisão do limite Rot |
+| **Próximo passo único** | Revisão final (critério da 1.0.0: revisão feita + Auto-Run real testado) |
 
 O dossiê é extração local (sem modelo). Resumo feito pelo modelo fica como opção futura.
 
@@ -76,7 +76,13 @@ Usado pelo Auto-Run:
 
 ## Como testar
 
-Os testes rodam em Xvfb com Python 3.12 e `python3-tk`. Estão fora do repositório, no diretório temporário da sessão. Os scripts `tools/inspect_*.py` dão a estrutura (sem conteúdo) de qualquer banco de sessão.
+`tests/run_all.sh` (precisa de Python 3.12 com `tkinter` e, sem tela, `xvfb`). São 15 conjuntos com bancos sintéticos e um `agy` simulado (`tests/fake_agy.py`). Os scripts `tools/inspect_*.py` dão a estrutura (sem conteúdo) de qualquer banco de sessão.
+
+## Versões
+
+- `__version__` em `AntigravityGate.py` é a fonte da versão (aparece na dica do cabeçalho, no log e no autoteste do `.exe`). Histórico em `CHANGELOG.md`.
+- Publicar: subir `__version__`, registrar no CHANGELOG, commit em `main`, tag `vX.Y.Z` igual. O workflow confere a tag contra `__version__`, monta o `.exe`, testa e cria a Release (marcada como pré-lançamento enquanto a versão começar com 0).
+- 0.9.0 = candidato a 1.0.0.
 
 ## Auto-Run (implementado)
 
