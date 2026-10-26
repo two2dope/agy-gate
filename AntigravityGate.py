@@ -907,6 +907,18 @@ class _NoClose:
 # --- Auto-Run (retomada limpa, opção B) -------------------------------------------------------
 
 AGY_TIMEOUT_S = 600
+# Nomes aceitos por `agy --model`, copiados da lista que o próprio agy devolveu em 2026-10-26 (o esforço faz parte do nome).
+# Se o agy mudar a lista, o erro dele traz a nova, e o app passa a oferecê-la (settings: agy_models_known).
+AGY_MODELS = ["Gemini 3.8 Flash (Medium)", "Gemini 3.8 Flash (High)", "Gemini 3.8 Flash (Low)",
+              "Gemini 4 Argon (Medium)", "Gemini 4 Argon (High)", "Gemini 4 Argon (Low)",
+              "Claude Sonnet 5.5 (Medium)", "Claude Sonnet 5.5 (High)", "Claude Sonnet 5.5 (Low)",
+              "Claude Opus 5.5 (Medium)", "Claude Opus 5.5 (High)", "Claude Opus 5.5 (Low)", "GPT-OSS 120B (Medium)"]
+
+
+def parse_agy_models(text):
+    """Lista que o agy imprime depois de 'Available models:' quando recusa um --model."""
+    m = re.search(r"Available models:\s*\n((?:[ \t]+\S.*(?:\n|$))+)", text or "")
+    return [ln.strip() for ln in m.group(1).splitlines() if ln.strip()] if m else []
 # Uma linha só: num shim .cmd/.bat, o cmd.exe encerra a linha de comando na primeira quebra de linha.
 AGY_PROMPT = ("Você está retomando o trabalho de uma sessão anterior. Leia o dossiê em: {path} . "
               "Depois responda, em poucas linhas: (1) o que entendeu do objetivo e do estado atual; (2) o que falta; "
@@ -920,11 +932,24 @@ def find_agy():
     return shutil.which("agy")
 
 
+def uri_to_path(uri, nt=None):
+    """file:///c%3A/Users/... -> c:\\Users\\... (Windows) ou /home/... (outros).
+    O url2pathname do Windows não reconhece a letra da unidade com ':' codificado (%3A, como o Antigravity grava)
+    e devolvia '\\c:\\...', um caminho que não existe."""
+    nt = (os.name == "nt") if nt is None else nt
+    path = urllib.parse.unquote(urllib.parse.urlparse(uri).path)
+    if nt:
+        if re.match(r"^/[A-Za-z]:", path):
+            path = path[1:]
+        path = path.replace("/", "\\")
+    return path
+
+
 def workspace_dirs(uris):
     """Pastas existentes citadas em workspace_uris (file:///...)."""
     out = []
     for uri in re.findall(r"file://[^\s,;\"'\[\]<>]+", uris or ""):  # URIs vêm codificadas (%20), às vezes dentro de uma lista JSON
-        path = urllib.request.url2pathname(urllib.parse.urlparse(uri).path)
+        path = uri_to_path(uri)
         if os.path.isdir(path) and path not in out:
             out.append(path)
     return out[:3]
@@ -934,7 +959,7 @@ def uri_paths(uris):
     """Caminhos citados em workspace_uris (sem exigir que existam), para exibição."""
     out = []
     for uri in re.findall(r"file://[^\s,;\"'\[\]<>]+", uris or ""):
-        path = urllib.request.url2pathname(urllib.parse.urlparse(uri).path)
+        path = uri_to_path(uri)
         if path not in out:
             out.append(path)
     return out
@@ -1049,7 +1074,7 @@ class AutoRunner:
 
     def run(self):
         os.makedirs(HANDOFF_DIR, exist_ok=True)
-        summary = {'ok': 0, 'dossier': 0, 'failed': 0, 'skipped': 0, 'quota': '', 'junk': [], 'aborted': ''}
+        summary = {'ok': 0, 'dossier': 0, 'failed': 0, 'skipped': 0, 'quota': '', 'junk': [], 'aborted': '', 'models': []}
         failures = 0
         stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
         n = len(self.items)
@@ -1125,6 +1150,10 @@ class AutoRunner:
                 if new_cid:
                     summary['junk'].append(new_cid)
                 self.log_cb(f"    ✖ {res['error'][:300]}")
+                models = parse_agy_models(res['error']) or parse_agy_models(err)
+                if models:
+                    summary['models'] = models
+                    self.log_cb("    Modelos aceitos pelo agy (escolha um na lista do campo Modelo): " + "; ".join(models))
                 if res['quota']:
                     summary['quota'] = res['reset'] or 'horário não informado'
                     summary['skipped'] += n - i - 1
@@ -1480,6 +1509,18 @@ def place_over(win, parent, size=None):
         pass
 
 
+def dropdown_pos(area, ax, ay, aw, ah, w, h, gap=2):
+    """Posição (x, y) de uma lista w×h aberta sob o botão (ax, ay, aw, ah), alinhada à direita dele e dentro da área útil
+    `area` do monitor do botão. Aceita coordenadas negativas (monitor à esquerda ou acima do principal). Sem espaço
+    embaixo, abre para cima."""
+    l, t, W, H = area
+    x = min(max(ax + aw - w, l), max(l, l + W - w))
+    y = ay + ah + gap
+    if y + h > t + H:
+        y = max(t, ay - h - gap)
+    return x, y
+
+
 def is_dark_color(h):
     r, g, b = _rgb(h)
     return 0.299 * r + 0.587 * g + 0.114 * b < 128
@@ -1701,12 +1742,13 @@ class IconButton(tk.Canvas):
     """Botão desenhado em Canvas: ícone + texto, cantos do tema, estados (normal, hover, pressionado, foco,
     desabilitado, ocupado com spinner, selo de contagem, confirmação) e modo compacto só com o ícone."""
 
-    def __init__(self, master, app, icon, text, command, kind="normal", tip="", bg_token="bg", icon_token="btn_fg", stretch=False):
+    def __init__(self, master, app, icon, text, command, kind="normal", tip="", bg_token="bg", icon_token="btn_fg", stretch=False, icon_only=False):
         super().__init__(master, highlightthickness=0, bd=0, takefocus=1, cursor="hand2")
+        self.icon_only = icon_only  # sempre compacto: o texto aparece só sem ícones (Tema > Sem ícones)
         self.stretch = stretch  # ocupa a largura que o gerenciador de layout der (grid com sticky), conteúdo centralizado
         self.app, self.icon, self.text, self.command = app, icon, text, command
         self.kind, self.tip, self.bg_token, self.icon_token = kind, tip, bg_token, icon_token
-        self.enabled, self.reason, self.busy, self.compact = True, "", False, False
+        self.enabled, self.reason, self.busy, self.compact = True, "", False, icon_only
         self.hover = self.pressed = self.focused = self.ok_flash = False
         self.badge, self._spin, self._spin_job = 0, 0, None
         self.bind("<Enter>", lambda e: self._set(hover=True))
@@ -1762,6 +1804,7 @@ class IconButton(tk.Canvas):
             self.relayout()
 
     def set_compact(self, flag):
+        flag = flag or self.icon_only
         if flag != self.compact:
             self.compact = flag
             self.relayout()
@@ -1944,8 +1987,8 @@ class ThemePicker(tk.Toplevel):
         self.highlight(self.cur)
         self.update_idletasks()
         w, h = max(self.winfo_reqwidth(), anchor.winfo_width()), self.winfo_reqheight()
-        x = min(max(0, anchor.winfo_rootx() + anchor.winfo_width() - w), max(0, self.winfo_screenwidth() - w))
-        y = min(anchor.winfo_rooty() + anchor.winfo_height() + app.px(2), max(0, self.winfo_screenheight() - h))
+        ax, ay, aw, ah = anchor.winfo_rootx(), anchor.winfo_rooty(), anchor.winfo_width(), anchor.winfo_height()
+        x, y = dropdown_pos(work_area_at(self, ax + aw // 2, ay + ah // 2), ax, ay, aw, ah, w, h, gap=app.px(2))
         self.geometry(f"{w}x{h}+{x}+{y}")
         self.bind("<Escape>", lambda e: self.close())
         self.bind("<Up>", lambda e: self.move(-1))
@@ -2499,8 +2542,8 @@ class AntigravityGateApp(tk.Tk):
             return
         self.about_win = AboutDialog(self)
 
-    def make_button(self, parent, name, icon, text, command, tip, kind="normal", bg_token="bg", icon_token="btn_fg", stretch=False):
-        b = IconButton(parent, self, icon, text, command, kind=kind, tip=tip, bg_token=bg_token, icon_token=icon_token, stretch=stretch)
+    def make_button(self, parent, name, icon, text, command, tip, kind="normal", bg_token="bg", icon_token="btn_fg", stretch=False, icon_only=False):
+        b = IconButton(parent, self, icon, text, command, kind=kind, tip=tip, bg_token=bg_token, icon_token=icon_token, stretch=stretch, icon_only=icon_only)
         self.icon_buttons.append(b)
         self.btn[name] = b
         return b
@@ -2519,7 +2562,7 @@ class AntigravityGateApp(tk.Tk):
         Tooltip(self.title_lbl, self, lambda: f"AntigravityGate v{__version__}")
         self.hdr_right = self.themed_widget(tk.Frame(self.top_frame), bg="header_bg")
         self.hdr_right.pack(side=tk.RIGHT)
-        self.make_button(self.hdr_right, "about", "about", "Sobre", self.open_about, "Versão, autor e diagnóstico (F1)", bg_token="header_bg", icon_token="accent_text").pack(side=tk.RIGHT, padx=(self.px(8), 0))
+        self.make_button(self.hdr_right, "about", "about", "Sobre", self.open_about, "Sobre: versão, autor e diagnóstico (F1)", bg_token="header_bg", icon_token="accent_text", icon_only=True).pack(side=tk.RIGHT, padx=(self.px(8), 0))
         self.make_button(self.hdr_right, "theme", "theme", self.theme_button_text(), self.show_theme_menu, "Escolher tema e estilo de ícones", bg_token="header_bg", icon_token="accent_text").pack(side=tk.RIGHT, padx=(self.px(8), 0))
         self.make_button(self.hdr_right, "limits", "limits", "Limites", self.open_limits, self.limits_tip(), bg_token="header_bg", icon_token="warning").pack(side=tk.RIGHT, padx=(self.px(8), 0))
         self.make_button(self.hdr_right, "refresh", "refresh", "Atualizar", self.refresh, "Reler as pastas e recarregar as sessões (F5)", bg_token="header_bg").pack(side=tk.RIGHT)
@@ -2705,8 +2748,8 @@ class AntigravityGateApp(tk.Tk):
         names = ("approve", "archive", "pending", "export", "dossier", "autorun")
         self.fit_buttons(self.actions_frame, [self.btn[n] for n in names], reserved=self.px(60) + self.px(32))
         hdr_room = self.top_frame.winfo_width() - self.brand.winfo_reqwidth() - self.px(32)
-        both = [self.btn["limits"], self.btn["refresh"], self.btn["theme"], self.btn["about"]]
-        compact = sum(b.measure(False) for b in both) + self.px(24) > hdr_room
+        both = [self.btn["limits"], self.btn["refresh"], self.btn["theme"]]
+        compact = sum(b.measure(False) for b in both) + self.btn["about"].measure() + self.px(32) > hdr_room
         for b in both:
             b.set_compact(compact)
 
@@ -3327,9 +3370,9 @@ class AntigravityGateApp(tk.Tk):
         tk.Label(mrow, text="Modelo do agy:").pack(side=tk.LEFT)
         self.model_var = tk.StringVar(value=str(self.settings.get("agy_model") or ""))
         history = [m for m in self.settings.get("agy_models", []) if isinstance(m, str)]
-        self.model_box = ttk.Combobox(mrow, textvariable=self.model_var, values=history, width=32)
+        self.model_box = ttk.Combobox(mrow, textvariable=self.model_var, values=self.agy_model_choices(), width=32)
         self.model_box.pack(side=tk.LEFT, padx=(6, 8))
-        tk.Label(mrow, text="vazio = padrão do agy; nomes aceitos: agy --help", fg="#555555").pack(side=tk.LEFT)
+        tk.Label(mrow, text="vazio = padrão do agy; o nome inclui o esforço, ex.: Gemini 3.8 Flash (Medium)", fg="#555555").pack(side=tk.LEFT)
         tk.Label(win, text="Modo do agy: plan (somente leitura). Um erro de cota interrompe o lote inteiro.", fg="#555555", padx=12).pack(anchor=tk.W)
 
         def go():
@@ -3349,6 +3392,12 @@ class AntigravityGateApp(tk.Tk):
         win.grab_set()
         self.wait_window(win)
         return result['v']
+
+    def agy_model_choices(self):
+        """Usados por último, depois a lista conhecida (a mais recente que o agy devolveu, ou a do app), sem repetir."""
+        known = [m for m in self.settings.get("agy_models_known", []) if isinstance(m, str)] or AGY_MODELS
+        recent = [m for m in self.settings.get("agy_models", []) if isinstance(m, str)]
+        return list(dict.fromkeys(recent + known + AGY_MODELS))
 
     def start_autorun(self):
         if self.autorunning:
@@ -3435,6 +3484,9 @@ class AntigravityGateApp(tk.Tk):
             return
         self.autorunning = False
         self.btn["autorun"].set_busy(False, "Auto-Run")
+        if payload.get('models'):
+            self.settings["agy_models_known"] = payload['models']
+            save_settings(self.settings)
         if 'error' not in payload:
             self.btn["autorun"].flash_ok()
         if 'error' in payload:

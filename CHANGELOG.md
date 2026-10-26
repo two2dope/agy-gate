@@ -11,10 +11,14 @@ Correções dos três críticos da auditoria `reviews/audit-full-v0.9.0.md`, tod
 - Janela **Sobre** (botão no cabeçalho e F1): versão, autor, e-mail, GitHub, projeto, aviso de independência e diagnóstico do ambiente com **Copiar informações**.
 
 ### Alterado
+- Campo Modelo do Auto-Run vem com a lista de modelos aceitos pelo `agy` (o esforço faz parte do nome: `Gemini 3.8 Flash (Medium)`). Se o `agy` recusar um nome, o log mostra a lista que ele aceita e o app passa a oferecê-la.
+- Botão Sobre só com o ícone (o texto aparece na dica, ou no botão quando o tema está sem ícones).
 - Painel de detalhes: os quatro botões têm a mesma largura e o conteúdo centralizado.
 - Ícone de Exportar: disquete (Segoe MDL2 `E74E`; `↧` no modo Unicode) no lugar da folha em branco. Glifo não visto num Windows.
 
 ### Corrigido
+- Workspace aparecia como `\c:\Users\...` (barra a mais): o Windows não reconhecia a unidade com `:` codificado (`%3A`). Com isso o Auto-Run não passava a pasta do projeto ao `agy` (`--add-dir`) e o painel marcava o workspace como inexistente.
+- Lista de temas abria no monitor principal quando a janela estava num monitor à esquerda dele (coordenadas negativas). Agora abre sob o botão, no monitor da janela, e para cima se faltar espaço embaixo.
 - Sucesso do `agy` agora exige código de saída 0, `conversation_id` preenchido e status diferente de `ERROR`. Antes, qualquer saída sem erro explícito contava como retomada. A saída bruta de cada chamada vai para o `gate.log`.
 - Argumentos do `agy`: prompt numa linha só e por último; `--mode plan` e `--output-format json` vêm antes. Se o `agy` for um `.cmd`/`.bat` e os argumentos tiverem caracteres que o `cmd.exe` reinterpreta, o lote para sem executar e explica o motivo.
 - Fechar a janela com Auto-Run ou exportação em andamento pergunta antes; se confirmar, cancela, encerra o `agy` e registra a falha antes de sair.
