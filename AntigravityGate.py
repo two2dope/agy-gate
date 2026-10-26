@@ -33,9 +33,68 @@ STATE_DB = os.path.join(LOG_DIR, "gate_state.db")  # estado do AntigravityGate; 
 
 STATUS_LABEL = {"pendente": "○ Pendente", "aprovada": "✔ Aprovada", "arquivada": "▣ Arquivada"}
 
-# Alerta de Context Rot: tokens de entrada da última resposta do modelo (f2 + f5 de step_payload.f5.f9).
-# Padrão provisório; ajuste com a variável de ambiente AGY_ROT_TOKENS.
-ROT_TOKENS = int(os.environ.get("AGY_ROT_TOKENS", "150000"))
+# Níveis de alerta do contexto (tokens de entrada da última resposta do modelo: f2 + f5 de step_payload.f5.f9).
+# Faixas prontas e uma personalizada. Os valores são heurísticas de uso, não medidas: a degradação real depende do modelo e da tarefa.
+CONTEXT_PRESETS = {
+    "conservador": ("Conservador", 100_000, 150_000, "Troca de sessão cedo. Para tarefas longas com muitas ferramentas, onde a qualidade tende a cair primeiro."),
+    "equilibrado": ("Equilibrado", 150_000, 250_000, "Padrão recomendado: avisa antes da degradação e deixa margem para gerar o dossiê e retomar."),
+    "amplo": ("Amplo", 300_000, 500_000, "Para modelos de contexto muito grande e sessões em que o histórico completo importa."),
+}
+CONTEXT_CUSTOM = "personalizado"
+DEFAULT_PRESET = "equilibrado"
+LIMIT_MIN, LIMIT_MAX = 10_000, 5_000_000
+CONTEXT_LIMITS = {"attention": CONTEXT_PRESETS[DEFAULT_PRESET][1], "critical": CONTEXT_PRESETS[DEFAULT_PRESET][2]}
+
+
+def set_context_limits(attention, critical):
+    CONTEXT_LIMITS["attention"], CONTEXT_LIMITS["critical"] = attention, critical
+
+
+def ctx_level(ctx, attention=None, critical=None):
+    """0 = normal, 1 = atenção, 2 = crítico."""
+    attention = CONTEXT_LIMITS["attention"] if attention is None else attention
+    critical = CONTEXT_LIMITS["critical"] if critical is None else critical
+    return 2 if ctx >= critical else (1 if ctx >= attention else 0)
+
+
+def parse_tokens(text):
+    """'120000', '120.000', '1.000.000', '120k', '1,5m' -> inteiro; None se não entender."""
+    t = (text or "").strip().lower().replace(" ", "").replace("_", "")
+    if re.fullmatch(r"\d{1,3}(\.\d{3})+", t):  # 120.000 = cento e vinte mil
+        return int(t.replace(".", ""))
+    m = re.fullmatch(r"(\d+(?:[.,]\d+)?)([km])", t)
+    if m:
+        return round(float(m.group(1).replace(",", ".")) * (1_000 if m.group(2) == "k" else 1_000_000))
+    return int(t) if t.isdigit() else None
+
+
+def validate_limits(att_text, crit_text):
+    """(atenção, crítico, erro). `erro` vazio quando os valores são aceitos."""
+    att, crit = parse_tokens(att_text), parse_tokens(crit_text)
+    if att is None or crit is None:
+        return None, None, "Use números como 120000, 120.000 ou 120k."
+    if not (LIMIT_MIN <= att <= LIMIT_MAX and LIMIT_MIN <= crit <= LIMIT_MAX):
+        return None, None, f"Os valores precisam ficar entre {fmt_tokens(LIMIT_MIN)} e {fmt_tokens(LIMIT_MAX)} tokens."
+    if crit <= att:
+        return None, None, "O nível crítico precisa ser maior que o de atenção."
+    return att, crit, ""
+
+
+def limits_from_settings(settings):
+    """(preset, atenção, crítico) a partir das preferências. AGY_ROT_TOKENS (legado) tem prioridade."""
+    legacy = parse_tokens(os.environ.get("AGY_ROT_TOKENS", ""))
+    if legacy:
+        return CONTEXT_CUSTOM, legacy, round(legacy * 1.5)
+    c = settings.get("context") if isinstance(settings.get("context"), dict) else {}
+    key = c.get("preset")
+    if key in CONTEXT_PRESETS:
+        return key, CONTEXT_PRESETS[key][1], CONTEXT_PRESETS[key][2]
+    if key == CONTEXT_CUSTOM:
+        att, crit, err = validate_limits(str(c.get("attention")), str(c.get("critical")))
+        if not err:
+            return CONTEXT_CUSTOM, att, crit
+    return DEFAULT_PRESET, CONTEXT_PRESETS[DEFAULT_PRESET][1], CONTEXT_PRESETS[DEFAULT_PRESET][2]
+
 
 UUID_DB_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.db$', re.IGNORECASE)
 
@@ -109,12 +168,13 @@ def fmt_tokens(n):
 
 
 def ctx_label(ctx):
-    """Contexto em tokens com um medidor de 6 células em relação ao limite do alerta Rot."""
+    """Contexto em tokens com medidor de 6 células (cheio = nível crítico) e marca de nível: ⚠ atenção, ‼ crítico."""
     if not ctx:
         return "-"
     cells = 6
-    filled = min(cells, max(1, math.ceil(ctx / ROT_TOKENS * cells)))
-    return f"{fmt_tokens(ctx)}  " + "■" * filled + "□" * (cells - filled) + (" ⚠" if ctx >= ROT_TOKENS else "")
+    filled = min(cells, max(1, math.ceil(ctx / CONTEXT_LIMITS["critical"] * cells)))
+    mark = {0: "", 1: " ⚠", 2: " ‼"}[ctx_level(ctx)]
+    return f"{fmt_tokens(ctx)}  " + "■" * filled + "□" * (cells - filled) + mark
 
 
 # --- protobuf mínimo (somente leitura) --------------------------------------------------------
@@ -445,7 +505,7 @@ def meta_table(meta, qm):
     rows = [("UUID da sessão", meta['cid']), ("Projeto", meta.get('project') or '-'), ("Workspace", meta.get('workspace') or '-'),
             ("Agente", meta.get('agent') or '-'), ("Sessão pai", meta.get('parent') or '-'),
             ("Modelo(s)", ", ".join(qm['models']) or '-'), ("Início", fmt_ts(qm['started'], True)), ("Fim", fmt_ts(qm['ended'], True)),
-            ("Passos", qm['steps']), ("Contexto na última resposta", f"{qm['ctx']} tokens" if qm['ctx'] else '-'),
+            ("Passos", qm['steps']), ("Contexto na última resposta", (f"{qm['ctx']} tokens" + {0: "", 1: " (atenção)", 2: " (crítico)"}[ctx_level(qm['ctx'])]) if qm['ctx'] else '-'),
             ("Status no AntigravityGate", meta.get('status') or 'pendente'), ("Fonte", meta.get('source') or '-'),
             ("Banco", meta.get('fpath') or '-'), ("Gerado em", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))]
     out = "| Campo | Valor |\n| :--- | :--- |\n"
@@ -1103,9 +1163,9 @@ THEME_ORDER = ["escuro", "claro", "milspec", "cyber", "vidro", "brutal", "obsidi
 
 # nome -> (Segoe MDL2 Assets, alternativa Unicode). Se os ícones do Windows aparecerem errados, use Tema > Ícones > Símbolos Unicode.
 ICONS = {
-    "refresh": ("", "↻"), "search": ("", "⌕"), "clear": ("", "✕"), "approve": ("", "✔"),
-    "archive": ("", "▣"), "pending": ("", "↶"), "export": ("", "▤"), "dossier": ("", "▶"),
-    "autorun": ("", "⚡"), "theme": ("", "◐"), "warn": ("", "⚠"),
+    "refresh": ("\uE72C", "↻"), "search": ("\uE721", "⌕"), "clear": ("\uE711", "✕"), "approve": ("\uE73E", "✔"),
+    "archive": ("\uE7B8", "▣"), "pending": ("\uE7A7", "↶"), "export": ("\uE8A5", "▤"), "dossier": ("\uE768", "▶"),
+    "autorun": ("\uE945", "⚡"), "theme": ("\uE790", "◐"), "warn": ("\uE7BA", "⚠"), "limits": ("\uE713", "⚙"),
 }
 
 
@@ -1375,6 +1435,89 @@ class Chip(tk.Label):
         self.configure(bg=t['panel'], fg=t[self.token], highlightbackground=blend(t['panel2'], t[self.token], 0.4))
 
 
+class LimitDialog(tk.Toplevel):
+    """Escolha dos níveis de alerta de contexto: três faixas prontas ou valores personalizados, com prévia sobre as sessões carregadas."""
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.app = app
+        t = app.t
+        self.title("Limites de contexto")
+        self.configure(bg=t['panel'], padx=app.px(18), pady=app.px(14))
+        self.transient(app)
+        self.resizable(False, False)
+        self.var = tk.StringVar(value=app.limit_preset)
+        self.att_var = tk.StringVar(value=str(app.limits_custom[0]))
+        self.crit_var = tk.StringVar(value=str(app.limits_custom[1]))
+
+        def lab(text, font=None, fg=None, **kw):
+            return tk.Label(self, text=text, bg=t['panel'], fg=fg or t['fg'], font=font or app.f_ui, justify=tk.LEFT, anchor="w", **kw)
+
+        lab("Quando avisar que o contexto da conversa está grande?", app.f_bold).pack(anchor="w")
+        lab("O contexto é o tamanho do histórico que o modelo relê a cada resposta. Quanto maior, mais caro e mais sujeito a perder detalhes. "
+            "Atenção sugere preparar a retomada; crítico, retomar já em sessão nova.", app.f_small, t['muted'], wraplength=app.px(560)).pack(anchor="w", pady=(2, 10))
+
+        def radio(value, text):
+            return tk.Radiobutton(self, text=text, variable=self.var, value=value, command=self.refresh, bg=t['panel'], fg=t['fg'], selectcolor=t['panel2'],
+                                  activebackground=t['panel'], activeforeground=t['fg'], font=app.f_bold, anchor="w", highlightthickness=0)
+
+        for key, (name, att, crit, desc) in CONTEXT_PRESETS.items():
+            tag = "  (recomendado)" if key == DEFAULT_PRESET else ""
+            radio(key, f"{name}{tag}  —  atenção {fmt_tokens(att)} · crítico {fmt_tokens(crit)}").pack(anchor="w")
+            lab(desc, app.f_small, t['muted'], wraplength=app.px(540)).pack(anchor="w", padx=(app.px(26), 0), pady=(0, 6))
+        radio(CONTEXT_CUSTOM, "Personalizado").pack(anchor="w")
+        row = tk.Frame(self, bg=t['panel'])
+        row.pack(anchor="w", padx=(app.px(26), 0), pady=(2, 4))
+        mk = lambda var: tk.Entry(row, textvariable=var, width=11, bg=t['panel2'], fg=t['fg'], insertbackground=t['fg'], relief=tk.FLAT, font=app.f_ui,
+                                  highlightthickness=1, highlightbackground=t['border'], highlightcolor=t['accent'])
+        tk.Label(row, text="Atenção", bg=t['panel'], fg=t['fg'], font=app.f_ui).pack(side=tk.LEFT)
+        self.att_entry = mk(self.att_var)
+        self.att_entry.pack(side=tk.LEFT, padx=(6, 16), ipady=3)
+        tk.Label(row, text="Crítico", bg=t['panel'], fg=t['fg'], font=app.f_ui).pack(side=tk.LEFT)
+        self.crit_entry = mk(self.crit_var)
+        self.crit_entry.pack(side=tk.LEFT, padx=(6, 0), ipady=3)
+        for var in (self.att_var, self.crit_var):
+            var.trace_add("write", lambda *_: (self.var.set(CONTEXT_CUSTOM), self.refresh()))
+        lab(f"Aceita 120000, 120.000 ou 120k. Entre {fmt_tokens(LIMIT_MIN)} e {fmt_tokens(LIMIT_MAX)}; o crítico precisa ser maior que a atenção.",
+            app.f_small, t['muted'], wraplength=app.px(540)).pack(anchor="w", padx=(app.px(26), 0))
+        self.preview = lab("", app.f_ui)
+        self.preview.pack(anchor="w", pady=(12, 0))
+        self.error = lab("", app.f_small, t['danger'], wraplength=app.px(560))
+        self.error.pack(anchor="w")
+        buttons = tk.Frame(self, bg=t['panel'])
+        buttons.pack(anchor="e", pady=(12, 0))
+        IconButton(buttons, app, "", "Cancelar", self.destroy, bg_token="panel").pack(side=tk.LEFT, padx=(0, 8))
+        self.ok_btn = IconButton(buttons, app, "approve", "Aplicar", self.apply, kind="primary", bg_token="panel")
+        self.ok_btn.pack(side=tk.LEFT)
+        self.refresh()
+
+    def values(self):
+        """(preset, atenção, crítico, erro)"""
+        key = self.var.get()
+        if key in CONTEXT_PRESETS:
+            return key, CONTEXT_PRESETS[key][1], CONTEXT_PRESETS[key][2], ""
+        att, crit, err = validate_limits(self.att_var.get(), self.crit_var.get())
+        return CONTEXT_CUSTOM, att, crit, err
+
+    def refresh(self):
+        key, att, crit, err = self.values()
+        self.error.configure(text=err)
+        self.ok_btn.set_enabled(not err, err)
+        if err:
+            self.preview.configure(text="")
+            return
+        rows = list(self.app.row_by_cid.values())
+        lv = [ctx_level(r['ctx'], att, crit) for r in rows]
+        self.preview.configure(text=f"Com estes valores, nas {len(rows)} sessões carregadas: {lv.count(1)} em atenção · {lv.count(2)} críticas.")
+
+    def apply(self):
+        key, att, crit, err = self.values()
+        if err:
+            return
+        self.app.set_limits(key, att, crit)
+        self.destroy()
+
+
 class AntigravityGateApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -1399,6 +1542,11 @@ class AntigravityGateApp(tk.Tk):
         self.search_note = ""
 
         self.settings = load_settings()
+        self.limit_preset, att, crit = limits_from_settings(self.settings)
+        set_context_limits(att, crit)
+        c = self.settings.get("context") if isinstance(self.settings.get("context"), dict) else {}
+        self.limits_custom = (c.get("attention") or att, c.get("critical") or crit)
+        self.banner_dismissed = None
         self.families = set(tkfont.families(self))
         self.base_family = next((f for f in ("Segoe UI", "Helvetica", "DejaVu Sans") if f in self.families),
                                 tkfont.nametofont("TkDefaultFont").actual("family"))
@@ -1443,6 +1591,7 @@ class AntigravityGateApp(tk.Tk):
         t = self.t = dict(THEMES[self.theme_key])
         t['header_sub'] = blend(t['header_fg'], t['header_bg'], 0.12)
         t['btn_fg'] = t['fg']
+        t['banner_bg'] = blend(t['panel'], t['danger'], 0.16)
         self.configure(bg=t['bg'])
         self.f_title.configure(family=next((f for f in t['title_fonts'] if f in self.families), self.base_family))
 
@@ -1473,6 +1622,7 @@ class AntigravityGateApp(tk.Tk):
             self.tree.tag_configure('st_aprovada', foreground=t['success'])
             self.tree.tag_configure('st_arquivada', foreground=t['muted'])
             self.tree.tag_configure('rot', foreground=t['warning'])
+            self.tree.tag_configure('crit', foreground=t['danger'])
         # Widgets tk (não-ttk): reaplica as cores sem recarregar dados.
         for widget, opts in self.themed:
             widget.configure(**{opt: t[tok] for opt, tok in opts.items()})
@@ -1505,6 +1655,56 @@ class AntigravityGateApp(tk.Tk):
         for b in self.icon_buttons:
             b.relayout()
         self.on_resize()
+
+    def open_limits(self):
+        dlg = LimitDialog(self)
+        dlg.grab_set()
+        dlg.wait_window()
+
+    def set_limits(self, preset, attention, critical):
+        """Aplica e salva os níveis de alerta. Repinta a tabela, os selos e o aviso sem reler o disco."""
+        self.limit_preset = preset
+        set_context_limits(attention, critical)
+        if preset == CONTEXT_CUSTOM:
+            self.limits_custom = (attention, critical)
+        self.settings['context'] = {'preset': preset, 'attention': attention, 'critical': critical}
+        save_settings(self.settings)
+        self.banner_dismissed = None
+        self.btn["limits"].tip = self.limits_tip()
+        if self.grouped:
+            self.populate()
+
+    def limits_tip(self):
+        name = CONTEXT_PRESETS[self.limit_preset][0] if self.limit_preset in CONTEXT_PRESETS else "Personalizado"
+        return (f"Níveis de alerta de contexto: {name} — atenção {fmt_tokens(CONTEXT_LIMITS['attention'])}, "
+                f"crítico {fmt_tokens(CONTEXT_LIMITS['critical'])}. Clique para mudar.")
+
+    def critical_rows(self):
+        shown = [self.row_by_cid[self.cid_of(i)] for i in self.iter_sessions() if self.cid_of(i) in self.row_by_cid]
+        return [r for r in shown if ctx_level(r['ctx']) == 2 and self.states.get(r['cid']) != "arquivada"]
+
+    def update_banner(self):
+        crit = self.critical_rows()
+        key = (self.sources[self.source_idx][0], CONTEXT_LIMITS['critical'])
+        show = bool(crit) and self.match is None and self.banner_dismissed != key
+        if show:
+            n = len(crit)
+            self.banner_msg.configure(text=f"{n} sessão(ões) acima do nível crítico ({fmt_tokens(CONTEXT_LIMITS['critical'])} tokens). "
+                                           "Gere o dossiê e retome em uma sessão nova para não perder qualidade.")
+            if not self.banner.winfo_manager():
+                self.banner.pack(fill=tk.X, padx=self.px(16), pady=(0, self.px(8)), before=self.holder)
+        elif self.banner.winfo_manager():
+            self.banner.pack_forget()
+
+    def show_critical(self):
+        crit = self.critical_rows()
+        self.match = {r['cid'] for r in crit}
+        self.search_note = f"{len(crit)} sessão(ões) críticas"
+        self.populate()
+
+    def dismiss_banner(self):
+        self.banner_dismissed = (self.sources[self.source_idx][0], CONTEXT_LIMITS['critical'])
+        self.update_banner()
 
     def show_theme_menu(self):
         m = tk.Menu(self, tearoff=0)
@@ -1541,6 +1741,7 @@ class AntigravityGateApp(tk.Tk):
         self.hdr_right = self.themed_widget(tk.Frame(self.top_frame), bg="header_bg")
         self.hdr_right.pack(side=tk.RIGHT)
         self.make_button(self.hdr_right, "theme", "theme", "Tema", self.show_theme_menu, "Escolher tema e estilo de ícones", bg_token="header_bg", icon_token="accent_text").pack(side=tk.RIGHT, padx=(self.px(8), 0))
+        self.make_button(self.hdr_right, "limits", "limits", "Limites", self.open_limits, self.limits_tip(), bg_token="header_bg", icon_token="warning").pack(side=tk.RIGHT, padx=(self.px(8), 0))
         self.make_button(self.hdr_right, "refresh", "refresh", "Atualizar", self.refresh, "Reler as pastas e recarregar as sessões (F5)", bg_token="header_bg").pack(side=tk.RIGHT)
 
         # Filtros: fonte das sessões e busca
@@ -1585,13 +1786,21 @@ class AntigravityGateApp(tk.Tk):
         self.footer.pack(side=tk.BOTTOM, fill=tk.X)
         self.status = self.themed_widget(tk.Label(self.footer, anchor=tk.W, font=self.f_small), bg="panel2", fg="fg")
         self.status.pack(side=tk.LEFT)
-        for token, key in (("warning", "rot"), ("muted", "arquivada"), ("success", "aprovada"), ("accent_text", "pendente")):
+        for token, key in (("danger", "crit"), ("warning", "rot"), ("muted", "arquivada"), ("success", "aprovada"), ("accent_text", "pendente")):
             chip = Chip(self.footer, self, token)
             chip.pack(side=tk.RIGHT, padx=(self.px(6), 0))
             self.chips[key] = chip
 
         # Tabela (Treeview) com métricas de contexto
-        holder = self.themed_widget(tk.Frame(self, padx=self.px(16)), bg="bg")
+        # Aviso de sessões acima do nível crítico (aparece só quando há; fica entre as ações e a tabela)
+        self.banner = self.themed_widget(tk.Frame(self, padx=self.px(12), pady=self.px(8), highlightthickness=1), bg="banner_bg", highlightbackground="danger")
+        self.themed_widget(tk.Label(self.banner, text="‼", font=self.f_title), bg="banner_bg", fg="danger").pack(side=tk.LEFT, padx=(0, self.px(10)))
+        self.banner_msg = self.themed_widget(tk.Label(self.banner, anchor="w", justify=tk.LEFT, font=self.f_ui), bg="banner_bg", fg="fg")
+        self.banner_msg.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.make_button(self.banner, "banner_dismiss", "clear", "Dispensar", self.dismiss_banner, "Esconder este aviso até mudar de fonte ou de limite", bg_token="banner_bg").pack(side=tk.RIGHT, padx=(self.px(8), 0))
+        self.make_button(self.banner, "banner_view", "search", "Ver críticas", self.show_critical, "Listar só as sessões críticas", bg_token="banner_bg", icon_token="danger").pack(side=tk.RIGHT)
+
+        holder = self.holder = self.themed_widget(tk.Frame(self, padx=self.px(16)), bg="bg")
         holder.pack(fill=tk.BOTH, expand=True, pady=(0, self.px(10)))
         columns = ("col_date", "col_size", "col_ctx", "col_steps", "col_title", "col_agent", "col_uuid")
         self.tree = ttk.Treeview(holder, columns=columns, show="tree headings", selectmode="extended")
@@ -1650,8 +1859,8 @@ class AntigravityGateApp(tk.Tk):
         names = ("approve", "archive", "pending", "export", "dossier", "autorun")
         self.fit_buttons(self.actions_frame, [self.btn[n] for n in names], reserved=self.px(60) + self.px(32))
         hdr_room = self.top_frame.winfo_width() - self.brand.winfo_reqwidth() - self.px(32)
-        both = [self.btn["refresh"], self.btn["theme"]]
-        compact = sum(b.measure(False) for b in both) + self.px(16) > hdr_room
+        both = [self.btn["limits"], self.btn["refresh"], self.btn["theme"]]
+        compact = sum(b.measure(False) for b in both) + self.px(24) > hdr_room
         for b in both:
             b.set_compact(compact)
         # O subtítulo some antes de a marca ficar apertada
@@ -1693,11 +1902,12 @@ class AntigravityGateApp(tk.Tk):
         shown = [self.row_by_cid[self.cid_of(i)] for i in self.iter_sessions() if self.cid_of(i) in self.row_by_cid]
         st = lambda r: self.states.get(r['cid'], "pendente")
         counts = {k: sum(1 for r in shown if st(r) == k) for k in ("pendente", "aprovada", "arquivada")}
-        rot = sum(1 for r in shown if r['ctx'] >= ROT_TOKENS)
+        levels = [ctx_level(r['ctx']) for r in shown]
         self.chips['pendente'].configure(text=f"○ {counts['pendente']} pendentes")
         self.chips['aprovada'].configure(text=f"✔ {counts['aprovada']} aprovadas")
         self.chips['arquivada'].configure(text=f"▣ {counts['arquivada']} arquivadas")
-        self.chips['rot'].configure(text=f"⚠ {rot} em Rot")
+        self.chips['rot'].configure(text=f"⚠ {levels.count(1)} em atenção")
+        self.chips['crit'].configure(text=f"‼ {levels.count(2)} críticas")
 
     def is_session(self, iid):
         v = self.tree.item(iid, 'values') if iid else ()
@@ -1752,9 +1962,14 @@ class AntigravityGateApp(tk.Tk):
 
     def row_tags(self, cid):
         st = self.states.get(cid, "pendente")
-        if st in ("aprovada", "arquivada"):
-            return ("st_" + st,)
-        return ("rot",) if self.row_by_cid.get(cid, {}).get('ctx', 0) >= ROT_TOKENS else ()
+        level = ctx_level(self.row_by_cid.get(cid, {}).get('ctx', 0))
+        if st == "arquivada":
+            return ("st_arquivada",)
+        if level == 2:
+            return ("crit",)
+        if st == "aprovada":
+            return ("st_aprovada",)
+        return ("rot",) if level == 1 else ()
 
     def leaf_text(self, cid):
         n = self.sub_count.get(cid, 0)
@@ -1868,6 +2083,7 @@ class AntigravityGateApp(tk.Tk):
         self.base_status = text
         self.status.configure(text=text)
         self.update_chips()
+        self.update_banner()
         self.update_actions()
 
     def load_data(self):

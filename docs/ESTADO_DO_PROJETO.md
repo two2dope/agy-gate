@@ -24,7 +24,7 @@ O dossiê é extração local (sem modelo). Resumo feito pelo modelo fica como o
 
 - O app só lê os bancos do Antigravity (`mode=ro`). O estado fica em `%LOCALAPPDATA%\AntigravityGate\gate_state.db`.
 - Padrão de leitura: `antigravity\conversations`. Backups (`.bak`, `bkp`, `backup`, `corrupt_quarantine`) aparecem como fontes separadas no seletor.
-- Alerta de Context Rot por tokens da última resposta (`f2 + f5`), limite em `ROT_TOKENS` (padrão 150000, variável `AGY_ROT_TOKENS`). O limite é provisório.
+- Alerta de contexto por tokens da última resposta (`f2 + f5`), em **dois níveis** (atenção e crítico), escolhidos em `Limites` (ver "Limites de contexto").
 - Auto-Run = **opção B, retomada limpa**: o app monta um dossiê compacto da sessão aprovada e abre uma **sessão nova** com `agy --print`, sem tocar na sessão original.
 
 ## Formato dos bancos de sessão (resumo)
@@ -72,7 +72,6 @@ Usado pelo Auto-Run:
 ## Pendências do usuário
 
 - Quando a cota voltar (cerca de 31 h após 2026-10-26), repetir o teste `agy --print "responda apenas: ok" --output-format json --mode plan --print-timeout 60s` para ver o formato de sucesso.
-- Escolher o limite do alerta Rot em tokens.
 - Revisar um dossiê real de uma sessão sua e dizer o que falta ou sobra antes de ele alimentar o Auto-Run.
 
 ## Como testar
@@ -103,3 +102,20 @@ Os testes rodam em Xvfb com Python 3.12 e `python3-tk`. Estão fora do repositó
 - Os botões habilitam e desabilitam conforme a seleção. Exportar e Dossiê só valem para uma sessão com arquivo. Aprovar, Arquivar e Pendente aceitam sessões ou pasta de projeto.
 - **Ícones:** usam `Segoe MDL2 Assets` quando existe (Windows 10 e 11). Os códigos dos glifos **não foram vistos num Windows**. Se algum aparecer errado, use `Tema` > `Símbolos Unicode` (ou `Sem ícones`). Variável `AGY_ICONS=mdl2|symbol|none` também vale.
 - Linhas da tabela: aprovada em verde, arquivada esmaecida, Rot em âmbar. Medidor de contexto de 6 células. Selos de contagem no rodapé. Rolagem horizontal para as colunas do fim.
+
+## Limites de contexto
+
+- Botão `Limites` no cabeçalho. Três faixas prontas e uma personalizada:
+
+| Faixa | Atenção | Crítico | Uso |
+|---|---|---|---|
+| Conservador | 100k | 150k | troca cedo; tarefas longas com muitas ferramentas |
+| **Equilibrado** (padrão) | 150k | 250k | avisa antes da degradação e deixa margem para o dossiê |
+| Amplo | 300k | 500k | modelos de contexto muito grande |
+| Personalizado | você define | você define | aceita `120000`, `120.000` ou `120k`; entre 10k e 5M; crítico maior que atenção |
+
+- Os valores das faixas são **heurísticas**, não medidas: a degradação real depende do modelo e da tarefa **[Não verificado]** para o seu modelo. Nas suas sessões reais, o contexto chegou a ~201 mil e ~213 mil tokens.
+- A janela mostra, antes de aplicar, quantas sessões carregadas ficariam em atenção e críticas.
+- **Atenção:** linha em âmbar, `⚠`. **Crítico:** linha em vermelho, `‼`, mais um **aviso** acima da tabela com os botões `Ver críticas` (lista só as críticas) e `Dispensar`. O aviso não conta sessões arquivadas. Ele volta se você mudar o limite ou a fonte.
+- Selos no rodapé: `N em atenção` e `N críticas`. O dossiê indica o nível no cabeçalho (`tokens (atenção)` ou `(crítico)`).
+- Preferência salva em `settings.json`. A variável `AGY_ROT_TOKENS` (antiga) ainda vale: define a atenção, e o crítico fica 1,5 vez maior.
