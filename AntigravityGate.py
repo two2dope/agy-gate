@@ -277,7 +277,11 @@ class AntigravityGateApp(tk.Tk):
                 self.db_files[os.path.splitext(entry.name)[0]] = entry.path
 
         grouped = {}
-        all_cids = set(self.db_files.keys()) | set(self.summaries.keys())
+        # Fonte ativa mostra também sessões que só existem no summaries ("sem arquivo").
+        # Nas cópias de backup só entram sessões que têm arquivo naquela pasta.
+        all_cids = set(self.db_files.keys())
+        if self.source_idx == 0:
+            all_cids |= set(self.summaries.keys())
 
         for cid in all_cids:
             s = self.summaries.get(cid, {})
