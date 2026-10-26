@@ -156,3 +156,8 @@ Os testes rodam em Xvfb com Python 3.12 e `python3-tk`. Estão fora do repositó
 - Os botões minimizar, maximizar e fechar são do Windows e mudam de cor junto com a barra.
 - O autoteste do `.exe` no Windows do CI imprime o HRESULT de cada atributo (0 = aplicado).
 - Não verificado visualmente: só o seu Windows mostra o resultado. Caixas de mensagem nativas (avisos e erros) não são pintadas.
+
+## Cabeçalho sem o nome repetido
+
+- A barra de título do Windows já mostra "AntigravityGate". O cabeçalho do app repetia o nome em letras grandes. Agora diz para que o app serve: "Gestão de contexto e curadoria" (com o losango). O subtítulo pequeno foi removido.
+- Fundir a barra de título com o cabeçalho exigiria desenhar a barra no app (sem moldura do Windows): perde arrastar, encaixar nas bordas, redimensionar e atalhos nativos. Descartado; a barra nativa segue as cores do tema.

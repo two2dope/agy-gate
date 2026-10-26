@@ -2350,10 +2350,9 @@ class AntigravityGateApp(tk.Tk):
         self.brand = self.themed_widget(tk.Frame(self.top_frame), bg="header_bg")
         self.brand.pack(side=tk.LEFT)
         self.themed_widget(tk.Label(self.brand, text="◆", font=self.f_title), bg="header_bg", fg="header_fg").pack(side=tk.LEFT)
-        self.title_lbl = self.themed_widget(tk.Label(self.brand, text="AntigravityGate", font=self.f_title), bg="header_bg", fg="header_fg")
+        # O nome do app já está na barra de título da janela; o cabeçalho diz para que serve.
+        self.title_lbl = self.themed_widget(tk.Label(self.brand, text="Gestão de contexto e curadoria", font=self.f_title), bg="header_bg", fg="header_fg")
         self.title_lbl.pack(side=tk.LEFT, padx=(self.px(8), self.px(12)))
-        self.sub_lbl = self.themed_widget(tk.Label(self.brand, text="gestão de contexto e curadoria", font=self.f_small), bg="header_bg", fg="header_sub")
-        self.sub_lbl.pack(side=tk.LEFT, pady=(self.px(5), 0))
         self.hdr_right = self.themed_widget(tk.Frame(self.top_frame), bg="header_bg")
         self.hdr_right.pack(side=tk.RIGHT)
         self.make_button(self.hdr_right, "theme", "theme", self.theme_button_text(), self.show_theme_menu, "Escolher tema e estilo de ícones", bg_token="header_bg", icon_token="accent_text").pack(side=tk.RIGHT, padx=(self.px(8), 0))
@@ -2523,12 +2522,6 @@ class AntigravityGateApp(tk.Tk):
         compact = sum(b.measure(False) for b in both) + self.px(24) > hdr_room
         for b in both:
             b.set_compact(compact)
-        # O subtítulo some antes de a marca ficar apertada
-        show_sub = self.top_frame.winfo_width() > self.px(980)
-        if show_sub and not self.sub_lbl.winfo_manager():
-            self.sub_lbl.pack(side=tk.LEFT, pady=(self.px(5), 0))
-        elif not show_sub and self.sub_lbl.winfo_manager():
-            self.sub_lbl.pack_forget()
 
     def autorun_candidates(self):
         return [r for grp in self.grouped.values() for r in grp if self.states.get(r['cid']) == "aprovada" and r['fpath']]
