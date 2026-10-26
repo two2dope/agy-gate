@@ -46,7 +46,7 @@ São 15 conjuntos (leitura, exportação, Auto-Run com `agy` simulado, temas e c
 ## Gerar o `.exe` e publicar uma versão
 
 - A cada push em `main`, o GitHub Actions monta o `.exe`, abre-o em modo de autoteste e guarda o artefato (30 dias).
-- Para publicar uma versão: suba o número em `__version__` (`AntigravityGate.py`), registre no `CHANGELOG.md`, faça o commit em `main` e crie a tag `vX.Y.Z` com o mesmo número. A Release sai sozinha, com o `.exe`, o SHA-256 e as notas do CHANGELOG. Se a tag não bater com `__version__`, o build falha de propósito.
+- Para publicar uma versão: suba o número em `__version__` (`AntigravityGate.py`), registre no `CHANGELOG.md`, faça o commit em `main` e crie a tag `vX.Y.Z` com o mesmo número (por `git tag` e `git push --tags`, ou pela tela **Releases > Draft a new release**, digitando a tag e escolhendo *Create new tag on publish*). A Release recebe o `.exe`, o SHA-256 e as notas do CHANGELOG sozinha. Se a tag não bater com `__version__`, o build falha de propósito.
 - Local: `packaging\build_exe.bat`.
 
 ## Estrutura

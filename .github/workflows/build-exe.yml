@@ -78,6 +78,17 @@ jobs:
           $notes = if ($m.Success) { $m.Groups[1].Value.Trim() } else { "Sem notas no CHANGELOG para esta versão." }
           $notes += "`n`n**SHA-256 do .exe:** ``$($env:SHA256)```n`nO .exe não é assinado: o Windows pode mostrar o aviso do SmartScreen na primeira vez (Mais informações, Executar assim mesmo)."
           Set-Content -Path release_notes.md -Value $notes -Encoding UTF8
-          $ghArgs = @("release", "create", $env:GITHUB_REF_NAME, "dist/AntigravityGate.exe", "--title", "AntigravityGate $env:GITHUB_REF_NAME", "--notes-file", "release_notes.md")
-          if ($env:VERSION -like "0.*") { $ghArgs += "--prerelease" }
+          $tag = $env:GITHUB_REF_NAME
+          $title = "AntigravityGate $tag"
+          $pre = $env:VERSION -like "0.*"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            # A Release já foi criada pela tela do GitHub: anexa o .exe e preenche título e notas.
+            gh release upload $tag dist/AntigravityGate.exe --clobber
+            $ghArgs = @("release", "edit", $tag, "--title", $title, "--notes-file", "release_notes.md", "--prerelease=$($pre.ToString().ToLower())")
+          } else {
+            $ghArgs = @("release", "create", $tag, "dist/AntigravityGate.exe", "--title", $title, "--notes-file", "release_notes.md")
+            if ($pre) { $ghArgs += "--prerelease" }
+          }
           gh @ghArgs
+          if ($LASTEXITCODE -ne 0) { throw "gh release falhou (código $LASTEXITCODE)" }
