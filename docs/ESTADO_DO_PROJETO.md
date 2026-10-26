@@ -137,3 +137,10 @@ Os testes rodam em Xvfb com Python 3.12 e `python3-tk`. Estão fora do repositó
 - Cada tema aparece com amostra de 4 cores (fundo, painel, destaque, texto) e marca de seleção. Abaixo, o estilo de ícones (Segoe MDL2, Símbolos Unicode, Sem ícones).
 - Setas, Enter e Esc funcionam. Clicar fora ou no botão de novo fecha. Escolher aplica na hora e grava em `settings.json`.
 - Não verificado no Windows real: posição da lista perto da borda da tela (testado só em Linux/Xvfb).
+
+## Tamanho e posição da janela
+
+- A janela abria com 1240×820 px fixos. Em tela baixa (notebook 1366×768) passava da borda: a barra de título e a de tarefas cobriam partes e as alças de redimensionar ficavam fora da tela.
+- Agora o tamanho de projeto é escalado pelo DPI e limitado à área útil (94% da largura; 88% da altura, descontando ~110 px). Abre centralizada.
+- O app lembra tamanho e posição em `settings.json` (chave `window`), gravados 0,7 s depois de mexer e ao fechar. Maximizada não é gravada. Posição salva fora da tela é puxada para dentro.
+- Não verificado no Windows real: tela com vários monitores e escala 125% a 150%. Testado só com funções de cálculo e Xvfb.

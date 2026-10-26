@@ -1313,6 +1313,27 @@ def save_settings(d):
         log.warning("Não foi possível salvar as preferências: %s", e)
 
 
+WIN_DEFAULT = (1240, 820)  # tamanho de projeto, em pixels a 96 dpi
+WIN_MIN = (760, 520)
+
+
+def window_geometry(sw, sh, scale, saved=None):
+    """(largura, altura, x, y) da janela. Parte do tamanho de projeto (ou do salvo), nunca passa da área útil da tela
+    (sobra para barra de título e barra de tarefas) e fica inteira à vista. Sem posição salva, centraliza."""
+    max_w = int(sw * 0.94)
+    max_h = max(1, min(int(sh * 0.88), sh - round(110 * scale)))
+    w, h, x, y = round(WIN_DEFAULT[0] * scale), round(WIN_DEFAULT[1] * scale), None, None
+    if isinstance(saved, dict):
+        vals = [saved.get(k) for k in ("w", "h", "x", "y")]
+        if all(isinstance(v, int) and not isinstance(v, bool) for v in vals) and 300 <= vals[0] <= 20000 and 300 <= vals[1] <= 20000:
+            w, h, x, y = vals
+    w = max(min(w, max_w), min(WIN_MIN[0], max_w))
+    h = max(min(h, max_h), min(WIN_MIN[1], max_h))
+    if x is None:
+        return w, h, (sw - w) // 2, max(0, (sh - h) // 2 - round(20 * scale))
+    return w, h, min(max(x, 0), max(0, sw - w)), min(max(y, 0), max(0, sh - h - round(48 * scale)))
+
+
 def _rgb(h):
     h = h.lstrip('#')
     return [int(h[i:i + 2], 16) for i in (0, 2, 4)]
@@ -1897,8 +1918,7 @@ class AntigravityGateApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("AntigravityGate")
-        self.geometry("1240x820")
-        self.minsize(760, 520)
+        self._win_job = None
 
         self.themed, self.icon_buttons, self.btn, self.chips = [], [], {}, {}
         self.icon_cache = {}
@@ -1920,6 +1940,10 @@ class AntigravityGateApp(tk.Tk):
         self.search_note = ""
 
         self.settings = load_settings()
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        w, h, x, y = window_geometry(sw, sh, self.winfo_fpixels('1i') / 96, self.settings.get("window"))
+        self.geometry(f"{w}x{h}+{x}+{y}")
+        self.minsize(min(WIN_MIN[0], sw), min(WIN_MIN[1], sh))
         self.limit_preset, att, crit = limits_from_settings(self.settings)
         set_context_limits(att, crit)
         c = self.settings.get("context") if isinstance(self.settings.get("context"), dict) else {}
@@ -1945,6 +1969,8 @@ class AntigravityGateApp(tk.Tk):
         self.create_widgets()
         self.apply_theme()
         self.bind("<Configure>", self.on_resize)
+        self.bind("<Configure>", self.schedule_save_window, add="+")
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.poll()
         self.load_data()
 
@@ -2349,6 +2375,28 @@ class AntigravityGateApp(tk.Tk):
         need = sum(b.measure(False) + self.px(8) for b in buttons)
         for b in buttons:
             b.set_compact(need > avail)
+
+    def schedule_save_window(self, e):
+        if e.widget is not self:
+            return
+        if self._win_job:
+            self.after_cancel(self._win_job)
+        self._win_job = self.after(700, self.save_window)
+
+    def save_window(self):
+        """Grava tamanho e posição (só com a janela em estado normal; maximizada não conta)."""
+        self._win_job = None
+        m = re.match(r"(\d+)x(\d+)([+-]-?\d+)([+-]-?\d+)$", self.geometry())
+        if self.wm_state() != "normal" or not m:
+            return
+        self.settings["window"] = dict(w=int(m[1]), h=int(m[2]), x=int(m[3]), y=int(m[4]))
+        save_settings(self.settings)
+
+    def on_close(self):
+        if self._win_job:
+            self.after_cancel(self._win_job)
+            self.save_window()
+        self.destroy()
 
     def on_resize(self, _e=None):
         if getattr(self, "_fit_job", None):
