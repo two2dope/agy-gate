@@ -3,6 +3,7 @@
 Uso:
     python inspect_steps.py CAMINHO.db            # estrutura apenas
     python inspect_steps.py CAMINHO.db --amostra 20   # inclui os 20 primeiros caracteres de cada texto
+    python inspect_steps.py CAMINHO.db --idx 0,3,7 --amostra 40   # só estes passos, por idx
 
 Aceita um banco de sessão (tabela `steps`) ou o conversation_summaries.db (coluna `raw_summary`).
 Abre em modo somente-leitura.
@@ -135,7 +136,23 @@ def show_blob(label, blob, cap, amostra):
         print(f"    ... (+{len(lines) - cap} linhas omitidas)")
 
 
-def inspect_steps(c, amostra):
+def show_step(c, idx, amostra, titulo):
+    print(f"\n== {titulo}")
+    row = c.execute("SELECT metadata, step_payload, render_info, error_details, task_details, step_type, status FROM steps WHERE idx=?", (idx,)).fetchone()
+    if row is None:
+        print("  (idx inexistente)")
+        return
+    print(f"  step_type={row[5]} status={row[6]}")
+    for label, blob, cap in zip(("step_payload", "metadata", "render_info", "error_details", "task_details"),
+                                 (row[1], row[0], row[2], row[3], row[4]), (150, 40, 30, 20, 20)):
+        show_blob(label, blob, cap, amostra)
+
+
+def inspect_steps(c, amostra, idxs):
+    if idxs:
+        for idx in idxs:
+            show_step(c, idx, amostra, f"PASSO idx={idx}")
+        return
     print("== RESUMO POR step_type (qtd | status | tamanho do step_payload min/mediana/max)")
     types = [r[0] for r in c.execute("SELECT DISTINCT step_type FROM steps ORDER BY 1")]
     picks = []
@@ -149,11 +166,7 @@ def inspect_steps(c, amostra):
     seq = [r[0] for r in c.execute("SELECT step_type FROM steps ORDER BY idx LIMIT 40")]
     print("  " + " ".join(map(str, seq)))
     for t, idx in picks:
-        print(f"\n== ESTRUTURA DE UM PASSO step_type={t} (idx={idx}, tamanho mediano)")
-        row = c.execute("SELECT metadata, step_payload, render_info, error_details, task_details FROM steps WHERE idx=?", (idx,)).fetchone()
-        for label, blob, cap in zip(("step_payload", "metadata", "render_info", "error_details", "task_details"),
-                                     (row[1], row[0], row[2], row[3], row[4]), (120, 40, 30, 20, 20)):
-            show_blob(label, blob, cap, amostra)
+        show_step(c, idx, amostra, f"ESTRUTURA DE UM PASSO step_type={t} (idx={idx}, tamanho mediano)")
     for tbl in ("gen_metadata", "executor_metadata"):
         row = c.execute(f"SELECT idx, data FROM {tbl} ORDER BY length(data) LIMIT 1").fetchone()
         if row:
@@ -177,11 +190,16 @@ def main():
         k = args.index("--amostra")
         amostra = int(args[k + 1])
         del args[k:k + 2]
+    idxs = []
+    if "--idx" in args:
+        k = args.index("--idx")
+        idxs = [int(x) for x in args[k + 1].split(",")]
+        del args[k:k + 2]
     db = Path(args[0]).resolve()
     c = sqlite3.connect(db.as_uri() + "?mode=ro", uri=True, timeout=2)
     tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     if "steps" in tables:
-        inspect_steps(c, amostra)
+        inspect_steps(c, amostra, idxs)
     if "conversation_summaries" in tables:
         inspect_summaries(c, amostra)
     if not tables & {"steps", "conversation_summaries"}:

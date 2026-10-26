@@ -87,19 +87,23 @@ def main():
         pick = [resp[round(i * (len(resp) - 1) / 39)] for i in range(40)]
     else:
         pick = resp
-    modelos = set()
-    for idx, t, st, n, fields in resp:
-        for path in ([5, 9, 7], [5, 9, 8, 1], [5, 9, 8, 2], [5, 9, 11]):
-            v = text(fields, path)
-            if v:
-                modelos.add(v)
     for idx, t, st, n, fields in pick:
         vals = [num(fields, [5, 9, f]) for f in (1, 2, 3, 5, 6, 9, 10)]
         print(f"{idx} | {hora(num(fields, [5, 1, 1]))} | " + " | ".join("-" if v is None else str(v) for v in vals))
 
-    print("\n== TEXTOS CURTOS DE IDENTIFICAÇÃO em f5.f9 (nomes de modelo/provedor)")
-    for m in sorted(modelos):
-        print(f"- {m}")
+    ctx = []
+    soma_ok = 0
+    for idx, t, st, n, fields in resp:
+        f2, f5 = num(fields, [5, 9, 2]), num(fields, [5, 9, 5])
+        f3, f9, f10 = (num(fields, [5, 9, f]) for f in (3, 9, 10))
+        if f2 is not None:
+            ctx.append((f2 + (f5 or 0), idx))
+        if None not in (f3, f9, f10) and f3 == f9 + f10:
+            soma_ok += 1
+    if ctx:
+        maior = max(ctx)
+        print(f"\n== CONTEXTO ESTIMADO (f2 + f5) | último: {ctx[-1][0]} (idx {ctx[-1][1]}) | maior: {maior[0]} (idx {maior[1]})")
+    print(f"== f3 == f9 + f10 em {soma_ok} de {len(resp)} respostas")
 
     n_gen = c.execute("SELECT COUNT(*) FROM gen_metadata").fetchone()[0]
     print(f"\n== gen_metadata: {n_gen} linhas | respostas do modelo (step_type 15): {len(resp)}")
