@@ -146,3 +146,13 @@ Os testes rodam em Xvfb com Python 3.12 e `python3-tk`. Estão fora do repositó
 - Janelas adicionais: `place_over` centraliza sobre a principal, no monitor dela, sem passar da área útil.
 - O autoteste do `.exe` no Windows do CI agora imprime a área útil encontrada (principal e no ponto da janela), o que valida essa consulta num Windows real.
 - Não verificado: escala 125% a 150% e monitores de tamanhos diferentes. Testado com a função de cálculo e Xvfb.
+
+## Barra de título nativa nas cores do tema
+
+- A barra de título do Windows (e a das janelas adicionais) acompanha o tema: `DwmSetWindowAttribute` com modo escuro (Windows 10 1809+) e, no Windows 11, cor de fundo, cor do texto e borda exatas (`header_bg`, `header_fg`, `border`). Arrastar, encaixar, minimizar e redimensionar continuam nativos. Barra desenhada pelo app foi descartada: perde esses recursos.
+- Troca de tema repinta na hora. Fora do Windows não faz nada.
+- Temas com barra clara: Claro e Brutalista (cabeçalho amarelo). Os demais usam barra escura.
+- No Windows 10 só vale claro/escuro; a cor exata depende do Windows 11 (build 22000+).
+- Os botões minimizar, maximizar e fechar são do Windows e mudam de cor junto com a barra.
+- O autoteste do `.exe` no Windows do CI imprime o HRESULT de cada atributo (0 = aplicado).
+- Não verificado visualmente: só o seu Windows mostra o resultado. Caixas de mensagem nativas (avisos e erros) não são pintadas.

@@ -1392,11 +1392,53 @@ def place_over(win, parent, size=None):
     area = work_area_at(win, px + pw // 2, py + ph // 2)
     w, h, x, y = fit_rect(area, win.winfo_fpixels('1i') / 96, w, h, px + (pw - w) // 2, py + (ph - h) // 2, min_size=(0, 0))
     win.geometry(f"{w}x{h}+{x}+{y}")
+    if hasattr(parent, "t"):
+        style_titlebar(win, parent.t)
     win.deiconify()
     try:
         win.wait_visibility()
     except tk.TclError:
         pass
+
+
+def is_dark_color(h):
+    r, g, b = _rgb(h)
+    return 0.299 * r + 0.587 * g + 0.114 * b < 128
+
+
+def style_titlebar(win, t):
+    """Pinta a barra de título nativa do Windows com as cores do tema, sem perder arrastar, encaixar e redimensionar.
+    Windows 10 (1809+): modo claro ou escuro conforme o tema. Windows 11: cor, texto e borda exatos.
+    Devolve {atributo: HRESULT} (0 = aplicado) ou None fora do Windows. Nunca levanta."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32, dwm = ctypes.windll.user32, ctypes.windll.dwmapi
+        user32.GetParent.argtypes, user32.GetParent.restype = [wintypes.HWND], wintypes.HWND
+        user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT]
+        dwm.DwmSetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+        dwm.DwmSetWindowAttribute.restype = ctypes.c_long
+        hwnd = user32.GetParent(win.winfo_id()) or win.winfo_id()
+
+        def put(attr, value):
+            v = ctypes.c_int(value)
+            return dwm.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(v), ctypes.sizeof(v))
+
+        colorref = lambda hx: (lambda r, g, b: r | g << 8 | b << 16)(*_rgb(hx))  # 0x00BBGGRR
+        dark = int(is_dark_color(t['header_bg']))
+        res = {"escuro": put(20, dark)}  # DWMWA_USE_IMMERSIVE_DARK_MODE
+        if res["escuro"] != 0:
+            res["escuro_antigo"] = put(19, dark)  # Windows 10 1809 a 1909
+        res["fundo"] = put(35, colorref(t['header_bg']))  # DWMWA_CAPTION_COLOR (Windows 11)
+        res["texto"] = put(36, colorref(t['header_fg']))  # DWMWA_TEXT_COLOR
+        res["borda"] = put(34, colorref(t['border']))  # DWMWA_BORDER_COLOR
+        user32.SetWindowPos(hwnd, None, 0, 0, 0, 0, 0x37)  # sem mover/redimensionar/ativar; só repinta a moldura
+        return res
+    except Exception as e:
+        log.warning("Não foi possível pintar a barra de título: %s", e)
+        return None
 
 
 def _rgb(h):
@@ -2106,6 +2148,8 @@ class AntigravityGateApp(tk.Tk):
             if hasattr(self, 'd_icon'):
                 self.update_details()
         del old_icons
+        if os.name == "nt":
+            self.after_idle(lambda: style_titlebar(self, self.t))
 
     def icon(self, name, handoff=False):
         """Imagem do ícone `name` no tema atual (em cache; gerada pelo próprio app)."""
@@ -3249,7 +3293,7 @@ def selftest(out_path):
         area = ""
         if os.name == "nt":  # confere a consulta de monitor no Windows de verdade
             primary, at = _win_work_area(), _win_work_area(app.winfo_x() + 50, app.winfo_y() + 50)
-            area = f"; área útil principal {primary}, no ponto {at}"
+            area = f"; área útil principal {primary}, no ponto {at}; barra de título {style_titlebar(app, app.t)}"
         app.destroy()
         msg = f"OK ({fts}{area})" if done else "FALHA: a carga não terminou em 60 s"
     except Exception as e:
