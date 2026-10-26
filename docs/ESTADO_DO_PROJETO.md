@@ -7,7 +7,7 @@ Atualizado em 2026-10-26, versão **0.9.0**. Repositório próprio: `two2dope/ag
 | | |
 |---|---|
 | **Feito** | M1 a M4 (leitura, estado, exportação, dossiê), Auto-Run opção B (testado só com `agy` simulado), `.exe` no GitHub Actions com autoteste, interface visual completa (8 temas, ícones, painel de detalhes, notificações, limites de contexto, janelas dentro da área útil do monitor, barra de título nos temas), repositório próprio com testes, README, CHANGELOG e Release automática por tag |
-| **Faltando** | Teste real do Auto-Run com o `agy` (cota; depois de 27/10); revisão final; conferir no Windows do usuário os itens "Não verificado" abaixo; decisão do limite Rot |
+| **Faltando** | Teste real do Auto-Run com o `agy` (cota; depois de 27/10; começar com lote de 1 sessão e conferir o `gate.log`); revisão final (auditoria feita: `reviews/audit-full-v0.9.0.md`, críticos C1 a C3 corrigidos; recomendações pendentes); conferir no Windows do usuário os itens "Não verificado" abaixo; decisão do limite Rot |
 | **Próximo passo único** | Revisão final (critério da 1.0.0: revisão feita + Auto-Run real testado) |
 
 O dossiê é extração local (sem modelo). Resumo feito pelo modelo fica como opção futura.
@@ -68,6 +68,9 @@ Usado pelo Auto-Run:
 5. Erro 429 interrompe o lote inteiro e informa o horário de reset. Sem tentativas em laço.
 6. Log por item (iniciado, sucesso, falha) e botão Cancelar.
 7. Trava para não rodar duas vezes sobre a mesma sessão.
+8. Sucesso só com código de saída 0, `conversation_id` e status diferente de `ERROR`; na dúvida, falha.
+9. Prompt numa linha, depois das flags; `agy` `.cmd`/`.bat` com caracteres perigosos para o `cmd.exe` não é executado.
+10. Fechar a janela no meio pergunta, cancela e registra antes de sair.
 
 ## Pendências do usuário
 
@@ -76,7 +79,7 @@ Usado pelo Auto-Run:
 
 ## Como testar
 
-`tests/run_all.sh` (precisa de Python 3.12 com `tkinter` e, sem tela, `xvfb`). São 15 conjuntos com bancos sintéticos e um `agy` simulado (`tests/fake_agy.py`). Os scripts `tools/inspect_*.py` dão a estrutura (sem conteúdo) de qualquer banco de sessão.
+`tests/run_all.sh` (precisa de Python 3.12 com `tkinter` e, sem tela, `xvfb`). São 16 conjuntos com bancos sintéticos e um `agy` simulado (`tests/fake_agy.py`). Os scripts `tools/inspect_*.py` dão a estrutura (sem conteúdo) de qualquer banco de sessão.
 
 ## Versões
 

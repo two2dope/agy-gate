@@ -24,3 +24,7 @@ elif mode == "hang":
     time.sleep(60)
 elif mode == "crash":
     sys.exit(2)
+elif mode == "nostatus":  # JSON sem status e sem conversation_id: não é sucesso
+    print(json.dumps({"response": "algo"}))
+elif mode == "okexit1":  # JSON de sucesso, mas código de saída 1: não é sucesso
+    print(json.dumps({"conversation_id": cid, "status": "OK", "response": "r", "error": ""})); sys.exit(1)

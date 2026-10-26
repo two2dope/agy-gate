@@ -36,6 +36,8 @@ A parte de leitura, curadoria e exportação está sólida: somente-leitura real
 
 ## Todos os Problemas Críticos (Must Fix)
 
+> **Situação:** C1, C2 e C3 corrigidos depois desta auditoria, com testes em `tests/test_safety.py` (ver CHANGELOG, "Não lançado"). C2 continua dependendo de conferir no Windows se o `agy` é `.exe` ou `.cmd`.
+
 | # | Problema | Lente(s) | Arquivo(s) | Impacto | Correção |
 |---|----------|----------|------------|---------|----------|
 | C1 | Sucesso do `agy` é inferido pela **ausência** de erro: código de saída ignorado e `conversation_id` vazio aceito. `{"conversation_id":"x"}` sem `status` vira `ok=True` **[Verificado]** | Backend, Prod | `AntigravityGate.py:951`, `:1053-1062` | Formato de sucesso real ainda não visto. Uma saída inesperada grava handoff `ok`, mostra `↪ retomada` e tira a sessão do próximo lote (sem "Refazer"). A UI afirma um estado falso: o mesmo defeito-raiz da auditoria original | Guardar `proc.returncode` em `_run_agy`; `ok` só com `returncode == 0` **e** `conversation_id` não vazio **e** `status != ERROR`. Logar a saída bruta no `gate.log` nas primeiras execuções reais |

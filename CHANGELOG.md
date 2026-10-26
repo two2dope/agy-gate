@@ -2,6 +2,17 @@
 
 Formato: [Versionamento Semântico](https://semver.org/lang/pt-BR/). Enquanto a versão começar com 0, o app está em candidato a lançamento: funciona, mas faltam itens listados abaixo.
 
+## [Não lançado]
+
+Correções dos três críticos da auditoria `reviews/audit-full-v0.9.0.md`, todos no Auto-Run.
+
+### Corrigido
+- Sucesso do `agy` agora exige código de saída 0, `conversation_id` preenchido e status diferente de `ERROR`. Antes, qualquer saída sem erro explícito contava como retomada. A saída bruta de cada chamada vai para o `gate.log`.
+- Argumentos do `agy`: prompt numa linha só e por último; `--mode plan` e `--output-format json` vêm antes. Se o `agy` for um `.cmd`/`.bat` e os argumentos tiverem caracteres que o `cmd.exe` reinterpreta, o lote para sem executar e explica o motivo.
+- Fechar a janela com Auto-Run ou exportação em andamento pergunta antes; se confirmar, cancela, encerra o `agy` e registra a falha antes de sair.
+- Cancelar o Auto-Run fica registrado como "cancelada" (antes aparecia como "saída sem JSON").
+- Exportações gravam num arquivo `.part` e só renomeiam no fim: erro ou cancelamento não deixam arquivo pela metade.
+
 ## [0.9.0] - 2026-10-26
 
 Primeira versão neste repositório. Reúne tudo o que foi feito desde a auditoria do script original.

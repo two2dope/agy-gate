@@ -789,18 +789,32 @@ def build_dossier(meta, qm, steps, progress=None):
     return redact("\n".join(o))
 
 
+class ExportCancelled(Exception):
+    """Levantada pelo callback de progresso para interromper uma exportação."""
+
+
 def export_session(kind, fpath, meta, out_path, progress=None):
-    """Grava o diálogo completo ('full') ou o dossiê de retomada ('dossier') de uma sessão."""
-    with open_ro(fpath) as conn:
-        qm = quick_meta(conn)
-        if kind == 'full':
-            files = collect_file_activity(iter_steps(conn))
-            with open(out_path, 'w', encoding='utf-8', newline='\n') as fh:
-                write_full_export(fh, meta, qm, iter_steps(conn), progress, files)
-        else:
-            text = build_dossier(meta, qm, iter_steps(conn), progress)
-            with open(out_path, 'w', encoding='utf-8', newline='\n') as fh:
-                fh.write(text)
+    """Grava o diálogo completo ('full') ou o dossiê de retomada ('dossier') de uma sessão.
+    Escreve num arquivo .part e só o renomeia no fim: erro ou cancelamento não deixam arquivo pela metade."""
+    tmp = out_path + ".part"
+    try:
+        with open_ro(fpath) as conn:
+            qm = quick_meta(conn)
+            if kind == 'full':
+                files = collect_file_activity(iter_steps(conn))
+                with open(tmp, 'w', encoding='utf-8', newline='\n') as fh:
+                    write_full_export(fh, meta, qm, iter_steps(conn), progress, files)
+            else:
+                text = build_dossier(meta, qm, iter_steps(conn), progress)
+                with open(tmp, 'w', encoding='utf-8', newline='\n') as fh:
+                    fh.write(text)
+        os.replace(tmp, out_path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 # --- estado de aprovação (banco próprio) -----------------------------------------------------
@@ -888,7 +902,8 @@ class _NoClose:
 # --- Auto-Run (retomada limpa, opção B) -------------------------------------------------------
 
 AGY_TIMEOUT_S = 600
-AGY_PROMPT = ("Você está retomando o trabalho de uma sessão anterior. Leia o dossiê em: {path}\n"
+# Uma linha só: num shim .cmd/.bat, o cmd.exe encerra a linha de comando na primeira quebra de linha.
+AGY_PROMPT = ("Você está retomando o trabalho de uma sessão anterior. Leia o dossiê em: {path} . "
               "Depois responda, em poucas linhas: (1) o que entendeu do objetivo e do estado atual; (2) o que falta; "
               "(3) os próximos passos que propõe. Não altere nenhum arquivo e não execute comandos; aguarde minha confirmação.")
 
@@ -921,17 +936,36 @@ def uri_paths(uris):
 
 
 def build_agy_args(agy, dossier_path, extra_dirs, mode="plan", timeout_s=AGY_TIMEOUT_S):
-    """Lista de argumentos (sem shell). Nunca inclui --dangerously-skip-permissions."""
-    args = [agy, "--print", AGY_PROMPT.format(path=dossier_path), "--output-format", "json",
-            "--mode", mode, "--print-timeout", f"{timeout_s}s", "--add-dir", os.path.dirname(dossier_path)]
+    """Lista de argumentos (sem shell). Nunca inclui --dangerously-skip-permissions.
+    As flags de segurança vêm antes do prompt: se algo truncar a linha, o prompt se perde, nunca o `--mode`."""
+    args = [agy, "--output-format", "json", "--mode", mode, "--print-timeout", f"{timeout_s}s",
+            "--add-dir", os.path.dirname(dossier_path)]
     for d in extra_dirs:
         args += ["--add-dir", d]
-    return args
+    return args + ["--print", AGY_PROMPT.format(path=dossier_path)]
 
 
-def parse_agy_output(stdout, stderr):
+CMD_UNSAFE = set('"%^&|<>!\r\n')
+
+
+def cmd_shim_problem(args):
+    """Um `agy` .cmd/.bat roda pelo cmd.exe, que reinterpreta a linha de comando (%, &, |, quebras de linha...)
+    e pode descartar ou trocar argumentos. Devolve o motivo para não executar, ou '' se é seguro."""
+    if os.path.splitext(args[0])[1].lower() not in (".cmd", ".bat"):
+        return ""
+    bad = sorted({ch for a in args[1:] for ch in a if ch in CMD_UNSAFE})
+    if not bad:
+        return ""
+    shown = " ".join(repr(ch) for ch in bad)
+    return (f"o agy é um script {os.path.splitext(args[0])[1]} (passa pelo cmd.exe) e os argumentos têm caracteres "
+            f"que o cmd.exe reinterpreta ({shown}). Defina AGY_EXE com o caminho de um agy.exe ou use uma pasta sem esses caracteres.")
+
+
+def parse_agy_output(stdout, stderr, returncode=None):
     """Interpreta a saída do agy. Formato conhecido: um objeto JSON com conversation_id, status, response, error, usage;
-    em erro, linhas 'error: ...' e 'AGY_ERROR: {json}' vão para stderr. Aceita saída fora do padrão sem quebrar."""
+    em erro, linhas 'error: ...' e 'AGY_ERROR: {json}' vão para stderr. Aceita saída fora do padrão sem quebrar.
+    Sucesso exige tudo: código de saída 0 (quando informado), conversation_id, status diferente de ERROR e erro vazio.
+    Na dúvida é falha: um sucesso falso tiraria a sessão do próximo lote."""
     obj = None
     for chunk in [stdout.strip()] + [ln.strip() for ln in reversed(stdout.strip().splitlines())]:
         if chunk.startswith("{"):
@@ -948,9 +982,15 @@ def parse_agy_output(stdout, stderr):
         res['conversation_id'] = str(obj.get('conversation_id') or '')
         res['response'] = str(obj.get('response') or '')
         res['error'] = str(obj.get('error') or '')
-        res['ok'] = str(obj.get('status', '')).upper() != 'ERROR' and not res['error']
+        if not res['error'] and str(obj.get('status', '')).upper() == 'ERROR':
+            res['error'] = "agy informou status ERROR sem mensagem"
+        if not res['error'] and not res['conversation_id']:
+            res['error'] = "resposta sem conversation_id"
     else:
         res['error'] = "saída sem JSON reconhecível: " + (blob.strip()[:200] or "(vazia)")
+    if returncode not in (None, 0) and not res['error']:
+        res['error'] = f"agy terminou com código {returncode}"
+    res['ok'] = not res['error']
     return res
 
 
@@ -981,7 +1021,10 @@ class AutoRunner:
         while True:
             try:
                 out, err = self.proc.communicate(timeout=0.3)
-                return out, err, None
+                # cancel() pode ter encerrado o processo: então a saída é de um agy interrompido, não uma resposta.
+                # Se ele terminou com 0 antes do cancelamento chegar, a resposta vale.
+                code = self.proc.returncode
+                return out, err, "cancelada" if self.cancelled and code != 0 else None, code
             except subprocess.TimeoutExpired:
                 if self.cancelled:
                     self.proc.terminate()
@@ -990,11 +1033,11 @@ class AutoRunner:
                     except subprocess.TimeoutExpired:
                         self.proc.kill()
                         out, err = self.proc.communicate()
-                    return out, err, "cancelada"
+                    return out, err, "cancelada", self.proc.returncode
                 if time.time() > deadline:
                     self.proc.kill()
                     out, err = self.proc.communicate()
-                    return out, err, "tempo esgotado"
+                    return out, err, "tempo esgotado", self.proc.returncode
 
     def run(self):
         os.makedirs(HANDOFF_DIR, exist_ok=True)
@@ -1031,8 +1074,16 @@ class AutoRunner:
                 summary['dossier'] += 1
                 continue
             args = build_agy_args(self.agy, dossier, workspace_dirs(it.get('workspace', '')), self.mode, self.timeout_s)
+            problem = cmd_shim_problem(args)
+            if problem:
+                self.store.add_handoff(cid, '', dossier, 'erro', problem)
+                summary['failed'] += 1
+                summary['skipped'] += n - i - 1
+                summary['aborted'] = 'agy .cmd/.bat inseguro'
+                self.log_cb(f"    ✖ não executado: {problem}")
+                break
             try:
-                out, err, why = self._run_agy(args)
+                out, err, why, code = self._run_agy(args)
             except OSError as e:
                 self.store.add_handoff(cid, '', dossier, 'erro', f"não executou o agy: {e}")
                 summary['failed'] += 1
@@ -1050,7 +1101,8 @@ class AutoRunner:
                     break
                 failures += 1
             else:
-                res = parse_agy_output(out, err)
+                log.info("agy %s: código %s; stdout %s; stderr %s", cid[:8], code, out[:4000], err[:2000])
+                res = parse_agy_output(out, err, code)
                 new_cid = res['conversation_id']
                 if res['ok']:
                     self.store.add_handoff(cid, new_cid, dossier, 'ok', res['response'][:300])
@@ -2039,6 +2091,8 @@ class AntigravityGateApp(tk.Tk):
         self.loading = False
         self.exporting = False
         self.autorunning, self.runner, self.auto_win = False, None, None
+        self.auto_thread = self.export_thread = None
+        self.export_cancel = False
         self.handoffs = {}
         self.warnings = 0
         self.base_status = ""
@@ -2504,10 +2558,31 @@ class AntigravityGateApp(tk.Tk):
         save_settings(self.settings)
 
     def on_close(self):
+        busy = [name for name, flag in (("o Auto-Run", self.autorunning), ("uma exportação", self.exporting)) if flag]
+        if busy:
+            if not messagebox.askyesno("Sair do AntigravityGate",
+                                       f"Há {' e '.join(busy)} em andamento. Cancelar e sair?\n\n"
+                                       "O que já terminou fica registrado; o item em curso é interrompido e não é salvo."):
+                return
+            self.status.configure(text="Cancelando antes de sair…")
+            self.update_idletasks()
+            self.stop_background_work()
         if self._win_job:
             self.after_cancel(self._win_job)
             self.save_window()
         self.destroy()
+
+    def stop_background_work(self, timeout=12.0):
+        """Cancela Auto-Run e exportação e espera as threads terminarem (o agy é encerrado e a falha fica registrada)."""
+        self.export_cancel = True
+        if self.runner and self.autorunning:
+            self.runner.cancel()
+        deadline = time.time() + timeout
+        for th in (self.auto_thread, self.export_thread):
+            if th and th.is_alive():
+                th.join(max(0.0, deadline - time.time()))
+                if th.is_alive():
+                    log.warning("Trabalho em segundo plano não terminou em %.0f s; saindo mesmo assim", timeout)
 
     def on_resize(self, _e=None):
         if getattr(self, "_fit_job", None):
@@ -3092,21 +3167,30 @@ class AntigravityGateApp(tk.Tk):
             defaultextension=".md", filetypes=[("Markdown", "*.md"), ("Todos os arquivos", "*.*")])
         if not out:
             return
-        self.exporting = True
+        self.exporting, self.export_cancel = True, False
         self.exporting_btn = self.btn["export" if kind == 'full' else "dossier"]
         self.exporting_btn.set_busy(True, "Exportando…")
         self.update_actions()
         self.set_status(f"{self.base_status}  |  exportando…")
 
+        def progress(n, total):
+            if self.export_cancel:
+                raise ExportCancelled()
+            self.queue.put((0, 'export_progress', (n, total)))
+
         def job():
             try:
-                export_session(kind, meta['fpath'], meta, out, progress=lambda n, t: self.queue.put((0, 'export_progress', (n, t))))
+                export_session(kind, meta['fpath'], meta, out, progress=progress)
                 self.queue.put((0, 'export_done', out))
+            except ExportCancelled:
+                log.info("Exportação de %s cancelada", cid)
+                self.queue.put((0, 'export_error', "cancelada"))
             except Exception as e:
                 log.exception("Falha ao exportar %s", cid)
                 self.queue.put((0, 'export_error', f"{type(e).__name__}: {e}"))
 
-        threading.Thread(target=job, daemon=True).start()
+        self.export_thread = threading.Thread(target=job, daemon=True)
+        self.export_thread.start()
 
     # --- Auto-Run ---
 
@@ -3186,7 +3270,8 @@ class AntigravityGateApp(tk.Tk):
                 summary = {'error': f"{type(e).__name__}: {e}"}
             self.queue.put((0, 'auto_done', summary))
 
-        threading.Thread(target=job, daemon=True).start()
+        self.auto_thread = threading.Thread(target=job, daemon=True)
+        self.auto_thread.start()
 
     def open_autorun_window(self, n, dry_run):
         win = tk.Toplevel(self)
