@@ -935,13 +935,15 @@ def uri_paths(uris):
     return out
 
 
-def build_agy_args(agy, dossier_path, extra_dirs, mode="plan", timeout_s=AGY_TIMEOUT_S):
+def build_agy_args(agy, dossier_path, extra_dirs, mode="plan", timeout_s=AGY_TIMEOUT_S, model=None):
     """Lista de argumentos (sem shell). Nunca inclui --dangerously-skip-permissions.
     As flags de segurança vêm antes do prompt: se algo truncar a linha, o prompt se perde, nunca o `--mode`."""
     args = [agy, "--output-format", "json", "--mode", mode, "--print-timeout", f"{timeout_s}s",
             "--add-dir", os.path.dirname(dossier_path)]
     for d in extra_dirs:
         args += ["--add-dir", d]
+    if model and model.strip():  # vazio = modelo padrão do agy
+        args += ["--model", model.strip()]
     return args + ["--print", AGY_PROMPT.format(path=dossier_path)]
 
 
@@ -998,8 +1000,9 @@ class AutoRunner:
     """Percorre as sessões aprovadas: gera o dossiê local e, se não for simulação, abre uma sessão nova com `agy --print`.
     Roda em thread de trabalho; fala com a tela só por `log` (callback). Sem Tk aqui."""
 
-    def __init__(self, items, store, log_cb, agy=None, dry_run=True, mode="plan", timeout_s=AGY_TIMEOUT_S, max_failures=3, grace_s=60):
+    def __init__(self, items, store, log_cb, agy=None, dry_run=True, mode="plan", timeout_s=AGY_TIMEOUT_S, max_failures=3, grace_s=60, model=None):
         self.items, self.store, self.log_cb = items, store, log_cb
+        self.model = model
         self.grace_s = grace_s
         self.agy, self.dry_run, self.mode, self.timeout_s, self.max_failures = agy, dry_run, mode, timeout_s, max_failures
         self.cancelled = False
@@ -1073,7 +1076,7 @@ class AutoRunner:
                 self.store.add_handoff(cid, '', dossier, 'dossie', 'simulação: agy não foi chamado')
                 summary['dossier'] += 1
                 continue
-            args = build_agy_args(self.agy, dossier, workspace_dirs(it.get('workspace', '')), self.mode, self.timeout_s)
+            args = build_agy_args(self.agy, dossier, workspace_dirs(it.get('workspace', '')), self.mode, self.timeout_s, self.model)
             problem = cmd_shim_problem(args)
             if problem:
                 self.store.add_handoff(cid, '', dossier, 'erro', problem)
@@ -3211,11 +3214,25 @@ class AntigravityGateApp(tk.Tk):
         dry, redo = tk.BooleanVar(value=True), tk.BooleanVar(value=False)
         tk.Checkbutton(win, text="Só gerar os dossiês (simulação: não chama o agy, não gasta cota)", variable=dry).pack(anchor=tk.W, padx=12, pady=(8, 0))
         tk.Checkbutton(win, text="Refazer as que já foram retomadas", variable=redo).pack(anchor=tk.W, padx=12)
+        mrow = tk.Frame(win, padx=12)
+        mrow.pack(anchor=tk.W, fill=tk.X, pady=(6, 0))
+        tk.Label(mrow, text="Modelo do agy:").pack(side=tk.LEFT)
+        self.model_var = tk.StringVar(value=str(self.settings.get("agy_model") or ""))
+        history = [m for m in self.settings.get("agy_models", []) if isinstance(m, str)]
+        self.model_box = ttk.Combobox(mrow, textvariable=self.model_var, values=history, width=32)
+        self.model_box.pack(side=tk.LEFT, padx=(6, 8))
+        tk.Label(mrow, text="vazio = padrão do agy; nomes aceitos: agy --help", fg="#555555").pack(side=tk.LEFT)
         tk.Label(win, text="Modo do agy: plan (somente leitura). Um erro de cota interrompe o lote inteiro.", fg="#555555", padx=12).pack(anchor=tk.W)
 
         def go():
-            result['v'] = {'dry_run': dry.get(), 'redo': redo.get()}
+            model = self.model_var.get().strip()
+            result['v'] = {'dry_run': dry.get(), 'redo': redo.get(), 'model': model}
+            self.settings["agy_model"] = model
+            if model:
+                self.settings["agy_models"] = ([model] + [m for m in history if m != model])[:6]
+            save_settings(self.settings)
             win.destroy()
+        self.confirm_go, self.confirm_dry, self.confirm_redo = go, dry, redo  # usados pelos testes
         row = tk.Frame(win, pady=10)
         row.pack()
         tk.Button(row, text="Iniciar", width=12, command=go).pack(side=tk.LEFT, padx=6)
@@ -3258,8 +3275,9 @@ class AntigravityGateApp(tk.Tk):
         self.autorunning = True
         self.btn["autorun"].set_busy(True, "Executando…")
         self.update_actions()
-        self.open_autorun_window(len(items), opts['dry_run'])
-        runner = AutoRunner(items, self.state, lambda line: self.queue.put((0, 'auto_log', line)), agy=agy, dry_run=opts['dry_run'])
+        model = (opts.get('model') or '').strip()
+        self.open_autorun_window(len(items), opts['dry_run'], model)
+        runner = AutoRunner(items, self.state, lambda line: self.queue.put((0, 'auto_log', line)), agy=agy, dry_run=opts['dry_run'], model=model or None)
         self.runner = runner
 
         def job():
@@ -3273,7 +3291,7 @@ class AntigravityGateApp(tk.Tk):
         self.auto_thread = threading.Thread(target=job, daemon=True)
         self.auto_thread.start()
 
-    def open_autorun_window(self, n, dry_run):
+    def open_autorun_window(self, n, dry_run, model=""):
         win = tk.Toplevel(self)
         win.title("Auto-Run — " + ("simulação" if dry_run else "executando"))
         txt = tk.Text(win, wrap=tk.WORD, state=tk.DISABLED, font=('Consolas', 9))
@@ -3283,7 +3301,8 @@ class AntigravityGateApp(tk.Tk):
         win.protocol("WM_DELETE_WINDOW", lambda: messagebox.showinfo("Auto-Run", "Use o botão Cancelar/Fechar."))
         place_over(win, self, size=(780, 420))
         self.auto_win = (win, txt, btn)
-        self.append_auto(f"{n} sessão(ões) na fila. Modo: {'simulação (só dossiês)' if dry_run else 'agy --mode plan'}.")
+        mode = 'simulação (só dossiês)' if dry_run else 'agy --mode plan, modelo ' + (model or 'padrão do agy')
+        self.append_auto(f"{n} sessão(ões) na fila. Modo: {mode}.")
 
     def append_auto(self, line):
         if not self.auto_win:
