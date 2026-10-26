@@ -138,10 +138,11 @@ Os testes rodam em Xvfb com Python 3.12 e `python3-tk`. Estão fora do repositó
 - Setas, Enter e Esc funcionam. Clicar fora ou no botão de novo fecha. Escolher aplica na hora e grava em `settings.json`.
 - Não verificado no Windows real: posição da lista perto da borda da tela (testado só em Linux/Xvfb).
 
-## Tamanho e posição da janela
+## Tamanho e posição das janelas
 
-- A janela abria com 1240×820 px fixos e centralizada na tela inteira. Em tela baixa passava da borda; com a barra de tarefas no topo (caso real: notebook 1366×768 como monitor principal), a barra de título ficava sob ela.
-- Agora o tamanho de projeto é escalado pelo DPI e limitado à **área útil do monitor principal** (`SystemParametersInfoW(SPI_GETWORKAREA)`, que exclui a barra de tarefas em qualquer lado), descontando barra de título e folga. Abre centralizada nessa área.
-- O app lembra tamanho e posição em `settings.json` (chave `window`), gravados 0,7 s depois de mexer e ao fechar. Maximizada não é gravada.
-- Posição salva no monitor principal é puxada para a área útil (corrige o `y` salvo sob a barra). Posição em outro monitor vale dentro do desktop virtual; se o monitor sumir, a janela volta para dentro.
-- Não verificado no Windows real: escala 125% a 150% e a posição entre monitores de tamanhos diferentes. Testado com a função de cálculo e Xvfb.
+- A janela abria com 1240×820 px fixos e centralizada na tela inteira. Em tela baixa passava da borda; com a barra de tarefas no topo (caso real: notebook 1366×768 como monitor principal), a barra de título ficava sob ela. As janelas adicionais (Limites, confirmação e andamento do Auto-Run) abriam no canto do monitor principal, também sob a barra.
+- Agora tudo é calculado sobre a **área útil do monitor** (sem a barra de tarefas, em qualquer lado): `MonitorFromPoint` + `GetMonitorInfoW` (`rcWork`) no Windows, `SystemParametersInfoW` para o principal. Fora do Windows vale a tela inteira.
+- Janela principal: tamanho de projeto escalado pelo DPI, limitado à área útil (descontando barra de título e folga), centralizada. Tamanho e posição são lembrados em `settings.json` (chave `window`), 0,7 s depois de mexer e ao fechar; maximizada não é gravada. Posição salva sob a barra é corrigida; se o monitor sumiu, a janela volta para o mais próximo.
+- Janelas adicionais: `place_over` centraliza sobre a principal, no monitor dela, sem passar da área útil.
+- O autoteste do `.exe` no Windows do CI agora imprime a área útil encontrada (principal e no ponto da janela), o que valida essa consulta num Windows real.
+- Não verificado: escala 125% a 150% e monitores de tamanhos diferentes. Testado com a função de cálculo e Xvfb.
