@@ -7,14 +7,17 @@ import logging
 import math
 import queue
 import shutil
+import struct
 import subprocess
 import threading
 import time
 import urllib.parse
 import urllib.request
+import zlib
+import base64
 from collections import Counter
 from contextlib import closing
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -31,7 +34,7 @@ EXPORT_DIR = os.path.join(LOG_DIR, "exports")
 HANDOFF_DIR = os.path.join(LOG_DIR, "handoffs")
 STATE_DB = os.path.join(LOG_DIR, "gate_state.db")  # estado do AntigravityGate; nunca grava nos bancos do Antigravity
 
-STATUS_LABEL = {"pendente": "○ Pendente", "aprovada": "✔ Aprovada", "arquivada": "▣ Arquivada"}
+STATUS_NAME = {"pendente": "Pendente", "aprovada": "Aprovada", "arquivada": "Arquivada"}
 
 # Níveis de alerta do contexto (tokens de entrada da última resposta do modelo: f2 + f5 de step_payload.f5.f9).
 # Faixas prontas e uma personalizada. Os valores são heurísticas de uso, não medidas: a degradação real depende do modelo e da tarefa.
@@ -99,14 +102,15 @@ def limits_from_settings(settings):
 UUID_DB_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.db$', re.IGNORECASE)
 
 # Posição das colunas na árvore (valores de cada linha de sessão)
-COL_DATE, COL_SIZE, COL_CTX, COL_STEPS, COL_TITLE, COL_AGENT, COL_UUID = range(7)
+COL_DATE, COL_SIZE, COL_CTX, COL_STEPS, COL_FAIL, COL_TITLE, COL_AGENT, COL_UUID = range(8)
 HEADINGS = {"col_date": "Modificação", "col_size": "Tamanho", "col_ctx": "Contexto (tokens)", "col_steps": "Passos",
-            "col_title": "Título / Contexto Inicial", "col_agent": "Agente", "col_uuid": "UUID"}
+            "col_title": "Título / Contexto Inicial", "col_agent": "Agente", "col_fail": "Falhas", "col_uuid": "UUID"}
 SORT_FUNCS = {
     "col_date": lambda r: r["date"], "col_size": lambda r: r["size_kb"], "col_ctx": lambda r: r["ctx"],
     "col_steps": lambda r: r["steps"], "col_title": lambda r: r["title"].lower(), "col_agent": lambda r: r["agent"].lower(),
+    "col_fail": lambda r: r["failures"],
 }
-NUMERIC_COLS = ("col_date", "col_size", "col_ctx", "col_steps")  # primeiro clique ordena do maior para o menor
+NUMERIC_COLS = ("col_date", "col_size", "col_ctx", "col_steps", "col_fail")  # primeiro clique ordena do maior para o menor
 
 # Cache por (caminho, mtime_ns, tamanho): só reabre o banco de uma sessão se ele mudou.
 METRICS_CACHE = {}
@@ -154,7 +158,46 @@ def fmt_time(v):
             return datetime.fromtimestamp(secs).strftime('%Y-%m-%d %H:%M:%S')
         except (OverflowError, OSError, ValueError):
             return str(v)
-    return str(v)[:19].replace('T', ' ')
+    m = re.match(r"(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:\.\d+)?\s*(Z|[+-]\d{2}:?\d{2})?", str(v))
+    if not m:
+        return str(v)[:19].replace('T', ' ')
+    naive = datetime.strptime(f"{m.group(1)} {m.group(2)}", "%Y-%m-%d %H:%M:%S")
+    tz = m.group(3)
+    if not tz:
+        return naive.strftime('%Y-%m-%d %H:%M:%S')
+    off = timedelta(0) if tz == "Z" else (1 if tz[0] == "+" else -1) * timedelta(hours=int(tz[1:3]), minutes=int(tz[-2:]))
+    try:
+        return naive.replace(tzinfo=timezone(off)).astimezone().strftime('%Y-%m-%d %H:%M:%S')  # UTC do banco -> horário local
+    except (OverflowError, OSError, ValueError):
+        return naive.strftime('%Y-%m-%d %H:%M:%S')
+
+
+def rel_time(date_str, now=None):
+    """'há 3 h', 'há 2 dias'... a partir de 'YYYY-MM-DD HH:MM:SS' no horário local."""
+    try:
+        then = datetime.strptime(date_str[:19], "%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return ""
+    secs = ((now or datetime.now()) - then).total_seconds()
+    if secs < 60:
+        return "agora"
+    if secs < 3600:
+        return f"há {int(secs // 60)} min"
+    if secs < 86400:
+        return f"há {int(secs // 3600)} h"
+    days = int(secs // 86400)
+    if days < 45:
+        return f"há {days} dia" + ("s" if days != 1 else "")
+    if days < 365:
+        months = days // 30
+        return f"há {months} " + ("mês" if months == 1 else "meses")
+    years = days // 365
+    return f"há {years} ano" + ("s" if years != 1 else "")
+
+
+def ellipsize(text, n):
+    """Corta o meio de textos longos (caminhos): 'C:\\Users\\...\\pasta'."""
+    return text if len(text) <= n else text[: n // 2 - 1] + "…" + text[-(n - n // 2):]
 
 
 def as_text(col):
@@ -277,13 +320,17 @@ def first_user_text(c):
 
 
 def session_metrics(path):
-    """(passos, contexto estimado em tokens, prévia) de um banco de sessão, lendo só o necessário."""
+    """(passos, contexto estimado em tokens, prévia, falhas de ferramenta) de um banco de sessão, lendo só o necessário."""
     with open_ro(path) as c:
         tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if 'steps' not in tables:
-            return 0, 0, ''
+            return 0, 0, '', 0
         cnt = c.execute("SELECT COUNT(*) FROM steps").fetchone()[0]
         ctx = 0
+        try:  # passos de ferramenta (tipo 132) que não terminaram com status 3
+            fails = c.execute("SELECT COUNT(*) FROM steps WHERE step_type=132 AND status != 3").fetchone()[0]
+        except sqlite3.OperationalError:
+            fails = 0
         try:
             for (blob,) in c.execute("SELECT step_payload FROM steps WHERE step_type=15 ORDER BY idx DESC LIMIT 5"):
                 f = pb_parse(blob or b"")
@@ -302,7 +349,7 @@ def session_metrics(path):
                 if chunks:
                     preview = chunks[0][:150]
                     break
-        return cnt, ctx, preview
+        return cnt, ctx, preview, fails
 
 
 # --- decodificação de passos e exportação -----------------------------------------------------
@@ -501,6 +548,74 @@ def clip(text, n):
     return text if len(text) <= n else text[:n] + f"\n[… {len(text) - n} caracteres omitidos]"
 
 
+FILE_ICONS = {
+    ".py": "🐍", ".pyw": "🐍", ".js": "📜", ".mjs": "📜", ".jsx": "📜", ".ts": "📘", ".tsx": "📘", ".html": "🌐", ".htm": "🌐",
+    ".css": "🎨", ".scss": "🎨", ".json": "🧾", ".yaml": "⚙️", ".yml": "⚙️", ".toml": "⚙️", ".ini": "⚙️", ".cfg": "⚙️",
+    ".md": "📝", ".txt": "📄", ".bat": "⌨️", ".cmd": "⌨️", ".ps1": "⌨️", ".sh": "⌨️", ".sql": "🗄️", ".db": "🗄️", ".sqlite": "🗄️",
+    ".png": "🖼️", ".jpg": "🖼️", ".jpeg": "🖼️", ".gif": "🖼️", ".webp": "🖼️", ".svg": "🖼️", ".pdf": "📕", ".zip": "🗜️",
+    ".csv": "📊", ".xlsx": "📊", ".log": "📋", ".lock": "🔒", ".env": "🔒", ".gitignore": "🙈", ".ipynb": "📓", ".go": "🐹", ".rs": "🦀",
+}
+
+
+def file_icon(path):
+    """Emoji do tipo de arquivo (Markdown/terminais com suporte a emoji)."""
+    name = re.split(r"[\\/]", path)[-1].lower()
+    if name.startswith(".env"):
+        return "🔒"
+    if name in ("dockerfile", "makefile"):
+        return "⚙️"
+    return FILE_ICONS.get(os.path.splitext(name)[1], FILE_ICONS.get(name, "📄"))
+
+
+def disk_state(path):
+    """'✔' existe, '✖ não existe mais', ou '?' quando o caminho não pode ser conferido neste computador."""
+    if not os.path.isabs(path):
+        return "?"
+    try:
+        return "✔" if os.path.exists(path) else "✖ não existe mais"
+    except OSError:
+        return "?"
+
+
+def classify_tool(name):
+    low = name.lower()
+    if any(h in low for h in TOOL_WRITE_HINTS):
+        return "write"
+    if any(h in low for h in TOOL_CMD_HINTS):
+        return "cmd"
+    return "read"
+
+
+def collect_file_activity(steps):
+    """{caminho: [alterações, leituras]} a partir dos passos de ferramenta (classificação por nome: heurística)."""
+    acts = {}
+    for _total, _n, st in steps:
+        if st['kind'] != 'tool' or not st['calls']:
+            continue
+        kind = classify_tool(st['calls'][0]['name'])
+        if kind == "cmd":
+            continue
+        for pth in tool_paths(st['calls'][0]['args']):
+            acts.setdefault(pth, [0, 0])[0 if kind == "write" else 1] += 1
+    return acts
+
+
+def files_table(acts, mode, limit=60):
+    """Tabela Markdown de arquivos. mode: 'mod' (só alterações), 'read' (só leituras) ou 'both'."""
+    rows = sorted(((p, v[0], v[1]) for p, v in acts.items() if (mode == "both" or v[0 if mode == "mod" else 1])),
+                  key=lambda r: (-(r[1] if mode != "read" else r[2]), -r[2], r[0].lower()))
+    head = {"mod": "| | Arquivo | Alterações | No disco |\n| :-: | :-- | --: | :-- |\n", "read": "| | Arquivo | Leituras | No disco |\n| :-: | :-- | --: | :-- |\n",
+            "both": "| | Arquivo | Alterado | Lido | No disco |\n| :-: | :-- | --: | --: | :-- |\n"}[mode]
+    out = head
+    for p, mod, rd in rows[:limit]:
+        cell = p.replace("|", "\\|")
+        counts = {"mod": f"×{mod}", "read": f"×{rd}", "both": f"{'×' + str(mod) if mod else '-'} | {'×' + str(rd) if rd else '-'}"}[mode]
+        out += f"| {file_icon(p)} | `{cell}` | {counts} | {disk_state(p)} |\n"
+    if len(rows) > limit:
+        out += f"\n_… e mais {len(rows) - limit} arquivo(s)._\n"
+    return out + "\n_\"No disco\" foi conferido neste computador, no momento em que o arquivo foi gerado._\n"
+
+
 def meta_table(meta, qm):
     rows = [("UUID da sessão", meta['cid']), ("Projeto", meta.get('project') or '-'), ("Workspace", meta.get('workspace') or '-'),
             ("Agente", meta.get('agent') or '-'), ("Sessão pai", meta.get('parent') or '-'),
@@ -514,11 +629,14 @@ def meta_table(meta, qm):
     return out
 
 
-def write_full_export(fh, meta, qm, steps, progress=None):
+def write_full_export(fh, meta, qm, steps, progress=None, files=None):
     fh.write(f"# Diálogo completo — {meta.get('title') or meta['cid']}\n\n")
     fh.write("> Este arquivo reproduz o conteúdo da conversa e pode conter chaves, senhas e dados pessoais. "
              "Revise antes de compartilhar. Horários no fuso local deste computador.\n\n")
-    fh.write(meta_table(meta, qm) + "\n---\n\n## Linha do tempo\n\n")
+    fh.write(meta_table(meta, qm) + "\n")
+    if files:
+        fh.write(f"## Arquivos citados ({len(files)})\n\n" + files_table(files, "both") + "\n")
+    fh.write("---\n\n## Linha do tempo\n\n")
     for total, n, st in steps:
         if progress and n % 20 == 0:
             progress(n, total)
@@ -610,10 +728,11 @@ def build_dossier(meta, qm, steps, progress=None):
             name, low = c['name'], c['name'].lower()
             tools[name] += 1
             ok = st['status'] == 3 and not st['error']
-            if any(h in low for h in TOOL_WRITE_HINTS):
+            kind_tool = classify_tool(name)
+            if kind_tool == "write":
                 for pth in tool_paths(c['args']):
                     files_mod[pth] = files_mod.get(pth, 0) + 1
-            elif any(h in low for h in TOOL_CMD_HINTS):
+            elif kind_tool == "cmd":
                 cmd = tool_command(c['args'])
                 if cmd:
                     commands.append((st['ts'], cmd, ok))
@@ -645,10 +764,10 @@ def build_dossier(meta, qm, steps, progress=None):
     o.append((clip(final_text, DOSSIER_MAX_FINAL) if final_text else "_(sem texto de resposta)_") + "\n")
     if files_mod:
         o.append(f"## Arquivos alterados ({len(files_mod)}) — por nome da ferramenta, heurístico\n")
-        o.append("\n".join(f"- `{p}` ({n}x)" for p, n in list(files_mod.items())[:40]) + "\n")
+        o.append(files_table({p: [n, 0] for p, n in files_mod.items()}, "mod", 40))
     if files_read:
         o.append(f"## Arquivos consultados ({len(files_read)})\n")
-        o.append("\n".join(f"- `{p}` ({n}x)" for p, n in list(files_read.items())[:40]) + "\n")
+        o.append(files_table({p: [0, n] for p, n in files_read.items()}, "read", 40))
     if commands:
         o.append(f"## Comandos executados (últimos {min(len(commands), 25)} de {len(commands)})\n")
         o.append("\n".join(f"- {fmt_ts(ts)} {'ok' if ok else '⚠ falhou'}: `{' '.join(c.split())[:200]}`" for ts, c, ok in commands[-25:]) + "\n")
@@ -672,12 +791,12 @@ def export_session(kind, fpath, meta, out_path, progress=None):
     """Grava o diálogo completo ('full') ou o dossiê de retomada ('dossier') de uma sessão."""
     with open_ro(fpath) as conn:
         qm = quick_meta(conn)
-        steps = iter_steps(conn)
         if kind == 'full':
+            files = collect_file_activity(iter_steps(conn))
             with open(out_path, 'w', encoding='utf-8', newline='\n') as fh:
-                write_full_export(fh, meta, qm, steps, progress)
+                write_full_export(fh, meta, qm, iter_steps(conn), progress, files)
         else:
-            text = build_dossier(meta, qm, steps, progress)
+            text = build_dossier(meta, qm, iter_steps(conn), progress)
             with open(out_path, 'w', encoding='utf-8', newline='\n') as fh:
                 fh.write(text)
 
@@ -1073,7 +1192,7 @@ def scan_source(conv_dir, sum_db, is_active, progress=None, is_stale=None):
         pid = str(val(s, 'project_id'))
         w_uris = str(val(s, 'workspace_uris'))
         file_size_kb = 0
-        ctx = 0
+        ctx = fails = 0
 
         if fpath and os.path.exists(fpath):
             st = os.stat(fpath)
@@ -1088,14 +1207,15 @@ def scan_source(conv_dir, sum_db, is_active, progress=None, is_stale=None):
                     METRICS_CACHE[key] = m
                 except Exception as e:
                     warn(f"Falha ao ler sessão {cid}", e)
-                    m = (0, 0, '')
-            cnt, ctx, first = m
+                    m = (0, 0, '', 0)
+            cnt, ctx, first, fails = m
             step_count = max(step_count, cnt)
             if not preview:
                 preview = first
 
         proj_name = proj_map.get(pid, '')
         w_decoded = urllib.parse.unquote(w_uris)
+        ws_paths = uri_paths(w_uris)
         if not proj_name or proj_name == 'Outside of Project':
             for u_key, p_val in uri_to_proj.items():
                 if u_key in w_decoded.lower():
@@ -1120,6 +1240,12 @@ def scan_source(conv_dir, sum_db, is_active, progress=None, is_stale=None):
             'parent': str(val(s, 'parent_conversation_id')),
             'project': proj_name,
             'hay': " ".join((title, preview, cid, str(val(s, 'agent_name')), proj_name, w_decoded)).lower(),
+            'failures': fails,
+            'workspace': ", ".join(ws_paths),
+            'ws_ok': (all(os.path.isdir(x) for x in ws_paths) if ws_paths else None),
+            'origin': "CLI" if "CLI" in str(val(s, 'source')) else "",
+            'running': str(val(s, 'status')) not in ("", "CASCADE_RUN_STATUS_IDLE"),
+            'killed': bool(s.get('killed')),
         })
 
     return {'grouped': grouped, 'total': len(all_cids), 'warnings': warnings,
@@ -1165,7 +1291,7 @@ THEME_ORDER = ["escuro", "claro", "milspec", "cyber", "vidro", "brutal", "obsidi
 ICONS = {
     "refresh": ("\uE72C", "↻"), "search": ("\uE721", "⌕"), "clear": ("\uE711", "✕"), "approve": ("\uE73E", "✔"),
     "archive": ("\uE7B8", "▣"), "pending": ("\uE7A7", "↶"), "export": ("\uE8A5", "▤"), "dossier": ("\uE768", "▶"),
-    "autorun": ("\uE945", "⚡"), "theme": ("\uE790", "◐"), "warn": ("\uE7BA", "⚠"), "limits": ("\uE713", "⚙"),
+    "autorun": ("\uE945", "⚡"), "theme": ("\uE790", "◐"), "warn": ("\uE7BA", "⚠"), "limits": ("\uE713", "⚙"), "copy": ("\uE8C8", "⧉"), "folder": ("\uE838", "▭"),
 }
 
 
@@ -1221,6 +1347,115 @@ def round_rect(c, x1, y1, x2, y2, r, **kw):
         return c.create_rectangle(x1, y1, x2, y2, **kw)
     pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
     return c.create_polygon(pts, smooth=True, **kw)
+
+
+# --- ícones desenhados pelo app (PNG RGBA gerado em Python: transparência correta em qualquer cor de linha) ---
+
+def _png(width, height, rows):
+    raw = b"".join(b"\x00" + r for r in rows)
+
+    def chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+
+
+def _disc(cx, cy, r):
+    return lambda x, y: (x - cx) ** 2 + (y - cy) ** 2 <= r * r
+
+
+def _ring(cx, cy, r, w):
+    return lambda x, y: abs(math.hypot(x - cx, y - cy) - r) <= w / 2
+
+
+def _seg(x1, y1, x2, y2, w):
+    dx, dy = x2 - x1, y2 - y1
+    ln = dx * dx + dy * dy
+
+    def f(x, y):
+        t = 0 if ln == 0 else max(0, min(1, ((x - x1) * dx + (y - y1) * dy) / ln))
+        return math.hypot(x - (x1 + t * dx), y - (y1 + t * dy)) <= w / 2
+    return f
+
+
+def _rrect(x1, y1, x2, y2, rad):
+    def f(x, y):
+        if not (x1 <= x <= x2 and y1 <= y <= y2):
+            return False
+        cx = min(max(x, x1 + rad), x2 - rad)
+        cy = min(max(y, y1 + rad), y2 - rad)
+        return math.hypot(x - cx, y - cy) <= rad
+    return f
+
+
+def _tri(ax, ay, bx, by, cx, cy):
+    def f(x, y):
+        d = lambda px, py, qx, qy, rx, ry: (px - rx) * (qy - ry) - (qx - rx) * (py - ry)
+        d1, d2, d3 = d(x, y, ax, ay, bx, by), d(x, y, bx, by, cx, cy), d(x, y, cx, cy, ax, ay)
+        return not ((d1 < 0 or d2 < 0 or d3 < 0) and (d1 > 0 or d2 > 0 or d3 > 0))
+    return f
+
+
+def render_icon(layers, size=16, ss=4):
+    """Rasteriza camadas [(predicado em coordenadas 0..16, '#rrggbb')] com suavização; devolve bytes PNG."""
+    k = 16 / size
+    rows = []
+    for y in range(size):
+        row = bytearray()
+        for x in range(size):
+            acc = [0, 0, 0]
+            cov = 0
+            for sy in range(ss):
+                for sx in range(ss):
+                    px, py = (x + (sx + 0.5) / ss) * k, (y + (sy + 0.5) / ss) * k
+                    col = None
+                    for fn, color in layers:
+                        if fn(px, py):
+                            col = color
+                    if col:
+                        r, g, b = _rgb(col)
+                        acc[0] += r
+                        acc[1] += g
+                        acc[2] += b
+                        cov += 1
+            if cov:
+                row += bytes((round(acc[0] / cov), round(acc[1] / cov), round(acc[2] / cov), round(255 * cov / (ss * ss))))
+            else:
+                row += b"\x00\x00\x00\x00"
+        rows.append(bytes(row))
+    return _png(size, size, rows)
+
+
+def icon_layers(name, t, handoff=False):
+    """Camadas de cada ícone, nas cores do tema `t`."""
+    L = []
+    if name == "pending":
+        L = [(_ring(8, 8, 5.2, 1.9), t['accent_text'])]
+    elif name in ("approved", "ok"):
+        ink = ink_on(t['success'])
+        L = [(_disc(8, 8, 6.4), t['success']), (_seg(4.8, 8.4, 7.1, 10.7, 1.9), ink), (_seg(7.1, 10.7, 11.4, 5.7, 1.9), ink)]
+    elif name == "archived":
+        dark = blend(t['muted'], "#000000", 0.55)
+        L = [(_rrect(2.2, 3.2, 13.8, 6.4, 1.0), t['muted']), (_rrect(3.2, 5.6, 12.8, 13.4, 1.2), t['muted']), (_seg(6.3, 8.6, 9.7, 8.6, 1.5), dark)]
+    elif name == "folder":
+        L = [(_rrect(1.8, 3.2, 7.4, 6.4, 1.0), t['accent_text']), (_rrect(1.8, 5.0, 14.2, 13.4, 1.4), t['accent_text'])]
+    elif name == "warn":
+        ink = ink_on(t['warning'])
+        L = [(_tri(8, 2, 14.6, 13.6, 1.4, 13.6), t['warning']), (_seg(8, 6.4, 8, 9.6, 1.7), ink), (_disc(8, 11.7, 1.0), ink)]
+    elif name == "error":
+        ink = ink_on(t['danger'])
+        L = [(_disc(8, 8, 6.4), t['danger']), (_seg(5.4, 5.4, 10.6, 10.6, 1.8), ink), (_seg(10.6, 5.4, 5.4, 10.6, 1.8), ink)]
+    elif name == "info":
+        ink = ink_on(t['accent'])
+        L = [(_disc(8, 8, 6.4), t['accent']), (_disc(8, 5.2, 1.0), ink), (_seg(8, 7.6, 8, 11.4, 1.8), ink)]
+    elif name == "sub":
+        L = [(_seg(4, 2.5, 4, 11.5, 1.8), t['muted']), (_seg(3.1, 11.5, 11.5, 11.5, 1.8), t['muted']), (_seg(9.2, 8.8, 12.2, 11.5, 1.8), t['muted']),
+             (_seg(9.2, 14.2, 12.2, 11.5, 1.8), t['muted'])]
+    if handoff:  # selo "retomada" no canto inferior direito
+        ink = ink_on(t['accent'])
+        L += [(_disc(11.6, 11.6, 4.0), t['accent']), (_seg(9.6, 11.6, 13.4, 11.6, 1.4), ink), (_seg(11.9, 9.7, 13.6, 11.6, 1.4), ink), (_seg(11.9, 13.5, 13.6, 11.6, 1.4), ink)]
+    return L
+
 
 
 class Tooltip:
@@ -1435,6 +1670,42 @@ class Chip(tk.Label):
         self.configure(bg=t['panel'], fg=t[self.token], highlightbackground=blend(t['panel2'], t[self.token], 0.4))
 
 
+class Toast(tk.Frame):
+    """Notificação discreta no canto da janela: ícone, texto, botões de ação e fechar. Some sozinha."""
+
+    TOKENS = {"ok": "success", "info": "accent", "warn": "warning", "error": "danger"}
+
+    def __init__(self, app, kind, text, actions=(), ttl=6000):
+        t = app.t
+        super().__init__(app, bg=t['panel2'], highlightthickness=2, highlightbackground=t[self.TOKENS[kind]], padx=app.px(10), pady=app.px(8))
+        self.app, self.kind = app, kind
+        img = app.icon({"ok": "ok", "info": "info", "warn": "warn", "error": "error"}[kind])
+        self.icon_lbl = tk.Label(self, image=img, bg=t['panel2'])
+        self.icon_lbl.image = img  # referência: o cache de ícones pode ser trocado
+        self.icon_lbl.pack(side=tk.LEFT, anchor="n", padx=(0, app.px(8)))
+        tk.Label(self, text=text, bg=t['panel2'], fg=t['fg'], font=app.f_ui, justify=tk.LEFT, anchor="w", wraplength=app.px(330)).pack(side=tk.LEFT, anchor="w")
+        self.buttons = []
+        for label, fn in actions:
+            b = IconButton(self, app, "", label, lambda f=fn: (self.dismiss(), f()), bg_token="panel2")
+            b.pack(side=tk.LEFT, padx=(app.px(10), 0))
+            self.buttons.append(b)
+        close = IconButton(self, app, "clear", "", self.dismiss, bg_token="panel2", tip="Fechar")
+        close.pack(side=tk.LEFT, padx=(app.px(8), 0))
+        self.job = self.after(ttl, self.dismiss)
+
+    def dismiss(self):
+        if self.job:
+            try:
+                self.after_cancel(self.job)
+            except tk.TclError:
+                pass
+            self.job = None
+        if self in self.app.toasts:
+            self.app.toasts.remove(self)
+        self.destroy()
+        self.app.layout_toasts()
+
+
 class LimitDialog(tk.Toplevel):
     """Escolha dos níveis de alerta de contexto: três faixas prontas ou valores personalizados, com prévia sobre as sessões carregadas."""
 
@@ -1522,10 +1793,12 @@ class AntigravityGateApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("AntigravityGate")
-        self.geometry("1240x720")
-        self.minsize(760, 480)
+        self.geometry("1240x820")
+        self.minsize(760, 520)
 
         self.themed, self.icon_buttons, self.btn, self.chips = [], [], {}, {}
+        self.icon_cache = {}
+        self.toasts, self.toast_log = [], []
         self.queue = queue.Queue()
         self.gen = 0
         self.loading = False
@@ -1588,6 +1861,8 @@ class AntigravityGateApp(tk.Tk):
         return self.t['bg']
 
     def apply_theme(self):
+        old_icons = self.icon_cache  # mantém as imagens antigas vivas até todos os widgets receberem as novas
+        self.icon_cache = {}
         t = self.t = dict(THEMES[self.theme_key])
         t['header_sub'] = blend(t['header_fg'], t['header_bg'], 0.12)
         t['btn_fg'] = t['fg']
@@ -1630,6 +1905,32 @@ class AntigravityGateApp(tk.Tk):
             b.redraw()
         for c in self.chips.values():
             c.repaint()
+        if hasattr(self, 'tree'):
+            self.restyle_rows()
+            if hasattr(self, 'd_icon'):
+                self.update_details()
+        del old_icons
+
+    def icon(self, name, handoff=False):
+        """Imagem do ícone `name` no tema atual (em cache; gerada pelo próprio app)."""
+        size = self.px(16)
+        key = (name, handoff, self.theme_key, size)
+        img = self.icon_cache.get(key)
+        if img is None:
+            png = render_icon(icon_layers(name, self.t, handoff), size)
+            img = self.icon_cache[key] = tk.PhotoImage(master=self, data=base64.b64encode(png))
+        return img
+
+    def status_icon(self, cid):
+        name = {"pendente": "pending", "aprovada": "approved", "arquivada": "archived"}[self.states.get(cid, "pendente")]
+        return self.icon(name, handoff=bool(self.handoffs.get(cid)))
+
+    def restyle_rows(self):
+        """Reaplica as imagens das linhas (troca de tema, de estado ou de retomada)."""
+        for proj in self.tree.get_children():
+            self.tree.item(proj, image=self.icon("folder"))
+        for iid in self.iter_sessions():
+            self.tree.item(iid, image=self.status_icon(self.cid_of(iid)))
 
     def themed_widget(self, widget, **opts):
         """Registra um widget tk para ser recolorido por apply_theme. opts: opção -> nome do token da paleta."""
@@ -1638,6 +1939,7 @@ class AntigravityGateApp(tk.Tk):
         return widget
 
     def set_theme(self, key):
+        self.dismiss_toasts()
         self.theme_key = key
         self.settings['theme'] = key
         save_settings(self.settings)
@@ -1656,6 +1958,45 @@ class AntigravityGateApp(tk.Tk):
             b.relayout()
         self.on_resize()
 
+    # --- notificações ---
+
+    def notify(self, kind, text, actions=(), ttl=None):
+        """Mostra uma notificação não bloqueante. `actions`: [(rótulo, função)]. Também registra em toast_log."""
+        self.toast_log.append((kind, text, [a[0] for a in actions]))
+        ttl = ttl or (10000 if kind in ("warn", "error") else (9000 if actions else 6000))
+        while len(self.toasts) >= 4:
+            self.toasts[0].dismiss()
+        toast = Toast(self, kind, text, actions, ttl)
+        self.toasts.append(toast)
+        self.layout_toasts()
+        return toast
+
+    def layout_toasts(self):
+        self.update_idletasks()
+        y = self.px(14) + (self.footer.winfo_height() if hasattr(self, "footer") else 0)
+        for toast in reversed(self.toasts):
+            toast.place(in_=self, relx=1.0, rely=1.0, x=-self.px(18), y=-y, anchor="se")
+            toast.lift()
+            y += toast.winfo_reqheight() + self.px(8)
+
+    def dismiss_toasts(self):
+        for toast in list(self.toasts):
+            toast.dismiss()
+
+    def open_path(self, path):
+        """Abre um arquivo ou pasta no programa padrão do sistema."""
+        opener = getattr(os, "startfile", None)
+        if opener is None:
+            self.notify("info", f"Caminho: {path}")
+            return False
+        try:
+            opener(path)
+            return True
+        except OSError as e:
+            log.warning("Não abriu %s: %s", path, e)
+            self.notify("warn", f"Não foi possível abrir automaticamente: {e}")
+            return False
+
     def open_limits(self):
         dlg = LimitDialog(self)
         dlg.grab_set()
@@ -1673,6 +2014,7 @@ class AntigravityGateApp(tk.Tk):
         self.btn["limits"].tip = self.limits_tip()
         if self.grouped:
             self.populate()
+        self.notify("info", f"Limites de contexto aplicados: atenção {fmt_tokens(attention)}, crítico {fmt_tokens(critical)}.")
 
     def limits_tip(self):
         name = CONTEXT_PRESETS[self.limit_preset][0] if self.limit_preset in CONTEXT_PRESETS else "Personalizado"
@@ -1682,6 +2024,38 @@ class AntigravityGateApp(tk.Tk):
     def critical_rows(self):
         shown = [self.row_by_cid[self.cid_of(i)] for i in self.iter_sessions() if self.cid_of(i) in self.row_by_cid]
         return [r for r in shown if ctx_level(r['ctx']) == 2 and self.states.get(r['cid']) != "arquivada"]
+
+    def update_empty(self):
+        """Mensagem no centro da tabela quando não há linhas: carregando, busca sem resultado ou fonte vazia."""
+        if self.tree.get_children():
+            self.empty.place_forget()
+            return
+        b = self.btn["empty_action"]
+        if self.loading:
+            icon, title, sub, action = "info", "Lendo as sessões…", "Na primeira leitura isso pode levar alguns segundos.", None
+        elif self.match is not None:
+            q = self.search_var.get().strip()
+            icon, title = "warn", "Nenhuma sessão encontrada"
+            sub = f"Nada para “{q}”. Tente outros termos ou limpe a busca." if q else "Nenhuma sessão atende ao filtro."
+            action = ("clear", "Limpar busca", self.clear_search)
+        else:
+            icon, title = "info", "Nenhuma sessão nesta fonte"
+            sub = f"Pasta: {ellipsize(self.sources[self.source_idx][1], 70)}"
+            action = ("refresh", "Atualizar", self.refresh)
+        img = self.icon(icon)
+        self.empty_icon.configure(image=img)
+        self.empty_icon.image = img
+        self.empty_title.configure(text=title)
+        self.empty_sub.configure(text=sub)
+        if action:
+            b.icon, b.text, b.command = action
+            b.relayout()
+            if not b.winfo_manager():
+                b.pack()
+        elif b.winfo_manager():
+            b.pack_forget()
+        self.empty.place(in_=self.tree, relx=0.5, rely=0.42, anchor="center")
+        self.empty.lift()
 
     def update_banner(self):
         crit = self.critical_rows()
@@ -1784,14 +2158,27 @@ class AntigravityGateApp(tk.Tk):
         # Barra de status: fonte, carga, avisos e selos de contagem
         self.footer = self.themed_widget(tk.Frame(self, padx=self.px(14), pady=self.px(6)), bg="panel2")
         self.footer.pack(side=tk.BOTTOM, fill=tk.X)
-        self.status = self.themed_widget(tk.Label(self.footer, anchor=tk.W, font=self.f_small), bg="panel2", fg="fg")
-        self.status.pack(side=tk.LEFT)
         for token, key in (("danger", "crit"), ("warning", "rot"), ("muted", "arquivada"), ("success", "aprovada"), ("accent_text", "pendente")):
             chip = Chip(self.footer, self, token)
             chip.pack(side=tk.RIGHT, padx=(self.px(6), 0))
             self.chips[key] = chip
+        self.status = self.themed_widget(tk.Label(self.footer, anchor=tk.W, font=self.f_small), bg="panel2", fg="fg")
+        self.status.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # Tabela (Treeview) com métricas de contexto
+        # Painel de detalhes da seleção (recolhível), acima do rodapé
+        self.details = self.themed_widget(tk.Frame(self, highlightthickness=1), bg="panel", highlightbackground="border")
+        self.details.pack(side=tk.BOTTOM, fill=tk.X, padx=self.px(16), pady=(0, self.px(8)))
+        bar = self.themed_widget(tk.Frame(self.details, padx=self.px(10), pady=self.px(4), cursor="hand2"), bg="panel2")
+        bar.pack(fill=tk.X)
+        self.details_toggle = self.themed_widget(tk.Label(bar, font=self.f_bold, cursor="hand2"), bg="panel2", fg="fg")
+        self.details_toggle.pack(side=tk.LEFT)
+        for w in (bar, self.details_toggle):
+            w.bind("<Button-1>", lambda e: self.toggle_details())
+        self.details_body = self.themed_widget(tk.Frame(self.details, padx=self.px(14), pady=self.px(10)), bg="panel")
+        self.build_details()
+        self.apply_details_visibility()
+
         # Aviso de sessões acima do nível crítico (aparece só quando há; fica entre as ações e a tabela)
         self.banner = self.themed_widget(tk.Frame(self, padx=self.px(12), pady=self.px(8), highlightthickness=1), bg="banner_bg", highlightbackground="danger")
         self.themed_widget(tk.Label(self.banner, text="‼", font=self.f_title), bg="banner_bg", fg="danger").pack(side=tk.LEFT, padx=(0, self.px(10)))
@@ -1802,23 +2189,32 @@ class AntigravityGateApp(tk.Tk):
 
         holder = self.holder = self.themed_widget(tk.Frame(self, padx=self.px(16)), bg="bg")
         holder.pack(fill=tk.BOTH, expand=True, pady=(0, self.px(10)))
-        columns = ("col_date", "col_size", "col_ctx", "col_steps", "col_title", "col_agent", "col_uuid")
+        self.empty = self.themed_widget(tk.Frame(holder, padx=self.px(24), pady=self.px(18)), bg="panel")
+        self.empty_icon = self.themed_widget(tk.Label(self.empty), bg="panel")
+        self.empty_icon.pack()
+        self.empty_title = self.themed_widget(tk.Label(self.empty, font=self.f_title), bg="panel", fg="fg")
+        self.empty_title.pack(pady=(self.px(6), 0))
+        self.empty_sub = self.themed_widget(tk.Label(self.empty, font=self.f_ui, wraplength=self.px(420), justify=tk.CENTER), bg="panel", fg="muted")
+        self.empty_sub.pack(pady=(self.px(4), self.px(10)))
+        self.make_button(self.empty, "empty_action", "refresh", "Atualizar", self.refresh, "", bg_token="panel")
+        columns = ("col_date", "col_size", "col_ctx", "col_steps", "col_fail", "col_title", "col_agent", "col_uuid")
         self.tree = ttk.Treeview(holder, columns=columns, show="tree headings", selectmode="extended")
 
         self.tree.heading("#0", text="Projeto / Sessão", anchor=tk.W)
         for col in columns:
-            anchor = tk.CENTER if col in ("col_size", "col_ctx", "col_steps") else tk.W
+            anchor = tk.CENTER if col in ("col_size", "col_ctx", "col_steps", "col_fail") else tk.W
             cmd = (lambda c=col: self.sort_by(c)) if col in SORT_FUNCS else ""
             self.tree.heading(col, text=HEADINGS[col], anchor=anchor, command=cmd)
 
         self.tree.heading("col_date", text=HEADINGS["col_date"] + " ▼")  # ordenação inicial: mais recentes primeiro
-        self.tree.column("#0", width=self.px(300), anchor=tk.W)
-        self.tree.column("col_date", width=self.px(155), anchor=tk.W)
+        self.tree.column("#0", width=self.px(270), anchor=tk.W)
+        self.tree.column("col_date", width=self.px(150), anchor=tk.W)
         self.tree.column("col_size", width=self.px(95), anchor=tk.CENTER)
-        self.tree.column("col_ctx", width=self.px(175), anchor=tk.CENTER)
+        self.tree.column("col_ctx", width=self.px(165), anchor=tk.CENTER)
         self.tree.column("col_steps", width=self.px(75), anchor=tk.CENTER)
-        self.tree.column("col_title", width=self.px(330), anchor=tk.W)
+        self.tree.column("col_title", width=self.px(320), anchor=tk.W)
         self.tree.column("col_agent", width=self.px(140), anchor=tk.W)
+        self.tree.column("col_fail", width=self.px(75), anchor=tk.CENTER)
         self.tree.column("col_uuid", width=self.px(150), anchor=tk.W)
 
         scrollbar = ttk.Scrollbar(holder, orient=tk.VERTICAL, command=self.tree.yview)
@@ -1897,6 +2293,13 @@ class AntigravityGateApp(tk.Tk):
         ar_reason = "Auto-Run em andamento." if self.autorunning else ("" if cands else "Nenhuma sessão aprovada com arquivo nesta fonte. Aprove sessões primeiro.")
         self.btn["autorun"].set_enabled(not ar_reason, ar_reason)
         self.btn["autorun"].set_badge(len(pend))
+        if "d_export" in self.btn:
+            for name in ("d_export", "d_dossier"):
+                self.btn[name].set_enabled(not reason, reason)
+            one = first_session and len(self.selected_session_ids()) >= 1
+            self.btn["d_copy"].set_enabled(one, "" if one else "Selecione uma sessão.")
+            self.btn["d_folder"].set_enabled(bool(fpath), "" if fpath else "Selecione uma sessão com arquivo nesta fonte.")
+        self.update_details()
 
     def update_chips(self):
         shown = [self.row_by_cid[self.cid_of(i)] for i in self.iter_sessions() if self.cid_of(i) in self.row_by_cid]
@@ -1946,8 +2349,9 @@ class AntigravityGateApp(tk.Tk):
             messagebox.showwarning("Aviso", "Selecione uma sessão ou uma pasta de projeto.")
             return
         if (len(cids) > 1 or from_project) and not messagebox.askyesno(
-                "Confirmar", f"Marcar {len(cids)} sessão(ões) como {STATUS_LABEL[status][2:]}?"):
+                "Confirmar", f"Marcar {len(cids)} sessão(ões) como {STATUS_NAME[status]}?"):
             return
+        previous = {c: self.states.get(c, "pendente") for c in cids}
         try:
             self.state.set_many(cids, status)
         except sqlite3.Error as e:
@@ -1959,6 +2363,25 @@ class AntigravityGateApp(tk.Tk):
         self.states = self.state.load()
         self.refresh_labels()
         self.btn[{"aprovada": "approve", "arquivada": "archive", "pendente": "pending"}[status]].flash_ok()
+        n = len(cids)
+        self.notify("ok", f"{n} sessão marcada como {STATUS_NAME[status]}" if n == 1 else f"{n} sessões marcadas como {STATUS_NAME[status]}",
+                    [("Desfazer", lambda: self.undo_mark(previous))])
+
+    def undo_mark(self, previous):
+        """Volta cada sessão ao estado que tinha antes da última marcação."""
+        by_status = {}
+        for cid, st in previous.items():
+            by_status.setdefault(st, []).append(cid)
+        try:
+            for st, cids in by_status.items():
+                self.state.set_many(cids, st)
+        except sqlite3.Error as e:
+            log.exception("Falha ao desfazer")
+            messagebox.showerror("Erro", f"Não foi possível desfazer:\n{e}")
+            return
+        self.states = self.state.load()
+        self.refresh_labels()
+        self.notify("info", f"Desfeito: {len(previous)} sessão(ões) voltaram ao estado anterior.")
 
     def row_tags(self, cid):
         st = self.states.get(cid, "pendente")
@@ -1975,13 +2398,181 @@ class AntigravityGateApp(tk.Tk):
         n = self.sub_count.get(cid, 0)
         sub = f"  (+{n} sub-agente{'s' if n != 1 else ''})" if n else ""
         ret = f"  ↪ retomada {self.handoffs[cid][:8]}" if self.handoffs.get(cid) else ""
-        return "    " + STATUS_LABEL[self.states.get(cid, "pendente")] + ret + sub
+        return "  " + STATUS_NAME[self.states.get(cid, "pendente")] + ret + sub
 
     def refresh_labels(self):
         for iid in self.iter_sessions():
             cid = self.cid_of(iid)
-            self.tree.item(iid, text=self.leaf_text(cid), tags=self.row_tags(cid))
+            self.tree.item(iid, text=self.leaf_text(cid), tags=self.row_tags(cid), image=self.status_icon(cid))
         self.set_status(self.base_status)
+
+    # --- painel de detalhes ---
+
+    def build_details(self):
+        body = self.details_body
+        left = self.themed_widget(tk.Frame(body), bg="panel")
+        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        head = self.themed_widget(tk.Frame(left), bg="panel")
+        head.pack(fill=tk.X)
+        self.d_icon = self.themed_widget(tk.Label(head), bg="panel")
+        self.d_icon.pack(side=tk.LEFT, padx=(0, self.px(8)))
+        self.d_title = self.themed_widget(tk.Label(head, font=self.f_bold, anchor="w", justify=tk.LEFT), bg="panel", fg="fg")
+        self.d_title.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.d_sub = self.themed_widget(tk.Label(left, font=self.f_small, anchor="w", justify=tk.LEFT), bg="panel", fg="muted")
+        self.d_sub.pack(fill=tk.X, pady=(0, self.px(6)))
+        self.gauge = self.themed_widget(tk.Canvas(left, height=self.px(72), highlightthickness=0, bd=0), bg="panel")
+        self.gauge.pack(fill=tk.X)
+        self.gauge.bind("<Configure>", lambda e: self.draw_gauge(self.gauge_ctx))
+        self.gauge_ctx = 0
+        self.d_note = self.themed_widget(tk.Label(left, font=self.f_ui, anchor="w", justify=tk.LEFT, wraplength=self.px(520)), bg="panel", fg="muted")
+
+        self.d_facts = self.themed_widget(tk.Frame(body), bg="panel")
+        self.d_facts.pack(side=tk.LEFT, fill=tk.Y, padx=self.px(18))
+        self.fact_vals = {}
+        facts = (("Estado", "state"), ("UUID", "uuid"), ("Workspace", "ws"), ("Agente", "agent"), ("Passos", "steps"),
+                 ("Modificação", "date"), ("Tamanho", "size"), ("Falhas", "fails"), ("Retomada", "handoff"), ("Origem", "origin"))
+        for i, (label, key) in enumerate(facts):
+            r, c = i % 5, (i // 5) * 2
+            self.themed_widget(tk.Label(self.d_facts, text=label, font=self.f_small, anchor="w"), bg="panel", fg="muted").grid(row=r, column=c, sticky="w", padx=(0 if c == 0 else self.px(18), self.px(8)), pady=1)
+            v = self.themed_widget(tk.Label(self.d_facts, font=self.f_ui, anchor="w", justify=tk.LEFT), bg="panel", fg="fg")
+            v.grid(row=r, column=c + 1, sticky="w", pady=1)
+            self.fact_vals[key] = v
+
+        acts = self.themed_widget(tk.Frame(body), bg="panel")
+        acts.pack(side=tk.RIGHT, fill=tk.Y)
+        mkb = lambda name, icon, text, cmd, tip, tok="btn_fg": self.make_button(acts, name, icon, text, cmd, tip, bg_token="panel", icon_token=tok)
+        mkb("d_copy", "copy", "Copiar UUID", self.copy_selected_uuid, "Copiar o UUID da sessão").grid(row=0, column=0, padx=(0, self.px(6)), pady=(0, self.px(6)), sticky="ew")
+        mkb("d_folder", "folder", "Abrir pasta", self.open_selected_folder, "Abrir a pasta do banco da sessão").grid(row=0, column=1, pady=(0, self.px(6)), sticky="ew")
+        mkb("d_export", "export", "Exportar diálogo", self.open_selected, "Salvar a conversa completa em Markdown").grid(row=1, column=0, padx=(0, self.px(6)), sticky="ew")
+        mkb("d_dossier", "dossier", "Dossiê", lambda: self.start_export('dossier'), "Salvar o dossiê de retomada", "accent_text").grid(row=1, column=1, sticky="ew")
+
+    def toggle_details(self):
+        self.settings['details'] = not self.settings.get('details', True)
+        save_settings(self.settings)
+        self.apply_details_visibility()
+
+    def apply_details_visibility(self):
+        opened = self.settings.get('details', True)
+        self.details_toggle.configure(text=("▾  Detalhes da sessão" if opened else "▸  Detalhes da sessão"))
+        if opened and not self.details_body.winfo_manager():
+            self.details_body.pack(fill=tk.X)
+        elif not opened and self.details_body.winfo_manager():
+            self.details_body.pack_forget()
+
+    def selected_session_ids(self):
+        return [i for i in self.tree.selection() if self.is_session(i)]
+
+    def copy_selected_uuid(self):
+        ids = self.selected_session_ids()
+        if ids:
+            self.copy_uuid(ids[0])
+
+    def open_selected_folder(self):
+        ids = self.selected_session_ids()
+        if ids:
+            self.open_folder(ids[0])
+
+    def level_text(self, ctx):
+        return {0: "normal", 1: "atenção", 2: "crítico"}[ctx_level(ctx)]
+
+    def draw_gauge(self, ctx):
+        """Medidor de contexto: faixas normal, atenção e crítico, barra até o valor atual e marcas dos limites."""
+        c = self.gauge
+        c.delete("all")
+        t = self.t
+        w, h = max(c.winfo_width(), self.px(280)), self.px(72)
+        pad = self.px(8)
+        x0, x1, y0, y1 = pad, w - pad, self.px(24), self.px(38)
+        att, crit = CONTEXT_LIMITS['attention'], CONTEXT_LIMITS['critical']
+        top = max(crit * 1.25, ctx * 1.05)
+        X = lambda v: x0 + (x1 - x0) * min(v / top, 1)
+        r = self.px(4)
+        round_rect(c, x0, y0, x1, y1, r, fill=blend(t['panel'], t['fg'], 0.08), outline="")
+        for lo, hi, tok in ((0, att, 'success'), (att, crit, 'warning'), (crit, top, 'danger')):
+            c.create_rectangle(X(lo), y0 + 1, X(hi), y1 - 1, fill=blend(t['panel'], t[tok], 0.22), outline="")
+        if ctx:
+            tok = ('success', 'warning', 'danger')[ctx_level(ctx)]
+            round_rect(c, x0, y0 + 2, max(X(ctx), x0 + self.px(6)), y1 - 2, r, fill=t[tok], outline="")
+        for v, label in ((att, "atenção"), (crit, "crítico")):
+            c.create_line(X(v), y0 - self.px(5), X(v), y1 + self.px(5), fill=t['muted'])
+            c.create_text(X(v), y0 - self.px(8), text=f"{label} {fmt_tokens(v)}", font=self.f_small, fill=t['muted'], anchor="s" if X(v) < x1 - self.px(70) else "se")
+        if ctx:
+            tok = ('success', 'warning', 'danger')[ctx_level(ctx)]
+            c.create_text(x0, y1 + self.px(8), text=f"{ctx:,}".replace(",", ".") + f" tokens · {self.level_text(ctx)}", font=self.f_bold, fill=t[tok], anchor="nw")
+        else:
+            c.create_text(x0, y1 + self.px(8), text="Sem dado de contexto nesta sessão", font=self.f_small, fill=t['muted'], anchor="nw")
+
+    def set_detail_icon(self, name, handoff=False, cid=None):
+        img = self.status_icon(cid) if cid else self.icon(name, handoff)
+        self.d_icon.configure(image=img)
+        self.d_icon.image = img
+
+    def update_details(self):
+        if not hasattr(self, "d_title"):
+            return
+        sel = self.tree.selection()
+        sessions = [self.row_by_cid[self.cid_of(i)] for i in self.selected_session_ids() if self.cid_of(i) in self.row_by_cid]
+        t = self.t
+        self.d_note.pack_forget()
+        show_rich = len(sel) == 1 and len(sessions) == 1
+        for w in (self.gauge, self.d_facts):
+            if show_rich:
+                w.pack(fill=tk.X) if w is self.gauge else w.pack(side=tk.LEFT, fill=tk.Y, padx=self.px(18))
+            else:
+                w.pack_forget()
+        if not sel:
+            self.set_detail_icon("info")
+            self.d_title.configure(text="Nenhuma sessão selecionada")
+            self.d_sub.configure(text="")
+            self.d_note.configure(text="Selecione uma sessão para ver contexto, workspace, falhas e retomada. Use Ctrl ou Shift para várias.")
+            self.d_note.pack(fill=tk.X)
+            self.gauge_ctx = 0
+            return
+        if not show_rich:
+            rows = sessions
+            if not rows:  # pasta de projeto
+                rows = [self.row_by_cid[self.cid_of(i)] for p in sel for i in self.iter_sessions(p) if self.cid_of(i) in self.row_by_cid]
+                name = self.tree.item(sel[0], "text").strip() if len(sel) == 1 else f"{len(sel)} pastas"
+            else:
+                name = f"{len(rows)} sessões selecionadas"
+            st = lambda r: self.states.get(r['cid'], "pendente")
+            lv = [ctx_level(r['ctx']) for r in rows]
+            self.set_detail_icon("folder")
+            self.d_title.configure(text=name)
+            self.d_sub.configure(text=f"{len(rows)} sessões · maior contexto {fmt_tokens(max((r['ctx'] for r in rows), default=0))}")
+            self.d_note.configure(text=(f"○ {sum(1 for r in rows if st(r) == 'pendente')} pendentes   ✔ {sum(1 for r in rows if st(r) == 'aprovada')} aprovadas   "
+                                        f"▣ {sum(1 for r in rows if st(r) == 'arquivada')} arquivadas   ⚠ {lv.count(1)} em atenção   ‼ {lv.count(2)} críticas   "
+                                        f"falhas de ferramenta: {sum(r['failures'] for r in rows)}"))
+            self.d_note.pack(fill=tk.X)
+            return
+        r = sessions[0]
+        cid = r['cid']
+        self.set_detail_icon(None, cid=cid)
+        self.d_title.configure(text=r['title'])
+        bits = [r['project'], r['agent'] or "agente principal"]
+        if r['origin']:
+            bits.append(r['origin'])
+        self.d_sub.configure(text=" · ".join(bits))
+        self.gauge_ctx = r['ctx']
+        self.draw_gauge(r['ctx'])
+        F = self.fact_vals
+        state = STATUS_NAME[self.states.get(cid, "pendente")]
+        if r['running']:
+            state += " · em execução"
+        if r['killed']:
+            state += " · encerrada à força"
+        F['state'].configure(text=state)
+        F['uuid'].configure(text=cid)
+        ws_mark = "" if r['ws_ok'] is None else ("✔ " if r['ws_ok'] else "⚠ ")
+        F['ws'].configure(text=(ws_mark + ellipsize(r['workspace'], 46)) if r['workspace'] else "não informado",
+                          fg=t['warning'] if r['ws_ok'] is False else t['fg'])
+        F['agent'].configure(text=r['agent'] or "-")
+        F['steps'].configure(text=str(r['steps']))
+        F['date'].configure(text=f"{r['date']}  ·  {rel_time(r['date'])}".rstrip(" ·"))
+        F['size'].configure(text=r['size'])
+        F['fails'].configure(text=(f"⚠ {r['failures']} ferramenta(s)" if r['failures'] else "nenhuma"), fg=t['warning'] if r['failures'] else t['fg'])
+        F['handoff'].configure(text=(f"↪ {self.handoffs[cid][:8]}" if self.handoffs.get(cid) else "-"))
+        F['origin'].configure(text=r['origin'] or "-")
 
     # --- ordenação, busca, menu de contexto ---
 
@@ -2051,20 +2642,14 @@ class AntigravityGateApp(tk.Tk):
     def copy_uuid(self, iid):
         self.clipboard_clear()
         self.clipboard_append(self.cid_of(iid))
+        self.notify("ok", f"UUID copiado: {self.cid_of(iid)}")
 
     def open_folder(self, iid):
         fpath = self.db_files.get(self.cid_of(iid), '')
         if not fpath:
             messagebox.showinfo("Aviso", "Esta sessão não tem arquivo nesta fonte.")
             return
-        opener = getattr(os, "startfile", None)
-        if opener is None:
-            messagebox.showinfo("Pasta do banco", os.path.dirname(fpath))
-            return
-        try:
-            opener(os.path.dirname(fpath))
-        except OSError as e:
-            messagebox.showinfo("Pasta do banco", f"{os.path.dirname(fpath)}\n\nNão abriu automaticamente: {e}")
+        self.open_path(os.path.dirname(fpath))
 
     def on_source_change(self):
         self.source_idx = self.src_box.current()
@@ -2084,6 +2669,7 @@ class AntigravityGateApp(tk.Tk):
         self.status.configure(text=text)
         self.update_chips()
         self.update_banner()
+        self.update_empty()
         self.update_actions()
 
     def load_data(self):
@@ -2156,6 +2742,9 @@ class AntigravityGateApp(tk.Tk):
             log.warning("Falha ao ler estado: %s", e)
             self.states, self.handoffs = {}, {}
         self.populate()
+        if self.warnings:
+            self.notify("warn", f"{self.warnings} aviso(s) ao ler os bancos de sessão. Algumas sessões podem estar incompletas.",
+                        [("Abrir log", lambda: self.open_path(LOG_FILE))])
 
     def populate(self):
         """Monta a árvore a partir dos dados carregados, aplicando ordenação e busca. Não toca no disco."""
@@ -2178,15 +2767,16 @@ class AntigravityGateApp(tk.Tk):
                     roots.append(r)
             for parent, lst in kids.items():
                 self.sub_count[parent] = len(lst)
-            proj_node = self.tree.insert("", tk.END, text=f"■ {pname} ({len(rows)} sessões)", values=("",) * 7, tags=('proj',))
+            proj_node = self.tree.insert("", tk.END, text=f"  {pname} ({len(rows)} sessões)", values=("",) * 8, tags=('proj',), image=self.icon("folder"))
             placed = set()
 
             def add(parent_iid, r):
                 if r['cid'] in placed:
                     return  # proteção contra ciclos de parentesco
                 placed.add(r['cid'])
-                iid = self.tree.insert(parent_iid, tk.END, text=self.leaf_text(r['cid']), tags=self.row_tags(r['cid']),
-                                       values=(r['date'], r['size'], ctx_label(r['ctx']), r['steps'], r['title'], r['agent'] or "-", r['cid']))
+                iid = self.tree.insert(parent_iid, tk.END, text=self.leaf_text(r['cid']), tags=self.row_tags(r['cid']), image=self.status_icon(r['cid']),
+                                       values=(r['date'], r['size'], ctx_label(r['ctx']), r['steps'], f"⚠ {r['failures']}" if r['failures'] else "-",
+                                               r['title'], r['agent'] or "-", r['cid']))
                 for ch in sorted(kids.get(r['cid'], []), key=key, reverse=rev):
                     add(iid, ch)
 
@@ -2387,6 +2977,15 @@ class AntigravityGateApp(tk.Tk):
         except sqlite3.Error:
             pass
         self.refresh_labels()
+        if 'error' in payload:
+            self.notify("error", f"Auto-Run falhou: {payload['error']}")
+        elif payload['quota']:
+            self.notify("warn", f"Auto-Run interrompido: cota esgotada (volta em {payload['quota']}). {payload['ok']} retomadas concluídas.")
+        elif payload['failed'] or payload['aborted']:
+            self.notify("warn", f"Auto-Run terminou com problemas: {payload['ok']} retomadas, {payload['failed']} falhas, {payload['skipped']} não executadas.")
+        else:
+            feito = payload['ok'] or payload['dossier']
+            self.notify("ok", f"Auto-Run concluído: {feito} sessão(ões) " + ("retomadas." if payload['ok'] else "com dossiê gerado (simulação)."))
 
     def on_export_event(self, kind, payload):
         if kind == 'export_progress':
@@ -2402,15 +3001,10 @@ class AntigravityGateApp(tk.Tk):
         if kind == 'export_error':
             messagebox.showerror("Erro", f"Não foi possível exportar:\n{payload}")
             return
-        opener = getattr(os, "startfile", None)
-        if opener is None:
-            messagebox.showinfo("Arquivo gerado", f"Salvo em:\n{payload}")
-            return
-        try:
-            opener(payload)
-        except OSError as e:
-            log.warning("Arquivo salvo, mas não abriu: %s", e)
-            messagebox.showinfo("Arquivo gerado", f"Salvo em:\n{payload}\n\nNão abriu automaticamente: {e}")
+        self.notify("ok", f"Salvo: {os.path.basename(payload)}",
+                    [("Abrir arquivo", lambda: self.open_path(payload)), ("Abrir pasta", lambda: self.open_path(os.path.dirname(payload)))])
+        if getattr(os, "startfile", None):
+            self.open_path(payload)
 
 
 def selftest(out_path):

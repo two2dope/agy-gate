@@ -1,6 +1,6 @@
 # AntigravityGate: estado do projeto
 
-Atualizado em 2026-10-26 (M4, Auto-Run, .exe e interface visual). Ao retomar, leia só a seção "Snapshot".
+Atualizado em 2026-10-26 (M4, Auto-Run, .exe, interface visual, limites, ícones e detalhes). Ao retomar, leia só a seção "Snapshot".
 
 ## Snapshot
 
@@ -119,3 +119,14 @@ Os testes rodam em Xvfb com Python 3.12 e `python3-tk`. Estão fora do repositó
 - **Atenção:** linha em âmbar, `⚠`. **Crítico:** linha em vermelho, `‼`, mais um **aviso** acima da tabela com os botões `Ver críticas` (lista só as críticas) e `Dispensar`. O aviso não conta sessões arquivadas. Ele volta se você mudar o limite ou a fonte.
 - Selos no rodapé: `N em atenção` e `N críticas`. O dossiê indica o nível no cabeçalho (`tokens (atenção)` ou `(crítico)`).
 - Preferência salva em `settings.json`. A variável `AGY_ROT_TOKENS` (antiga) ainda vale: define a atenção, e o crítico fica 1,5 vez maior.
+
+## Ícones, detalhes e notificações (última rodada visual)
+
+- **Ícones das linhas** desenhados pelo próprio app (PNG com transparência, gerado em Python): pasta de projeto, pendente (anel), aprovada (verde com visto), arquivada (caixa) e selo de retomada. Não dependem de fonte do Windows. Seguem o tema.
+- **Coluna `Falhas`:** passos de ferramenta (tipo 132) com status diferente de 3. A leitura usa o índice do banco. O significado dos status 6 e 7 continua inferência.
+- **Datas** dos resumos vêm em UTC no banco e agora aparecem no horário local.
+- **Painel `Detalhes da sessão`** (recolhível, preferência salva): título, projeto, agente, origem CLI, estado, UUID, workspace (com aviso se a pasta não existe mais), passos, modificação com tempo relativo ("há 3 h"), tamanho, falhas, retomada e **medidor de contexto** com as faixas normal, atenção e crítico. Com várias sessões ou uma pasta selecionadas, mostra os totais. Traz os botões Copiar UUID, Abrir pasta, Exportar e Dossiê.
+  - "Em execução" e "encerrada à força" vêm das colunas `status` e `killed` do resumo. **Não verificado:** nos dados vistos, todas as sessões estavam ociosas.
+- **Notificações** no canto da janela, sem travar o uso: salvar (com `Abrir arquivo` e `Abrir pasta`), marcar (com **`Desfazer`**), copiar UUID, limites aplicados, aviso de leitura (com `Abrir log`) e resultado do Auto-Run. Erros continuam em janela. O arquivo exportado ainda abre sozinho no Windows.
+- **Estados vazios** no centro da tabela: carregando, busca sem resultado (com `Limpar busca`) e fonte vazia (com `Atualizar`).
+- **Lista de arquivos** nos arquivos exportados: ícone por tipo, ordem do mais mexido para o menos, e coluna `No disco` (existe ou não neste computador). O diálogo completo ganhou o índice `Arquivos citados` (alterado e lido). O dossiê separa alterados e consultados em tabelas. Alterado ou lido é classificação por nome da ferramenta: heurística.
