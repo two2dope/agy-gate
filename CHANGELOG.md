@@ -6,6 +6,14 @@ Formato: [Versionamento Semântico](https://semver.org/lang/pt-BR/). Enquanto a 
 
 Correções dos três críticos da auditoria `reviews/audit-full-v0.9.0.md`, todos no Auto-Run.
 
+### Adicionado
+- Escolha do modelo do `agy` na confirmação do Auto-Run (`--model`; vazio = padrão do `agy`). Último valor e histórico ficam em `settings.json`.
+- Janela **Sobre** (botão no cabeçalho e F1): versão, autor, e-mail, GitHub, projeto, aviso de independência e diagnóstico do ambiente com **Copiar informações**.
+
+### Alterado
+- Painel de detalhes: os quatro botões têm a mesma largura e o conteúdo centralizado.
+- Ícone de Exportar: disquete (Segoe MDL2 `E74E`; `↧` no modo Unicode) no lugar da folha em branco. Glifo não visto num Windows.
+
 ### Corrigido
 - Sucesso do `agy` agora exige código de saída 0, `conversation_id` preenchido e status diferente de `ERROR`. Antes, qualquer saída sem erro explícito contava como retomada. A saída bruta de cada chamada vai para o `gate.log`.
 - Argumentos do `agy`: prompt numa linha só e por último; `--mode plan` e `--output-format json` vêm antes. Se o `agy` for um `.cmd`/`.bat` e os argumentos tiverem caracteres que o `cmd.exe` reinterpreta, o lote para sem executar e explica o motivo.

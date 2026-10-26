@@ -89,7 +89,7 @@ btn.set_busy(True, "Aguarde"); assert btn.busy and btn.text == "Aguarde"; btn.in
 
 # 4. nenhum botão cortado: largura larga mostra texto; estreita vira só ícone; conteúdo sempre cabe
 def clipped(bt):
-    w = int(bt["width"])
+    w = bt.winfo_width() if bt.stretch else int(bt["width"])  # esticado ocupa a largura dada pelo grid
     return [it for it in bt.find_all() if bt.type(it) in ("text", "arc") and bt.bbox(it)[2] > w - 1]
 app.geometry("1240x720+0+0"); app.update(); time.sleep(0.2); app.update()
 names = ("approve", "archive", "pending", "export", "dossier", "autorun")

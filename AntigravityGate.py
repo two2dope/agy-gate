@@ -13,6 +13,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+import webbrowser
 import zlib
 import base64
 from collections import Counter
@@ -24,6 +25,10 @@ from tkinter import ttk, messagebox, filedialog
 from tkinter import font as tkfont
 
 __version__ = "0.9.0"  # ver CHANGELOG.md; 1.0.0 = revisão final + Auto-Run real testado
+APP_AUTHOR = "Thominha"
+APP_EMAIL = "twoo2dope@gmail.com"
+APP_GITHUB = "https://github.com/two2dope"
+APP_REPO = "https://github.com/two2dope/agy-gate"
 
 BASE_DIR = os.environ.get("ANTIGRAVITY_HOME") or os.path.join(os.path.expanduser("~"), ".gemini")
 ACTIVE_SUM_DB = os.path.join(BASE_DIR, "antigravity", "conversation_summaries.db")
@@ -1347,9 +1352,26 @@ THEME_ORDER = ["escuro", "claro", "milspec", "cyber", "vidro", "brutal", "obsidi
 # nome -> (Segoe MDL2 Assets, alternativa Unicode). Se os ícones do Windows aparecerem errados, use Tema > Ícones > Símbolos Unicode.
 ICONS = {
     "refresh": ("\uE72C", "↻"), "search": ("\uE721", "⌕"), "clear": ("\uE711", "✕"), "approve": ("\uE73E", "✔"),
-    "archive": ("\uE7B8", "▣"), "pending": ("\uE7A7", "↶"), "export": ("\uE8A5", "▤"), "dossier": ("\uE768", "▶"),
+    "archive": ("\uE7B8", "▣"), "pending": ("\uE7A7", "↶"), "export": ("\uE74E", "↧"), "dossier": ("\uE768", "▶"),
     "autorun": ("\uE945", "⚡"), "theme": ("\uE790", "◐"), "warn": ("\uE7BA", "⚠"), "limits": ("\uE713", "⚙"), "copy": ("\uE8C8", "⧉"), "folder": ("\uE838", "▭"),
+    "about": ("\uE946", "ⓘ"),
 }
+
+
+def about_info():
+    """Versão e ambiente em texto simples, para a janela Sobre e para colar num relato de problema."""
+    import platform
+    import sys
+    run = "executável (.exe)" if getattr(sys, "frozen", False) else "código-fonte"
+    return "\n".join([
+        f"AntigravityGate {__version__} ({run})",
+        f"Python {platform.python_version()} · Tk {tk.TkVersion}",
+        f"Sistema: {platform.platform()}",
+        f"Pasta do Antigravity: {BASE_DIR}",
+        f"agy: {find_agy() or 'não encontrado'}",
+        f"Dados do app: {LOG_DIR}",
+        f"Log: {LOG_FILE}",
+    ])
 
 
 def load_settings():
@@ -1679,8 +1701,9 @@ class IconButton(tk.Canvas):
     """Botão desenhado em Canvas: ícone + texto, cantos do tema, estados (normal, hover, pressionado, foco,
     desabilitado, ocupado com spinner, selo de contagem, confirmação) e modo compacto só com o ícone."""
 
-    def __init__(self, master, app, icon, text, command, kind="normal", tip="", bg_token="bg", icon_token="btn_fg"):
+    def __init__(self, master, app, icon, text, command, kind="normal", tip="", bg_token="bg", icon_token="btn_fg", stretch=False):
         super().__init__(master, highlightthickness=0, bd=0, takefocus=1, cursor="hand2")
+        self.stretch = stretch  # ocupa a largura que o gerenciador de layout der (grid com sticky), conteúdo centralizado
         self.app, self.icon, self.text, self.command = app, icon, text, command
         self.kind, self.tip, self.bg_token, self.icon_token = kind, tip, bg_token, icon_token
         self.enabled, self.reason, self.busy, self.compact = True, "", False, False
@@ -1695,6 +1718,8 @@ class IconButton(tk.Canvas):
         self.bind("<space>", lambda e: self.invoke())
         self.bind("<Return>", lambda e: self.invoke())
         Tooltip(self, app, self.tooltip_text)
+        if stretch:
+            self.bind("<Configure>", lambda e: self.redraw(), add="+")
         self.relayout()
 
     # --- API ---
@@ -1810,6 +1835,8 @@ class IconButton(tk.Canvas):
         self.configure(bg=t[self.bg_token])
         self.delete("all")
         w, h = int(self["width"]), int(self["height"])
+        if self.stretch and self.winfo_width() > 1:
+            w = self.winfo_width()
         bg, border, fg = self.colors()
         r = self.app.px(t['radius'])
         round_rect(self, 1, 1, w - 1, h - 1, r, fill=bg, outline=border, width=2 if self.focused and self.enabled else 1)
@@ -1817,7 +1844,7 @@ class IconButton(tk.Canvas):
         off = 1 if self.pressed and self.enabled else 0
         icon_fg = fg if (self.kind == "primary" or not self.enabled or self.busy) else t.get(self.icon_token, fg)
         pad, gap = self.app.px(12), self.app.px(8)
-        x = pad
+        x = pad + (max(0, (w - self.measure()) // 2) if self.stretch else 0)
         cy = h // 2 + off
         if self.busy:
             iw = max(self.app.f_icon.measure(g or "●"), self.app.px(16))
@@ -1995,6 +2022,75 @@ class ThemePicker(tk.Toplevel):
         self.destroy()
 
 
+class AboutDialog(tk.Toplevel):
+    """Sobre: versão, autor, links e diagnóstico do ambiente, com botão para copiar tudo."""
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.app = app
+        t = app.t
+        self.title("Sobre o AntigravityGate")
+        self.configure(bg=t['panel'], padx=app.px(20), pady=app.px(16))
+        self.transient(app)
+        self.resizable(False, False)
+        self.f_link = tkfont.Font(self, font=app.f_ui)
+        self.f_link.configure(underline=True)
+
+        def lab(parent, text, font=None, fg='fg', **kw):
+            return tk.Label(parent, text=text, bg=t['panel'], fg=t[fg], font=font or app.f_ui, justify=tk.LEFT, anchor="w", **kw)
+
+        head = tk.Frame(self, bg=t['panel'])
+        head.pack(anchor="w", fill=tk.X)
+        lab(head, "◆", app.f_title, 'accent_text').pack(side=tk.LEFT)
+        lab(head, "AntigravityGate", app.f_title).pack(side=tk.LEFT, padx=(app.px(8), app.px(10)))
+        lab(head, f"versão {__version__}", app.f_small, 'muted').pack(side=tk.LEFT, anchor="s", pady=(0, app.px(3)))
+        lab(self, "Gestão de contexto e curadoria de sessões do Antigravity.").pack(anchor="w", pady=(app.px(4), app.px(12)))
+
+        grid = tk.Frame(self, bg=t['panel'])
+        grid.pack(anchor="w", fill=tk.X)
+        rows = (("Autor", APP_AUTHOR, None), ("E-mail", APP_EMAIL, "mailto:" + APP_EMAIL),
+                ("GitHub", APP_GITHUB.replace("https://", ""), APP_GITHUB), ("Projeto", APP_REPO.replace("https://", ""), APP_REPO))
+        for r, (label, text, url) in enumerate(rows):
+            lab(grid, label, app.f_small, 'muted').grid(row=r, column=0, sticky="w", padx=(0, app.px(14)), pady=1)
+            v = lab(grid, text, self.f_link if url else app.f_ui, 'accent_text' if url else 'fg')
+            v.grid(row=r, column=1, sticky="w", pady=1)
+            if url:
+                v.configure(cursor="hand2", takefocus=1, highlightthickness=1, highlightbackground=t['panel'], highlightcolor=t['accent'])
+                v.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
+                v.bind("<Return>", lambda e, u=url: webbrowser.open(u))
+                Tooltip(v, app, lambda u=url: f"Abrir {u}")
+        lab(self, f"© 2026 {APP_AUTHOR}. Ferramenta independente, sem vínculo com o Google ou com o Antigravity.",
+            app.f_small, 'muted', wraplength=app.px(520)).pack(anchor="w", pady=(app.px(10), app.px(12)))
+
+        box = tk.Frame(self, bg=t['panel2'], padx=app.px(12), pady=app.px(10), highlightthickness=1, highlightbackground=t['border'])
+        box.pack(fill=tk.X)
+        tk.Label(box, text="Diagnóstico", bg=t['panel2'], fg=t['fg'], font=app.f_bold, anchor="w").pack(anchor="w")
+        tk.Label(box, text="\n".join(about_info().splitlines()[1:]), bg=t['panel2'], fg=t['fg'], font=app.f_small, justify=tk.LEFT,
+                 anchor="w", wraplength=app.px(520)).pack(anchor="w", pady=(app.px(4), 0))
+
+        buttons = tk.Frame(self, bg=t['panel'])
+        buttons.pack(anchor="e", pady=(app.px(14), 0))
+        IconButton(buttons, app, "copy", "Copiar informações", self.copy_info, bg_token="panel",
+                   tip="Copiar versão e ambiente para colar num relato de problema").pack(side=tk.LEFT, padx=(0, app.px(8)))
+        IconButton(buttons, app, "folder", "Pasta de dados", lambda: app.open_path(LOG_DIR), bg_token="panel",
+                   tip=f"Abrir {LOG_DIR}").pack(side=tk.LEFT, padx=(0, app.px(8)))
+        IconButton(buttons, app, "", "Fechar", self.close, kind="primary", bg_token="panel").pack(side=tk.LEFT)
+        self.bind("<Escape>", lambda e: self.close())
+        self.protocol("WM_DELETE_WINDOW", self.close)
+        place_over(self, app)
+        self.focus_set()
+
+    def copy_info(self):
+        self.app.clipboard_clear()
+        self.app.clipboard_append(about_info())
+        self.app.notify("ok", "Informações do app copiadas.")
+
+    def close(self):
+        if self.app.about_win is self:
+            self.app.about_win = None
+        self.destroy()
+
+
 class LimitDialog(tk.Toplevel):
     """Escolha dos níveis de alerta de contexto: três faixas prontas ou valores personalizados, com prévia sobre as sessões carregadas."""
 
@@ -2089,6 +2185,7 @@ class AntigravityGateApp(tk.Tk):
         self.icon_cache = {}
         self.toasts, self.toast_log = [], []
         self.theme_picker = None
+        self.about_win = None
         self.queue = queue.Queue()
         self.gen = 0
         self.loading = False
@@ -2395,8 +2492,15 @@ class AntigravityGateApp(tk.Tk):
 
     # --- widgets ---
 
-    def make_button(self, parent, name, icon, text, command, tip, kind="normal", bg_token="bg", icon_token="btn_fg"):
-        b = IconButton(parent, self, icon, text, command, kind=kind, tip=tip, bg_token=bg_token, icon_token=icon_token)
+    def open_about(self):
+        if self.about_win is not None and self.about_win.winfo_exists():
+            self.about_win.lift()
+            self.about_win.focus_set()
+            return
+        self.about_win = AboutDialog(self)
+
+    def make_button(self, parent, name, icon, text, command, tip, kind="normal", bg_token="bg", icon_token="btn_fg", stretch=False):
+        b = IconButton(parent, self, icon, text, command, kind=kind, tip=tip, bg_token=bg_token, icon_token=icon_token, stretch=stretch)
         self.icon_buttons.append(b)
         self.btn[name] = b
         return b
@@ -2415,6 +2519,7 @@ class AntigravityGateApp(tk.Tk):
         Tooltip(self.title_lbl, self, lambda: f"AntigravityGate v{__version__}")
         self.hdr_right = self.themed_widget(tk.Frame(self.top_frame), bg="header_bg")
         self.hdr_right.pack(side=tk.RIGHT)
+        self.make_button(self.hdr_right, "about", "about", "Sobre", self.open_about, "Versão, autor e diagnóstico (F1)", bg_token="header_bg", icon_token="accent_text").pack(side=tk.RIGHT, padx=(self.px(8), 0))
         self.make_button(self.hdr_right, "theme", "theme", self.theme_button_text(), self.show_theme_menu, "Escolher tema e estilo de ícones", bg_token="header_bg", icon_token="accent_text").pack(side=tk.RIGHT, padx=(self.px(8), 0))
         self.make_button(self.hdr_right, "limits", "limits", "Limites", self.open_limits, self.limits_tip(), bg_token="header_bg", icon_token="warning").pack(side=tk.RIGHT, padx=(self.px(8), 0))
         self.make_button(self.hdr_right, "refresh", "refresh", "Atualizar", self.refresh, "Reler as pastas e recarregar as sessões (F5)", bg_token="header_bg").pack(side=tk.RIGHT)
@@ -2531,6 +2636,7 @@ class AntigravityGateApp(tk.Tk):
         self.tree.bind("<Button-3>", self.show_menu)
         self.tree.bind("<<TreeviewSelect>>", lambda e: self.update_actions())
         self.bind("<F5>", lambda e: self.refresh())
+        self.bind("<F1>", lambda e: self.open_about())
         self.update_actions()
 
     # --- responsividade e estados ---
@@ -2599,7 +2705,7 @@ class AntigravityGateApp(tk.Tk):
         names = ("approve", "archive", "pending", "export", "dossier", "autorun")
         self.fit_buttons(self.actions_frame, [self.btn[n] for n in names], reserved=self.px(60) + self.px(32))
         hdr_room = self.top_frame.winfo_width() - self.brand.winfo_reqwidth() - self.px(32)
-        both = [self.btn["limits"], self.btn["refresh"], self.btn["theme"]]
+        both = [self.btn["limits"], self.btn["refresh"], self.btn["theme"], self.btn["about"]]
         compact = sum(b.measure(False) for b in both) + self.px(24) > hdr_room
         for b in both:
             b.set_compact(compact)
@@ -2778,11 +2884,13 @@ class AntigravityGateApp(tk.Tk):
 
         acts = self.themed_widget(tk.Frame(body), bg="panel")
         acts.pack(side=tk.RIGHT, fill=tk.Y)
-        mkb = lambda name, icon, text, cmd, tip, tok="btn_fg": self.make_button(acts, name, icon, text, cmd, tip, bg_token="panel", icon_token=tok)
-        mkb("d_copy", "copy", "Copiar UUID", self.copy_selected_uuid, "Copiar o UUID da sessão").grid(row=0, column=0, padx=(0, self.px(6)), pady=(0, self.px(6)), sticky="ew")
-        mkb("d_folder", "folder", "Abrir pasta", self.open_selected_folder, "Abrir a pasta do banco da sessão").grid(row=0, column=1, pady=(0, self.px(6)), sticky="ew")
-        mkb("d_export", "export", "Exportar diálogo", self.open_selected, "Salvar a conversa completa em Markdown").grid(row=1, column=0, padx=(0, self.px(6)), sticky="ew")
-        mkb("d_dossier", "dossier", "Dossiê", lambda: self.start_export('dossier'), "Salvar o dossiê de retomada", "accent_text").grid(row=1, column=1, sticky="ew")
+        acts.grid_columnconfigure(0, uniform="dacts")  # duas colunas da mesma largura: botões alinhados
+        acts.grid_columnconfigure(1, uniform="dacts")
+        mkb = lambda name, icon, text, cmd, tip, tok="btn_fg": self.make_button(acts, name, icon, text, cmd, tip, bg_token="panel", icon_token=tok, stretch=True)
+        mkb("d_copy", "copy", "Copiar UUID", self.copy_selected_uuid, "Copiar o UUID da sessão").grid(row=0, column=0, padx=(0, self.px(3)), pady=(0, self.px(6)), sticky="ew")
+        mkb("d_folder", "folder", "Abrir pasta", self.open_selected_folder, "Abrir a pasta do banco da sessão").grid(row=0, column=1, padx=(self.px(3), 0), pady=(0, self.px(6)), sticky="ew")
+        mkb("d_export", "export", "Exportar diálogo", self.open_selected, "Salvar a conversa completa em Markdown").grid(row=1, column=0, padx=(0, self.px(3)), sticky="ew")
+        mkb("d_dossier", "dossier", "Dossiê", lambda: self.start_export('dossier'), "Salvar o dossiê de retomada", "accent_text").grid(row=1, column=1, padx=(self.px(3), 0), sticky="ew")
 
     def toggle_details(self):
         self.settings['details'] = not self.settings.get('details', True)
