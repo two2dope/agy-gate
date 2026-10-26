@@ -36,7 +36,7 @@ A parte de leitura, curadoria e exportação está sólida: somente-leitura real
 
 ## Todos os Problemas Críticos (Must Fix)
 
-> **Situação:** C1, C2 e C3 corrigidos depois desta auditoria, com testes em `tests/test_safety.py` (ver CHANGELOG, "Não lançado"). C2 continua dependendo de conferir no Windows se o `agy` é `.exe` ou `.cmd`.
+> **Situação:** C1, C2 e C3 corrigidos depois desta auditoria, com testes em `tests/test_safety.py` (ver CHANGELOG, "Não lançado"). No Windows do usuário o `agy` é `agy.exe` (verificado em 2026-10-26): o caminho de risco de C2 não se aplica; a proteção fica para o caso de troca de instalação.
 
 | # | Problema | Lente(s) | Arquivo(s) | Impacto | Correção |
 |---|----------|----------|------------|---------|----------|

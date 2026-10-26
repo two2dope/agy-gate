@@ -51,6 +51,7 @@ Outros campos:
 ## Contrato do `agy` (CLI)
 
 Usado pelo Auto-Run:
+- Executável: `agy.exe` (aplicativo nativo, não `.cmd`), em `%LOCALAPPDATA%\agy\bin\agy.exe`, no PATH. Verificado no Windows do usuário em 2026-10-26.
 - `agy --print "<prompt>"`: roda sem interação e imprime a resposta.
 - `--output-format json`: devolve um objeto com `conversation_id`, `status` (`ERROR` ou sucesso), `response`, `error`, `duration_seconds`, `num_turns` e `usage` (`input_tokens`, `output_tokens`, `thinking_tokens`, `cache_read_tokens`, `total_tokens`).
 - Em erro, o `agy` também escreve na saída de erro as linhas `error: ...` e `AGY_ERROR: {json}`. O JSON traz `status`, `error_code`, `retryable` e `error_id`.
