@@ -5,8 +5,12 @@ import re
 import json
 import logging
 import queue
+import shutil
+import subprocess
 import threading
+import time
 import urllib.parse
+import urllib.request
 from collections import Counter
 from contextlib import closing
 from datetime import datetime
@@ -22,6 +26,7 @@ PROJECTS_DIR = os.path.join(BASE_DIR, "config", "projects")
 LOG_DIR = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "AntigravityGate")
 LOG_FILE = os.path.join(LOG_DIR, "gate.log")
 EXPORT_DIR = os.path.join(LOG_DIR, "exports")
+HANDOFF_DIR = os.path.join(LOG_DIR, "handoffs")
 STATE_DB = os.path.join(LOG_DIR, "gate_state.db")  # estado do AntigravityGate; nunca grava nos bancos do Antigravity
 
 STATUS_LABEL = {"pendente": "💬 Pendente", "aprovada": "✅ Aprovada", "arquivada": "📦 Arquivada"}
@@ -637,12 +642,25 @@ class StateStore:
         with conn:
             conn.execute("CREATE TABLE IF NOT EXISTS session_state(cid TEXT PRIMARY KEY, status TEXT NOT NULL, updated_at TEXT NOT NULL)")
             conn.execute("CREATE TABLE IF NOT EXISTS state_log(id INTEGER PRIMARY KEY AUTOINCREMENT, cid TEXT NOT NULL, status TEXT NOT NULL, at TEXT NOT NULL)")
+            conn.execute("CREATE TABLE IF NOT EXISTS handoffs(id INTEGER PRIMARY KEY AUTOINCREMENT, src_cid TEXT NOT NULL, new_cid TEXT, "
+                         "dossier_path TEXT, status TEXT NOT NULL, detail TEXT, at TEXT NOT NULL)")
         if self.persistent:
             conn.close()
 
     def load(self):
         with self._connect() as c:
             return dict(c.execute("SELECT cid, status FROM session_state").fetchall())
+
+    def add_handoff(self, src_cid, new_cid, dossier_path, status, detail=''):
+        with self._connect() as c:
+            with c:
+                c.execute("INSERT INTO handoffs(src_cid, new_cid, dossier_path, status, detail, at) VALUES(?,?,?,?,?,?)",
+                          (src_cid, new_cid, dossier_path, status, detail[:500], datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+
+    def handoffs_ok(self):
+        """src_cid -> new_cid da retomada concluída mais recente."""
+        with self._connect() as c:
+            return dict(c.execute("SELECT src_cid, new_cid FROM handoffs WHERE status='ok' ORDER BY id").fetchall())
 
     def set_many(self, cids, status):
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -673,6 +691,198 @@ class _NoClose:
 
     def close(self):
         pass
+
+
+# --- Auto-Run (retomada limpa, opção B) -------------------------------------------------------
+
+AGY_TIMEOUT_S = 600
+AGY_PROMPT = ("Você está retomando o trabalho de uma sessão anterior. Leia o dossiê em: {path}\n"
+              "Depois responda, em poucas linhas: (1) o que entendeu do objetivo e do estado atual; (2) o que falta; "
+              "(3) os próximos passos que propõe. Não altere nenhum arquivo e não execute comandos; aguarde minha confirmação.")
+
+
+def find_agy():
+    exe = os.environ.get("AGY_EXE")
+    if exe:
+        return exe if os.path.isfile(exe) else None
+    return shutil.which("agy")
+
+
+def workspace_dirs(uris):
+    """Pastas existentes citadas em workspace_uris (file:///...)."""
+    out = []
+    for uri in re.findall(r"file://[^\s,;]+", uris or ""):  # URIs vêm codificadas (%20), sem espaço literal
+        path = urllib.request.url2pathname(urllib.parse.urlparse(uri).path)
+        if os.path.isdir(path) and path not in out:
+            out.append(path)
+    return out[:3]
+
+
+def build_agy_args(agy, dossier_path, extra_dirs, mode="plan", timeout_s=AGY_TIMEOUT_S):
+    """Lista de argumentos (sem shell). Nunca inclui --dangerously-skip-permissions."""
+    args = [agy, "--print", AGY_PROMPT.format(path=dossier_path), "--output-format", "json",
+            "--mode", mode, "--print-timeout", f"{timeout_s}s", "--add-dir", os.path.dirname(dossier_path)]
+    for d in extra_dirs:
+        args += ["--add-dir", d]
+    return args
+
+
+def parse_agy_output(stdout, stderr):
+    """Interpreta a saída do agy. Formato conhecido: um objeto JSON com conversation_id, status, response, error, usage;
+    em erro, linhas 'error: ...' e 'AGY_ERROR: {json}' vão para stderr. Aceita saída fora do padrão sem quebrar."""
+    obj = None
+    for chunk in [stdout.strip()] + [ln.strip() for ln in reversed(stdout.strip().splitlines())]:
+        if chunk.startswith("{"):
+            try:
+                obj = json.loads(chunk)
+                break
+            except ValueError:
+                continue
+    blob = f"{stdout}\n{stderr}"
+    quota = "RESOURCE_EXHAUSTED" in blob or "quota reached" in blob.lower() or '"error_code":429' in blob.replace(" ", "")
+    m = re.search(r"Resets in ([0-9hms ]+?)(?:\.|\"|$|\n)", blob)
+    res = {'ok': False, 'conversation_id': '', 'response': '', 'error': '', 'quota': quota, 'reset': m.group(1).strip() if m else ''}
+    if isinstance(obj, dict):
+        res['conversation_id'] = str(obj.get('conversation_id') or '')
+        res['response'] = str(obj.get('response') or '')
+        res['error'] = str(obj.get('error') or '')
+        res['ok'] = str(obj.get('status', '')).upper() != 'ERROR' and not res['error']
+    else:
+        res['error'] = "saída sem JSON reconhecível: " + (blob.strip()[:200] or "(vazia)")
+    return res
+
+
+class AutoRunner:
+    """Percorre as sessões aprovadas: gera o dossiê local e, se não for simulação, abre uma sessão nova com `agy --print`.
+    Roda em thread de trabalho; fala com a tela só por `log` (callback). Sem Tk aqui."""
+
+    def __init__(self, items, store, log_cb, agy=None, dry_run=True, mode="plan", timeout_s=AGY_TIMEOUT_S, max_failures=3, grace_s=60):
+        self.items, self.store, self.log_cb = items, store, log_cb
+        self.grace_s = grace_s
+        self.agy, self.dry_run, self.mode, self.timeout_s, self.max_failures = agy, dry_run, mode, timeout_s, max_failures
+        self.cancelled = False
+        self.proc = None
+
+    def cancel(self):
+        self.cancelled = True
+        if self.proc and self.proc.poll() is None:
+            try:
+                self.proc.terminate()
+            except OSError:
+                pass
+
+    def _run_agy(self, args):
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        self.proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                     encoding="utf-8", errors="replace", creationflags=flags)
+        deadline = time.time() + self.timeout_s + self.grace_s
+        while True:
+            try:
+                out, err = self.proc.communicate(timeout=0.3)
+                return out, err, None
+            except subprocess.TimeoutExpired:
+                if self.cancelled:
+                    self.proc.terminate()
+                    try:
+                        out, err = self.proc.communicate(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        self.proc.kill()
+                        out, err = self.proc.communicate()
+                    return out, err, "cancelada"
+                if time.time() > deadline:
+                    self.proc.kill()
+                    out, err = self.proc.communicate()
+                    return out, err, "tempo esgotado"
+
+    def run(self):
+        os.makedirs(HANDOFF_DIR, exist_ok=True)
+        summary = {'ok': 0, 'dossier': 0, 'failed': 0, 'skipped': 0, 'quota': '', 'junk': [], 'aborted': ''}
+        failures = 0
+        stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+        n = len(self.items)
+        for i, it in enumerate(self.items):
+            if self.cancelled:
+                summary['skipped'] += n - i
+                summary['aborted'] = 'cancelado pelo usuário'
+                self.log_cb(f"Cancelado. {n - i} sessão(ões) não executadas.")
+                break
+            cid, title = it['cid'], it['title']
+            self.log_cb(f"[{i + 1}/{n}] {title}  ({cid[:8]})")
+            dossier = os.path.join(HANDOFF_DIR, f"retomada_{cid[:8]}_{stamp}.md")
+            try:
+                export_session('dossier', it['fpath'], it['meta'], dossier)
+            except Exception as e:
+                log.exception("Dossiê falhou para %s", cid)
+                self.store.add_handoff(cid, '', dossier, 'erro', f"dossiê: {e}")
+                summary['failed'] += 1
+                failures += 1
+                self.log_cb(f"    ✖ não foi possível gerar o dossiê: {e}")
+                if failures >= self.max_failures:
+                    summary['skipped'] += n - i - 1
+                    summary['aborted'] = f"{failures} falhas seguidas"
+                    self.log_cb(f"Interrompido após {failures} falhas seguidas.")
+                    break
+                continue
+            self.log_cb(f"    dossiê: {dossier}")
+            if self.dry_run:
+                self.store.add_handoff(cid, '', dossier, 'dossie', 'simulação: agy não foi chamado')
+                summary['dossier'] += 1
+                continue
+            args = build_agy_args(self.agy, dossier, workspace_dirs(it.get('workspace', '')), self.mode, self.timeout_s)
+            try:
+                out, err, why = self._run_agy(args)
+            except OSError as e:
+                self.store.add_handoff(cid, '', dossier, 'erro', f"não executou o agy: {e}")
+                summary['failed'] += 1
+                self.log_cb(f"    ✖ não foi possível executar o agy: {e}")
+                summary['skipped'] += n - i - 1
+                summary['aborted'] = 'agy não executou'
+                break
+            if why:
+                self.store.add_handoff(cid, '', dossier, 'erro', why)
+                summary['failed'] += 1
+                self.log_cb(f"    ✖ {why}")
+                if why == "cancelada":
+                    summary['skipped'] += n - i - 1
+                    summary['aborted'] = 'cancelado pelo usuário'
+                    break
+                failures += 1
+            else:
+                res = parse_agy_output(out, err)
+                new_cid = res['conversation_id']
+                if res['ok']:
+                    self.store.add_handoff(cid, new_cid, dossier, 'ok', res['response'][:300])
+                    summary['ok'] += 1
+                    failures = 0
+                    self.log_cb(f"    ✔ sessão nova: {new_cid or '(sem id)'}")
+                    if res['response']:
+                        self.log_cb("    resposta: " + " ".join(res['response'].split())[:300])
+                    continue
+                self.store.add_handoff(cid, new_cid, dossier, 'erro', res['error'])
+                summary['failed'] += 1
+                if new_cid:
+                    summary['junk'].append(new_cid)
+                self.log_cb(f"    ✖ {res['error'][:300]}")
+                if res['quota']:
+                    summary['quota'] = res['reset'] or 'horário não informado'
+                    summary['skipped'] += n - i - 1
+                    summary['aborted'] = 'cota esgotada'
+                    self.log_cb(f"Cota do modelo esgotada (volta em {summary['quota']}). Lote interrompido; "
+                                f"{n - i - 1} sessão(ões) não executadas, sem novas tentativas.")
+                    break
+                failures += 1
+            if failures >= self.max_failures:
+                summary['skipped'] += n - i - 1
+                summary['aborted'] = f"{failures} falhas seguidas"
+                self.log_cb(f"Interrompido após {failures} falhas seguidas.")
+                break
+        if summary['junk']:
+            try:
+                self.store.set_many(summary['junk'], 'arquivada')
+                self.log_cb(f"{len(summary['junk'])} sessão(ões) vazia(s) criada(s) pelas tentativas com erro foram marcadas como arquivadas.")
+            except sqlite3.Error:
+                pass
+        return summary
 
 
 # --- fontes e varredura -----------------------------------------------------------------------
@@ -846,6 +1056,8 @@ class AntigravityGateApp(tk.Tk):
         self.gen = 0
         self.loading = False
         self.exporting = False
+        self.autorunning, self.runner, self.auto_win = False, None, None
+        self.handoffs = {}
         self.warnings = 0
         self.base_status = ""
         self.proj_map, self.summaries, self.db_files = {}, {}, {}
@@ -920,8 +1132,7 @@ class AntigravityGateApp(tk.Tk):
         btn_refresh = self.themed_widget(tk.Button(self.top_frame, text="🔄 Atualizar", font=('Segoe UI', 9), relief=tk.FLAT, command=self.refresh), bg="header_bg", fg="fg_color")
         btn_refresh.pack(side=tk.LEFT, padx=5)
 
-        # Ações ainda sem implementação: desabilitadas para não afirmar efeito que não ocorre.
-        btn_auto = self.themed_widget(tk.Button(self.top_frame, text="⚡ Auto-Run (em breve)", disabledforeground="#888888", font=('Segoe UI', 9, 'bold'), relief=tk.FLAT, state=tk.DISABLED), bg="header_bg")
+        btn_auto = tk.Button(self.top_frame, text="⚡ Auto-Run", bg="#1e7e34", fg="#ffffff", font=('Segoe UI', 9, 'bold'), relief=tk.FLAT, command=self.start_autorun)
         btn_auto.pack(side=tk.RIGHT, padx=5)
 
         for status, text in (("pendente", "↩ Pendente"), ("arquivada", "📦 Arquivar"), ("aprovada", "✅ Aprovar")):
@@ -1039,7 +1250,8 @@ class AntigravityGateApp(tk.Tk):
     def leaf_text(self, cid):
         n = self.sub_count.get(cid, 0)
         sub = f"  (+{n} sub-agente{'s' if n != 1 else ''})" if n else ""
-        return "    " + STATUS_LABEL[self.states.get(cid, "pendente")] + sub
+        ret = f"  ↪ retomada {self.handoffs[cid][:8]}" if self.handoffs.get(cid) else ""
+        return "    " + STATUS_LABEL[self.states.get(cid, "pendente")] + ret + sub
 
     def refresh_labels(self):
         for iid in self.iter_sessions():
@@ -1183,6 +1395,9 @@ class AntigravityGateApp(tk.Tk):
                 if kind.startswith('export'):
                     self.on_export_event(kind, payload)
                     continue
+                if kind.startswith('auto'):
+                    self.on_auto_event(kind, payload)
+                    continue
                 if gen != self.gen:
                     continue  # resposta de uma carga antiga (o usuário trocou de fonte)
                 label = self.sources[self.source_idx][0]
@@ -1210,9 +1425,10 @@ class AntigravityGateApp(tk.Tk):
         self.search_var.set("")
         try:
             self.states = self.state.load()
+            self.handoffs = self.state.handoffs_ok()
         except sqlite3.Error as e:
             log.warning("Falha ao ler estado: %s", e)
-            self.states = {}
+            self.states, self.handoffs = {}, {}
         self.populate()
 
     def populate(self):
@@ -1313,6 +1529,131 @@ class AntigravityGateApp(tk.Tk):
                 self.queue.put((0, 'export_error', f"{type(e).__name__}: {e}"))
 
         threading.Thread(target=job, daemon=True).start()
+
+    # --- Auto-Run ---
+
+    def confirm_autorun(self, items, done):
+        """Janela de confirmação. Devolve {'dry_run', 'redo'} ou None se o usuário cancelar."""
+        win = tk.Toplevel(self)
+        win.title("Auto-Run — confirmar")
+        win.transient(self)
+        win.grab_set()
+        result = {'v': None}
+        tk.Label(win, text=f"{len(items)} sessão(ões) aprovada(s) nesta fonte. Para cada uma o app gera o dossiê de retomada e, "
+                           "fora do modo simulação, abre uma sessão NOVA com o agy (a original não é alterada).",
+                 wraplength=620, justify=tk.LEFT, padx=12, pady=8).pack(anchor=tk.W)
+        box = tk.Listbox(win, width=90, height=min(12, max(3, len(items))))
+        for it in items:
+            marca = "  (já retomada)" if it['cid'] in done else ""
+            box.insert(tk.END, f"{it['title'][:60]}  [{it['cid'][:8]}]  {it.get('workspace_label', '')}{marca}")
+        box.pack(padx=12, fill=tk.BOTH, expand=True)
+        dry, redo = tk.BooleanVar(value=True), tk.BooleanVar(value=False)
+        tk.Checkbutton(win, text="Só gerar os dossiês (simulação: não chama o agy, não gasta cota)", variable=dry).pack(anchor=tk.W, padx=12, pady=(8, 0))
+        tk.Checkbutton(win, text="Refazer as que já foram retomadas", variable=redo).pack(anchor=tk.W, padx=12)
+        tk.Label(win, text="Modo do agy: plan (somente leitura). Um erro de cota interrompe o lote inteiro.", fg="#555555", padx=12).pack(anchor=tk.W)
+
+        def go():
+            result['v'] = {'dry_run': dry.get(), 'redo': redo.get()}
+            win.destroy()
+        row = tk.Frame(win, pady=10)
+        row.pack()
+        tk.Button(row, text="Iniciar", width=12, command=go).pack(side=tk.LEFT, padx=6)
+        tk.Button(row, text="Cancelar", width=12, command=win.destroy).pack(side=tk.LEFT, padx=6)
+        self.wait_window(win)
+        return result['v']
+
+    def start_autorun(self):
+        if self.autorunning:
+            messagebox.showinfo("Aviso", "O Auto-Run já está em andamento.")
+            return
+        cands = []
+        for grp in self.grouped.values():
+            for r in grp:
+                if self.states.get(r['cid']) == "aprovada" and r['fpath']:
+                    meta = self.meta_for(r['cid'])
+                    cands.append({'cid': r['cid'], 'title': r['title'], 'fpath': r['fpath'], 'meta': meta,
+                                  'workspace': str(val(self.summaries.get(r['cid'], {}), 'workspace_uris')),
+                                  'workspace_label': meta['workspace'][-40:]})
+        if not cands:
+            messagebox.showinfo("Auto-Run", "Nenhuma sessão aprovada com arquivo nesta fonte. Aprove sessões primeiro (botão ✅ Aprovar).")
+            return
+        cands.sort(key=lambda x: x['title'].lower())
+        opts = self.confirm_autorun(cands, set(self.handoffs))
+        if not opts:
+            return
+        items = [c for c in cands if opts['redo'] or c['cid'] not in self.handoffs]
+        if not items:
+            messagebox.showinfo("Auto-Run", "Todas as sessões aprovadas já foram retomadas. Marque \"Refazer\" para repetir.")
+            return
+        agy = None
+        if not opts['dry_run']:
+            agy = find_agy()
+            if not agy:
+                messagebox.showerror("Auto-Run", "Não encontrei o agy. Confira se `agy --help` funciona no PowerShell, "
+                                                 "ou defina AGY_EXE com o caminho do agy.exe.")
+                return
+        self.autorunning = True
+        self.open_autorun_window(len(items), opts['dry_run'])
+        runner = AutoRunner(items, self.state, lambda line: self.queue.put((0, 'auto_log', line)), agy=agy, dry_run=opts['dry_run'])
+        self.runner = runner
+
+        def job():
+            try:
+                summary = runner.run()
+            except Exception as e:
+                log.exception("Auto-Run falhou")
+                summary = {'error': f"{type(e).__name__}: {e}"}
+            self.queue.put((0, 'auto_done', summary))
+
+        threading.Thread(target=job, daemon=True).start()
+
+    def open_autorun_window(self, n, dry_run):
+        win = tk.Toplevel(self)
+        win.title("Auto-Run — " + ("simulação" if dry_run else "executando"))
+        win.geometry("780x420")
+        txt = tk.Text(win, wrap=tk.WORD, state=tk.DISABLED, font=('Consolas', 9))
+        txt.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        btn = tk.Button(win, text="Cancelar", width=14, command=self.cancel_autorun)
+        btn.pack(pady=(0, 8))
+        win.protocol("WM_DELETE_WINDOW", lambda: messagebox.showinfo("Auto-Run", "Use o botão Cancelar/Fechar."))
+        self.auto_win = (win, txt, btn)
+        self.append_auto(f"{n} sessão(ões) na fila. Modo: {'simulação (só dossiês)' if dry_run else 'agy --mode plan'}.")
+
+    def append_auto(self, line):
+        if not self.auto_win:
+            return
+        _win, txt, _btn = self.auto_win
+        txt.configure(state=tk.NORMAL)
+        txt.insert(tk.END, line + "\n")
+        txt.see(tk.END)
+        txt.configure(state=tk.DISABLED)
+
+    def cancel_autorun(self):
+        if self.runner and self.autorunning:
+            self.append_auto("Cancelando…")
+            self.runner.cancel()
+        elif self.auto_win:
+            self.auto_win[0].destroy()
+            self.auto_win = None
+
+    def on_auto_event(self, kind, payload):
+        if kind == 'auto_log':
+            self.append_auto(payload)
+            return
+        self.autorunning = False
+        if 'error' in payload:
+            self.append_auto(f"Erro inesperado: {payload['error']}")
+        else:
+            self.append_auto(f"Fim. ✔ {payload['ok']} retomadas · 📋 {payload['dossier']} dossiês (simulação) · ✖ {payload['failed']} falhas · "
+                             f"⏭ {payload['skipped']} não executadas" + (f" · motivo: {payload['aborted']}" if payload['aborted'] else ""))
+        if self.auto_win:
+            self.auto_win[2].configure(text="Fechar")
+        try:
+            self.states = self.state.load()
+            self.handoffs = self.state.handoffs_ok()
+        except sqlite3.Error:
+            pass
+        self.refresh_labels()
 
     def on_export_event(self, kind, payload):
         if kind == 'export_progress':
