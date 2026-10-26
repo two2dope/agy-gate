@@ -4,6 +4,8 @@ import glob
 import re
 import json
 import logging
+import queue
+import threading
 import urllib.parse
 from contextlib import closing
 from datetime import datetime
@@ -20,7 +22,17 @@ DESKTOP_DIR = os.path.join(os.path.expanduser("~"), "Desktop")
 LOG_DIR = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "AntigravityGate")
 LOG_FILE = os.path.join(LOG_DIR, "gate.log")
 
+# Alerta de Context Rot: tokens de entrada da última resposta do modelo (f2 + f5 de step_payload.f5.f9).
+# Padrão provisório; ajuste com a variável de ambiente AGY_ROT_TOKENS.
+ROT_TOKENS = int(os.environ.get("AGY_ROT_TOKENS", "150000"))
+
 UUID_DB_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.db$', re.IGNORECASE)
+
+# Posição das colunas na árvore (valores de cada linha de sessão)
+COL_DATE, COL_SIZE, COL_CTX, COL_STEPS, COL_TITLE, COL_UUID = range(6)
+
+# Cache por (caminho, mtime_ns, tamanho): só reabre o banco de uma sessão se ele mudou.
+METRICS_CACHE = {}
 
 log = logging.getLogger("antigravitygate")
 
@@ -74,6 +86,140 @@ def as_text(col):
     return col if isinstance(col, str) else ''
 
 
+def fmt_tokens(n):
+    return "-" if not n else (f"{n / 1000:.0f}k" if n >= 1000 else str(n))
+
+
+# --- protobuf mínimo (somente leitura) --------------------------------------------------------
+
+def _varint(b, i):
+    x = shift = 0
+    while True:
+        if i >= len(b):
+            raise ValueError("varint truncado")
+        c = b[i]
+        i += 1
+        x |= (c & 0x7F) << shift
+        if not c & 0x80:
+            return x, i
+        shift += 7
+        if shift > 70:
+            raise ValueError("varint longo demais")
+
+
+def pb_parse(b):
+    """Decodifica protobuf genérico em [(campo, wire, valor)]. Levanta ValueError se não for protobuf."""
+    i, out = 0, []
+    while i < len(b):
+        tag, i = _varint(b, i)
+        f, w = tag >> 3, tag & 7
+        if f == 0 or f > 100000:
+            raise ValueError("campo inválido")
+        if w == 0:
+            v, i = _varint(b, i)
+        elif w in (1, 5):
+            n = 8 if w == 1 else 4
+            v = b[i:i + n]
+            if len(v) < n:
+                raise ValueError("fixo truncado")
+            i += n
+        elif w == 2:
+            n, i = _varint(b, i)
+            v = b[i:i + n]
+            if len(v) < n:
+                raise ValueError("bloco truncado")
+            i += n
+        else:
+            raise ValueError("wire type inválido")
+        out.append((f, w, v))
+    return out
+
+
+def pb_dig(fields, path):
+    """Segue `path` (números de campo) em protobuf já decodificado; devolve (wire, valor) ou None."""
+    cur = fields
+    for k, f in enumerate(path):
+        hit = next(((w, v) for ff, w, v in cur if ff == f), None)
+        if hit is None:
+            return None
+        if k == len(path) - 1:
+            return hit
+        if hit[0] != 2:
+            return None
+        try:
+            cur = pb_parse(hit[1])
+        except ValueError:
+            return None
+    return None
+
+
+def pb_num(fields, path):
+    r = pb_dig(fields, path)
+    return r[1] if r and r[0] == 0 else None
+
+
+def pb_text(fields, path):
+    r = pb_dig(fields, path)
+    if not r or r[0] != 2:
+        return None
+    try:
+        return r[1].decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+# --- leitura de uma sessão --------------------------------------------------------------------
+
+def first_user_text(c):
+    """Primeira fala do usuário (passo 14, f19.f2) ou, em sub-agente, a mensagem do agente pai (passo 101)."""
+    try:
+        row = c.execute("SELECT step_payload FROM steps WHERE step_type=14 ORDER BY idx LIMIT 1").fetchone()
+        if row and row[0]:
+            t = pb_text(pb_parse(row[0]), [19, 2])
+            if t:
+                return t
+        for (blob,) in c.execute("SELECT step_payload FROM steps WHERE step_type=101 ORDER BY idx LIMIT 5"):
+            f = pb_parse(blob or b"")
+            if pb_text(f, [114, 3]) == "agent_message":
+                t = pb_text(f, [114, 2, 10, 1]) or pb_text(f, [114, 1])
+                if t:
+                    return t
+    except (sqlite3.OperationalError, ValueError):
+        pass
+    return ""
+
+
+def session_metrics(path):
+    """(passos, contexto estimado em tokens, prévia) de um banco de sessão, lendo só o necessário."""
+    with open_ro(path) as c:
+        tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if 'steps' not in tables:
+            return 0, 0, ''
+        cnt = c.execute("SELECT COUNT(*) FROM steps").fetchone()[0]
+        ctx = 0
+        try:
+            for (blob,) in c.execute("SELECT step_payload FROM steps WHERE step_type=15 ORDER BY idx DESC LIMIT 5"):
+                f = pb_parse(blob or b"")
+                f2, f5 = pb_num(f, [5, 9, 2]), pb_num(f, [5, 9, 5])
+                if f2 is not None:
+                    ctx = f2 + (f5 or 0)
+                    break
+        except (sqlite3.OperationalError, ValueError):
+            pass
+        preview = " ".join(first_user_text(c).split())[:150]
+        if not preview:
+            # Esquema desconhecido: heurística antiga sobre as primeiras linhas.
+            for r in c.execute("SELECT * FROM steps LIMIT 3").fetchall():
+                text = "\n".join(as_text(col) for col in r)
+                chunks = re.findall(r'[A-Za-zÀ-ÿ0-9_/\-\.,\?!:;\"\' ]{15,}', text)
+                if chunks:
+                    preview = chunks[0][:150]
+                    break
+        return cnt, ctx, preview
+
+
+# --- fontes e varredura -----------------------------------------------------------------------
+
 def scandir_safe(folder):
     try:
         return list(os.scandir(folder))
@@ -101,11 +247,144 @@ def discover_sources():
     return sources
 
 
+def load_projects(warn):
+    proj_map = {'outside-of-project': 'Outside of Project'}
+    uri_to_proj = {}
+    if os.path.exists(PROJECTS_DIR):
+        for p_file in glob.glob(os.path.join(PROJECTS_DIR, '*.json')):
+            try:
+                with open(p_file, 'r', encoding='utf-8') as f:
+                    d = json.load(f)
+                if not isinstance(d, dict):
+                    raise ValueError("JSON de projeto não é um objeto")
+                pid = d.get('id') or ''
+                pname = d.get('name') or pid
+                proj_map[pid] = pname
+                for res in (d.get('projectResources') or {}).get('resources') or []:
+                    u = res.get('folderUri') or (res.get('gitFolder') or {}).get('folderUri')
+                    if u:
+                        uri_to_proj[urllib.parse.unquote(u).lower()] = pname
+            except Exception as e:
+                warn(f"Projeto ilegível: {p_file}", e)
+    return proj_map, uri_to_proj
+
+
+def scan_source(conv_dir, sum_db, is_active, progress=None, is_stale=None):
+    """Lê uma fonte inteira. Não toca em Tk, então roda em thread de trabalho.
+    Devolve dict com as sessões agrupadas por projeto e os dados que a tela precisa, ou None se ficou obsoleta."""
+    warnings = []
+
+    def warn(msg, exc=None):
+        warnings.append(msg)
+        if exc is not None:
+            log.warning("%s: %s: %s", msg, type(exc).__name__, exc)
+        else:
+            log.warning("%s", msg)
+
+    if not os.path.isdir(BASE_DIR):
+        warn(f"Pasta base inexistente: {BASE_DIR}")
+    proj_map, uri_to_proj = load_projects(warn)
+
+    summaries = {}
+    if sum_db:
+        try:
+            with open_ro(sum_db) as conn:
+                conn.row_factory = sqlite3.Row
+                for r in conn.execute("SELECT * FROM conversation_summaries").fetchall():
+                    summaries[r['conversation_id']] = dict(r)
+        except Exception as e:
+            warn(f"Falha ao ler {sum_db}", e)
+
+    # Só a pasta da fonte selecionada: uma sessão com cópias em várias pastas não é mais sobrescrita.
+    db_files = {}
+    if not os.path.isdir(conv_dir):
+        warn(f"Pasta de sessões inexistente: {conv_dir}")
+    for entry in scandir_safe(conv_dir):
+        if entry.is_file() and UUID_DB_RE.match(entry.name):
+            db_files[os.path.splitext(entry.name)[0]] = entry.path
+
+    # Fonte ativa mostra também sessões que só existem no summaries ("sem arquivo").
+    # Nas cópias de backup só entram sessões que têm arquivo naquela pasta.
+    all_cids = set(db_files)
+    if is_active:
+        all_cids |= set(summaries)
+
+    grouped = {}
+    for n, cid in enumerate(sorted(all_cids), 1):
+        if is_stale and is_stale():
+            return None
+        if progress and n % 5 == 0:
+            progress(n, len(all_cids))
+        s = summaries.get(cid, {})
+        fpath = db_files.get(cid, '')
+
+        title = str(val(s, 'title')).strip()
+        preview = str(val(s, 'preview')).strip()
+        step_count = to_int(s.get('step_count'))
+        last_mod = fmt_time(s.get('last_modified_time'))
+        pid = str(val(s, 'project_id'))
+        w_uris = str(val(s, 'workspace_uris'))
+        file_size_kb = 0
+        ctx = 0
+
+        if fpath and os.path.exists(fpath):
+            st = os.stat(fpath)
+            file_size_kb = round(st.st_size / 1024, 1)
+            if not last_mod:
+                last_mod = datetime.fromtimestamp(st.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+            key = (fpath, st.st_mtime_ns, st.st_size)
+            m = METRICS_CACHE.get(key)
+            if m is None:
+                try:
+                    m = session_metrics(fpath)
+                    METRICS_CACHE[key] = m
+                except Exception as e:
+                    warn(f"Falha ao ler sessão {cid}", e)
+                    m = (0, 0, '')
+            cnt, ctx, first = m
+            step_count = max(step_count, cnt)
+            if not preview:
+                preview = first
+
+        proj_name = proj_map.get(pid, '')
+        w_decoded = urllib.parse.unquote(w_uris)
+        if not proj_name or proj_name == 'Outside of Project':
+            for u_key, p_val in uri_to_proj.items():
+                if u_key in w_decoded.lower():
+                    proj_name = p_val
+                    break
+        if not proj_name:
+            proj_name = 'Outside of Project'
+
+        if not title or title.startswith('Sessão '):
+            title = (preview[:60] + '...') if len(preview) > 60 else (preview or f"Conversa {cid[:8]}")
+
+        grouped.setdefault(proj_name, []).append({
+            'cid': cid,
+            'date': last_mod[:19],
+            'size': f"{file_size_kb} KB" if fpath else "sem arquivo",
+            'ctx': ctx,
+            'steps': step_count,
+            'title': title,
+            'fpath': fpath,
+        })
+
+    return {'grouped': grouped, 'total': len(all_cids), 'warnings': warnings,
+            'proj_map': proj_map, 'summaries': summaries, 'db_files': db_files}
+
+
 class AntigravityGateApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("AntigravityGate 🚀 - Inspetor e Gestor Agêntico")
         self.geometry("1200x650")
+
+        self.themed = []
+        self.queue = queue.Queue()
+        self.gen = 0
+        self.loading = False
+        self.warnings = 0
+        self.proj_map, self.summaries, self.db_files = {}, {}, {}
 
         # Estado do Tema (Dark por padrão, com suporte a Light)
         self.dark_mode = True
@@ -114,6 +393,7 @@ class AntigravityGateApp(tk.Tk):
         self.sources = discover_sources()
         self.source_idx = 0
         self.create_widgets()
+        self.poll()
         self.load_data()
 
     def apply_theme(self):
@@ -137,18 +417,30 @@ class AntigravityGateApp(tk.Tk):
         style.configure("Treeview", background=self.panel_bg, foreground=self.fg_color, fieldbackground=self.panel_bg, rowheight=28)
         style.configure("Treeview.Heading", background=self.header_bg, foreground=self.fg_color, font=('Segoe UI', 10, 'bold'))
         style.map("Treeview", background=[('selected', self.accent_color)])
+        style.configure("TCombobox", fieldbackground=self.panel_bg, background=self.header_bg, foreground=self.fg_color, arrowcolor=self.fg_color)
+        style.map("TCombobox", fieldbackground=[("readonly", self.panel_bg)], foreground=[("readonly", self.fg_color)])
+        style.configure("Vertical.TScrollbar", background=self.header_bg, troughcolor=self.bg_color, arrowcolor=self.fg_color)
+
+        # Widgets tk (não-ttk) já criados: reaplica as cores sem recarregar dados.
+        for widget, opts in self.themed:
+            widget.configure(**{opt: getattr(self, attr) for opt, attr in opts.items()})
+
+    def themed_widget(self, widget, **opts):
+        """Registra um widget tk para ser recolorido por apply_theme. opts: opção -> nome do atributo de cor."""
+        self.themed.append((widget, opts))
+        widget.configure(**{opt: getattr(self, attr) for opt, attr in opts.items()})
+        return widget
 
     def toggle_theme(self):
         self.dark_mode = not self.dark_mode
         self.apply_theme()
-        self.load_data()
 
     def create_widgets(self):
         # Top Frame - Controles, Tema e Ações
-        self.top_frame = tk.Frame(self, bg=self.bg_color, pady=10, padx=10)
+        self.top_frame = self.themed_widget(tk.Frame(self, pady=10, padx=10), bg="bg_color")
         self.top_frame.pack(fill=tk.X)
 
-        lbl_title = tk.Label(self.top_frame, text="🚀 AntigravityGate - Gestão de Contexto e Curadoria", fg=self.fg_color, bg=self.bg_color, font=('Segoe UI', 12, 'bold'))
+        lbl_title = self.themed_widget(tk.Label(self.top_frame, text="🚀 AntigravityGate - Gestão de Contexto e Curadoria", font=('Segoe UI', 12, 'bold')), bg="bg_color", fg="fg_color")
         lbl_title.pack(side=tk.LEFT)
 
         # Fonte: sessões ativas ou cada cópia de backup, lidas separadamente
@@ -156,33 +448,34 @@ class AntigravityGateApp(tk.Tk):
         self.src_box.current(self.source_idx)
         self.src_box.bind("<<ComboboxSelected>>", lambda e: self.on_source_change())
         self.src_box.pack(side=tk.LEFT, padx=(20, 5))
-        btn_refresh = tk.Button(self.top_frame, text="🔄 Atualizar", bg=self.header_bg, fg=self.fg_color, font=('Segoe UI', 9), relief=tk.FLAT, command=self.refresh)
+        btn_refresh = self.themed_widget(tk.Button(self.top_frame, text="🔄 Atualizar", font=('Segoe UI', 9), relief=tk.FLAT, command=self.refresh), bg="header_bg", fg="fg_color")
         btn_refresh.pack(side=tk.LEFT, padx=5)
 
         # Ações ainda sem implementação: desabilitadas para não afirmar efeito que não ocorre.
-        btn_auto = tk.Button(self.top_frame, text="⚡ Auto-Run (em breve)", bg=self.header_bg, disabledforeground="#888888", font=('Segoe UI', 9, 'bold'), relief=tk.FLAT, state=tk.DISABLED)
+        btn_auto = self.themed_widget(tk.Button(self.top_frame, text="⚡ Auto-Run (em breve)", disabledforeground="#888888", font=('Segoe UI', 9, 'bold'), relief=tk.FLAT, state=tk.DISABLED), bg="header_bg")
         btn_auto.pack(side=tk.RIGHT, padx=5)
 
-        btn_bulk_app = tk.Button(self.top_frame, text="✅ Aprovar (em breve)", bg=self.header_bg, disabledforeground="#888888", font=('Segoe UI', 9), relief=tk.FLAT, state=tk.DISABLED)
+        btn_bulk_app = self.themed_widget(tk.Button(self.top_frame, text="✅ Aprovar (em breve)", disabledforeground="#888888", font=('Segoe UI', 9), relief=tk.FLAT, state=tk.DISABLED), bg="header_bg")
         btn_bulk_app.pack(side=tk.RIGHT, padx=5)
 
-        btn_theme = tk.Button(self.top_frame, text="🌓 Alternar Tema", bg=self.header_bg, fg=self.fg_color, font=('Segoe UI', 9), relief=tk.FLAT, command=self.toggle_theme)
+        btn_theme = self.themed_widget(tk.Button(self.top_frame, text="🌓 Alternar Tema", font=('Segoe UI', 9), relief=tk.FLAT, command=self.toggle_theme), bg="header_bg", fg="fg_color")
         btn_theme.pack(side=tk.RIGHT, padx=5)
 
-        btn_open = tk.Button(self.top_frame, text="📄 Exportar Diálogo Rico", bg=self.accent_color, fg="#ffffff", font=('Segoe UI', 9, 'bold'), relief=tk.FLAT, command=self.open_selected)
+        btn_open = self.themed_widget(tk.Button(self.top_frame, text="📄 Exportar Diálogo Rico", fg="#ffffff", font=('Segoe UI', 9, 'bold'), relief=tk.FLAT, command=self.open_selected), bg="accent_color")
         btn_open.pack(side=tk.RIGHT, padx=5)
 
-        # Barra de status: contagem de sessões e avisos de leitura
-        self.status = tk.Label(self, anchor=tk.W, padx=10, pady=4, font=('Segoe UI', 9))
+        # Barra de status: fonte, contagem de sessões, carga em andamento e avisos de leitura
+        self.status = self.themed_widget(tk.Label(self, anchor=tk.W, padx=10, pady=4, font=('Segoe UI', 9)), bg="header_bg", fg="fg_color")
         self.status.pack(side=tk.BOTTOM, fill=tk.X)
 
         # Tabela (Treeview) com métricas de contexto
-        columns = ("col_date", "col_size", "col_steps", "col_title", "col_uuid")
+        columns = ("col_date", "col_size", "col_ctx", "col_steps", "col_title", "col_uuid")
         self.tree = ttk.Treeview(self, columns=columns, show="tree headings", selectmode="browse")
 
         self.tree.heading("#0", text="Projeto / Sessão", anchor=tk.W)
         self.tree.heading("col_date", text="Modificação", anchor=tk.W)
-        self.tree.heading("col_size", text="Tamanho (KB)", anchor=tk.CENTER)
+        self.tree.heading("col_size", text="Tamanho", anchor=tk.CENTER)
+        self.tree.heading("col_ctx", text="Contexto (tokens)", anchor=tk.CENTER)
         self.tree.heading("col_steps", text="Passos", anchor=tk.CENTER)
         self.tree.heading("col_title", text="Título / Contexto Inicial", anchor=tk.W)
         self.tree.heading("col_uuid", text="UUID", anchor=tk.W)
@@ -190,15 +483,17 @@ class AntigravityGateApp(tk.Tk):
         self.tree.column("#0", width=200, anchor=tk.W)
         self.tree.column("col_date", width=130, anchor=tk.W)
         self.tree.column("col_size", width=90, anchor=tk.CENTER)
+        self.tree.column("col_ctx", width=130, anchor=tk.CENTER)
         self.tree.column("col_steps", width=60, anchor=tk.CENTER)
-        self.tree.column("col_title", width=420, anchor=tk.W)
+        self.tree.column("col_title", width=380, anchor=tk.W)
         self.tree.column("col_uuid", width=170, anchor=tk.W)
 
         scrollbar = ttk.Scrollbar(self, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
 
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Barra empacotada antes da árvore: não some quando a janela encolhe.
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=10)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
 
         self.tree.bind("<Double-1>", lambda e: self.open_selected())
         self.bind("<F5>", lambda e: self.refresh())
@@ -216,145 +511,75 @@ class AntigravityGateApp(tk.Tk):
         self.src_box.current(self.source_idx)
         self.load_data()
 
-    def warn(self, msg, exc=None):
-        """Registra falha de leitura no log e conta para a barra de status."""
-        self.warnings += 1
-        if exc is not None:
-            log.warning("%s: %s: %s", msg, type(exc).__name__, exc)
-        else:
-            log.warning("%s", msg)
-
-    def set_status(self, total):
-        text = f"{self.sources[self.source_idx][0]}  |  {total} sessões"
-        if self.warnings:
-            text += f"  |  ⚠ {self.warnings} aviso(s) de leitura — ver {LOG_FILE}"
-        self.status.configure(text=text, bg=self.header_bg, fg=self.fg_color)
+    def set_status(self, text):
+        self.status.configure(text=text)
 
     def load_data(self):
-        self.warnings = 0
-        _label, conv_dir, sum_db = self.sources[self.source_idx]
+        """Dispara a leitura em thread de trabalho; a janela continua responsiva."""
+        self.gen += 1
+        gen = self.gen
+        label, conv_dir, sum_db = self.sources[self.source_idx]
+        is_active = self.source_idx == 0
+        self.loading = True
         for item in self.tree.get_children():
             self.tree.delete(item)
+        self.set_status(f"{label}  |  carregando…")
 
-        if not os.path.isdir(BASE_DIR):
-            self.warn(f"Pasta base inexistente: {BASE_DIR}")
-
-        self.proj_map = {'outside-of-project': 'Outside of Project'}
-        self.uri_to_proj = {}
-        if os.path.exists(PROJECTS_DIR):
-            for p_file in glob.glob(os.path.join(PROJECTS_DIR, '*.json')):
-                try:
-                    with open(p_file, 'r', encoding='utf-8') as f:
-                        d = json.load(f)
-                    if not isinstance(d, dict):
-                        raise ValueError("JSON de projeto não é um objeto")
-                    pid = d.get('id') or ''
-                    pname = d.get('name') or pid
-                    self.proj_map[pid] = pname
-                    for res in (d.get('projectResources') or {}).get('resources') or []:
-                        u = res.get('folderUri') or (res.get('gitFolder') or {}).get('folderUri')
-                        if u:
-                            self.uri_to_proj[urllib.parse.unquote(u).lower()] = pname
-                except Exception as e:
-                    self.warn(f"Projeto ilegível: {p_file}", e)
-
-        self.summaries = {}
-        if sum_db:
+        def work():
             try:
-                with open_ro(sum_db) as conn:
-                    conn.row_factory = sqlite3.Row
-                    for r in conn.execute("SELECT * FROM conversation_summaries").fetchall():
-                        self.summaries[r['conversation_id']] = dict(r)
+                res = scan_source(conv_dir, sum_db, is_active,
+                                  progress=lambda n, t: self.queue.put((gen, 'progress', (n, t))),
+                                  is_stale=lambda: gen != self.gen)
             except Exception as e:
-                self.warn(f"Falha ao ler {sum_db}", e)
+                log.exception("Falha ao varrer %s", conv_dir)
+                res = {'error': e}
+            if res is not None:
+                self.queue.put((gen, 'done', res))
 
-        # Só a pasta da fonte selecionada: uma sessão com cópias em várias pastas não é mais sobrescrita.
-        self.db_files = {}
-        if not os.path.isdir(conv_dir):
-            self.warn(f"Pasta de sessões inexistente: {conv_dir}")
-        for entry in scandir_safe(conv_dir):
-            if entry.is_file() and UUID_DB_RE.match(entry.name):
-                self.db_files[os.path.splitext(entry.name)[0]] = entry.path
+        threading.Thread(target=work, daemon=True).start()
 
-        grouped = {}
-        # Fonte ativa mostra também sessões que só existem no summaries ("sem arquivo").
-        # Nas cópias de backup só entram sessões que têm arquivo naquela pasta.
-        all_cids = set(self.db_files.keys())
-        if self.source_idx == 0:
-            all_cids |= set(self.summaries.keys())
+    def poll(self):
+        """Recebe resultados da thread de trabalho. Só esta função mexe na tela com dados novos."""
+        try:
+            while True:
+                gen, kind, payload = self.queue.get_nowait()
+                if gen != self.gen:
+                    continue  # resposta de uma carga antiga (o usuário trocou de fonte)
+                label = self.sources[self.source_idx][0]
+                if kind == 'progress':
+                    self.set_status(f"{label}  |  carregando… {payload[0]}/{payload[1]}")
+                elif kind == 'done':
+                    self.render(payload)
+        except queue.Empty:
+            pass
+        try:
+            self.after(100, self.poll)
+        except tk.TclError:
+            pass  # janela fechada
 
-        for cid in all_cids:
-            s = self.summaries.get(cid, {})
-            fpath = self.db_files.get(cid, '')
-
-            title = str(val(s, 'title')).strip()
-            preview = str(val(s, 'preview')).strip()
-            step_count = to_int(s.get('step_count'))
-            last_mod = fmt_time(s.get('last_modified_time'))
-            pid = str(val(s, 'project_id'))
-            w_uris = str(val(s, 'workspace_uris'))
-            file_size_kb = 0
-
-            if fpath and os.path.exists(fpath):
-                file_size_kb = round(os.path.getsize(fpath) / 1024, 1)
-                if not last_mod:
-                    last_mod = datetime.fromtimestamp(os.path.getmtime(fpath)).strftime('%Y-%m-%d %H:%M:%S')
-                try:
-                    with open_ro(fpath) as c2:
-                        tables = [r[0] for r in c2.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
-                        if 'steps' in tables:
-                            cnt = c2.execute("SELECT COUNT(*) FROM steps").fetchone()[0]
-                            if cnt > step_count:
-                                step_count = cnt
-                            if not preview:
-                                first_rows = c2.execute("SELECT * FROM steps LIMIT 3").fetchall()
-                                for r in first_rows:
-                                    text = "\n".join(as_text(col) for col in r)
-                                    text_chunks = re.findall(r'[A-Za-zÀ-ÿ0-9_/\-\.,\?!:;\"\' ]{15,}', text)
-                                    if text_chunks:
-                                        preview = text_chunks[0][:150]
-                                        break
-                except Exception as e:
-                    self.warn(f"Falha ao ler sessão {cid}", e)
-
-            proj_name = self.proj_map.get(pid, '')
-            w_decoded = urllib.parse.unquote(w_uris)
-            if not proj_name or proj_name == 'Outside of Project':
-                for u_key, p_val in self.uri_to_proj.items():
-                    if u_key in w_decoded.lower():
-                        proj_name = p_val
-                        break
-            if not proj_name:
-                proj_name = 'Outside of Project'
-
-            if not title or title.startswith('Sessão '):
-                title = (preview[:60] + '...') if len(preview) > 60 else (preview or f"Conversa {cid[:8]}")
-
-            # Alerta visual de Context Rot se tamanho > 1500 KB
-            size_label = f"{file_size_kb} KB" + (" ⚠️ [Rot]" if file_size_kb > 1500 else "") if fpath else "sem arquivo"
-
-            if proj_name not in grouped:
-                grouped[proj_name] = []
-
-            grouped[proj_name].append({
-                'cid': cid,
-                'date': last_mod[:19],
-                'size': size_label,
-                'steps': step_count,
-                'title': title,
-                'fpath': fpath
-            })
+    def render(self, res):
+        self.loading = False
+        label = self.sources[self.source_idx][0]
+        if 'error' in res:
+            self.set_status(f"{label}  |  ⚠ erro ao carregar — ver {LOG_FILE}")
+            return
+        self.proj_map, self.summaries, self.db_files = res['proj_map'], res['summaries'], res['db_files']
+        self.warnings = len(res['warnings'])
+        grouped = res['grouped']
 
         for pname in sorted(grouped.keys()):
-            proj_node = self.tree.insert("", tk.END, text=f"📁 {pname} ({len(grouped[pname])} sessões)", values=("", "", "", "", ""))
-            sorted_convs = sorted(grouped[pname], key=lambda x: x['date'], reverse=True)
-            for c in sorted_convs:
-                self.tree.insert(proj_node, tk.END, text="    💬 Sessão", values=(c['date'], c['size'], c['steps'], c['title'], c['cid']))
+            proj_node = self.tree.insert("", tk.END, text=f"📁 {pname} ({len(grouped[pname])} sessões)", values=("",) * 6)
+            for c in sorted(grouped[pname], key=lambda x: x['date'], reverse=True):
+                ctx = fmt_tokens(c['ctx']) + (" ⚠️ [Rot]" if c['ctx'] >= ROT_TOKENS else "")
+                self.tree.insert(proj_node, tk.END, text="    💬 Sessão", values=(c['date'], c['size'], ctx, c['steps'], c['title'], c['cid']))
 
         if self.tree.get_children():
             self.tree.item(self.tree.get_children()[0], open=True)
 
-        self.set_status(len(all_cids))
+        text = f"{label}  |  {res['total']} sessões"
+        if self.warnings:
+            text += f"  |  ⚠ {self.warnings} aviso(s) de leitura — ver {LOG_FILE}"
+        self.set_status(text)
 
     def open_selected(self):
         selected = self.tree.selection()
@@ -368,10 +593,10 @@ class AntigravityGateApp(tk.Tk):
             return
 
         values = self.tree.item(node_id, 'values')
-        if not values or len(values) < 5:
+        if not values or len(values) <= COL_UUID:
             return
 
-        cid = values[4]
+        cid = values[COL_UUID]
         s = self.summaries.get(cid, {})
         fpath = self.db_files.get(cid, '')
 
