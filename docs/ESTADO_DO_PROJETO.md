@@ -10,6 +10,30 @@ Atualizado em 2026-10-27, versão **1.0.0**. Repositório próprio: `two2dope/ag
 | **Faltando** | Uso real: restaurar as sessões no Antigravity e validar o fluxo completo. Não verificado: escala 125–150%, status 6 e 7 |
 | **Próximo passo único** | Usar no dia a dia; problemas novos viram 1.0.x com teste |
 
+## Pendências (backlog pós-1.0)
+
+Em ordem de prioridade. Cada item vira uma 1.0.x com teste; nada entra sem decidir o que sai.
+
+1. **Ícone autoral do app** (`.ico` multi-tamanho 16–256 px para o `.exe`, a barra de tarefas e a barra de título). Hoje o `.exe` usa o ícone padrão do PyInstaller e a janela usa a pena do Tk. Fazer: arte própria → `packaging/app.ico` → `--icon` no PyInstaller → `iconbitmap`/`iconphoto` nas janelas.
+2. Validar no uso real: restaurar as sessões no Antigravity e rodar o fluxo completo (curadoria → dossiê → Auto-Run).
+3. Não verificado no Windows: escala 125% a 150%, glifos Segoe MDL2 em todos os botões, significado dos status 6 e 7 das ferramentas.
+4. Lista de modelos do Auto-Run pelo `agy models` (hoje: lista embutida + a que o `agy` devolve no erro).
+5. Campo "Modelo(s)" vazio no dossiê de algumas sessões (o banco não tinha o nome em `gen_metadata`; não investigado).
+6. Datas `0001-01-01 00:00:00` em sessões sem horário: mostrar "-".
+7. Limpeza opcional de dossiês antigos em `%LOCALAPPDATA%\AntigravityGate\handoffs` (decisão do usuário).
+8. Divisor de altura entre a tabela e os detalhes (pedido e adiado: só se o painel ganhar mais informação).
+
+Fora do alcance do app: o editor do Antigravity abre sozinho a cada chamada do `agy` (comportamento do `agy`; o `--help` não tem opção para evitar).
+
+## Registro da sessão de 2026-10-26/27 (0.9.0 → 1.0.0)
+
+- **Auditoria full spectrum** (10 lentes): `reviews/audit-full-v0.9.0.md`. Críticos C1–C3 do Auto-Run corrigidos.
+- **Testes reais no Windows** (montagens identificadas no Sobre): caminho do workspace com `%3A`, monitor à esquerda (`+-1928`), lista de temas, dicas na borda, nome de modelo com esforço, sessões vazias criadas pelo `agy`, sucesso falso por `read_file` negado → dossiê no prompt. Retomada validada: `a56f46f0` → `5c583e36`.
+- **Revisão final em 3 etapas:** segurança e dados; tabela, teclado e janelas; blindagem do CI (testes barram a montagem, PyInstaller fixo, permissões mínimas, Release em rascunho primeiro).
+- **Revisão de código do branch:** 9 achados corrigidos (log sem máscara de segredos, arquivamento indevido, maximizar escondido por `self.state` etc.).
+- **Publicação:** PR two2dope/agy-gate#1 (1.0.0) e two2dope/agy-gate#2 (correção do passo de Release: função `Gh` recursiva no PowerShell). Release v1.0.0 com `AntigravityGate.exe`, SHA-256 `A9154FDAF6D5EC10B8FCC702A183003DD19FAF24F922D24CA5ECEF389B3CC9B1`.
+- Lição de processo: trecho que não dá para ensaiar localmente (PowerShell do job de Release) precisa de uma execução de teste antes da publicação; o `workflow_dispatch` com `release_tag` agora permite isso numa Release de rascunho.
+
 O dossiê é extração local (sem modelo). Resumo feito pelo modelo fica como opção futura.
 
 ## Exportação (M4)
