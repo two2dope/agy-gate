@@ -2,9 +2,11 @@
 
 Formato: [Versionamento Semântico](https://semver.org/lang/pt-BR/). Enquanto a versão começar com 0, o app está em candidato a lançamento: funciona, mas faltam itens listados abaixo.
 
-## [Não lançado]
+## [1.0.0] - 2026-10-27
 
-Correções dos três críticos da auditoria `reviews/audit-full-v0.9.0.md`, todos no Auto-Run.
+Primeira versão estável. Critérios cumpridos: revisão final (auditoria `reviews/audit-full-v0.9.0.md`, críticos C1 a C3 e as recomendações das etapas 1 a 3) e Auto-Run real testado no Windows (retomada `a56f46f0` → `5c583e36` com resposta completa, dossiê no prompt).
+
+Ainda não verificado no Windows: escala 125% a 150%, glifos Segoe MDL2 em todos os botões, significado dos status 6 e 7 das ferramentas. O editor do Antigravity abre sozinho a cada chamada do `agy` (comportamento do `agy`, sem opção para evitar).
 
 ### Adicionado
 - Escolha do modelo do `agy` na confirmação do Auto-Run (`--model`; vazio = padrão do `agy`). Último valor e histórico ficam em `settings.json`.

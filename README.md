@@ -4,7 +4,7 @@ Aplicativo de janela (Windows) para **gerir o contexto e curar as conversas do A
 
 O app só **lê** os bancos do Antigravity. O que ele grava (estado, log, exportações) fica em `%LOCALAPPDATA%\AntigravityGate\`.
 
-Versão atual: **0.9.0** (candidato a 1.0). Veja o [CHANGELOG](CHANGELOG.md).
+Versão atual: **1.0.0**. Veja o [CHANGELOG](CHANGELOG.md).
 
 ## Como usar (sem instalar nada)
 

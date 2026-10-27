@@ -1,14 +1,14 @@
 # AntigravityGate: estado do projeto
 
-Atualizado em 2026-10-26, versão **0.9.0**. Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
+Atualizado em 2026-10-27, versão **1.0.0**. Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
 
 ## Snapshot
 
 | | |
 |---|---|
-| **Feito** | M1 a M4 (leitura, estado, exportação, dossiê), Auto-Run opção B (testado só com `agy` simulado), `.exe` no GitHub Actions com autoteste, interface visual completa (8 temas, ícones, painel de detalhes, notificações, limites de contexto, janelas dentro da área útil do monitor, barra de título nos temas), repositório próprio com testes, README, CHANGELOG e Release automática por tag |
-| **Faltando** | Teste real do Auto-Run com o `agy` (cota; depois de 27/10; começar com lote de 1 sessão e conferir o `gate.log`); revisão final (auditoria feita: `reviews/audit-full-v0.9.0.md`, críticos C1 a C3 corrigidos; recomendações pendentes); conferir no Windows do usuário os itens "Não verificado" abaixo; decisão do limite Rot |
-| **Próximo passo único** | Revisão final (critério da 1.0.0: revisão feita + Auto-Run real testado) |
+| **Feito** | **1.0.0 publicada.** Leitura, curadoria, exportação, dossiê; Auto-Run validado no Windows (dossiê no prompt); auditoria e revisão final (etapas 1 a 3); testes no GitHub barram a montagem; Release em rascunho primeiro |
+| **Faltando** | Uso real: restaurar as sessões no Antigravity e validar o fluxo completo. Não verificado: escala 125–150%, status 6 e 7 |
+| **Próximo passo único** | Usar no dia a dia; problemas novos viram 1.0.x com teste |
 
 O dossiê é extração local (sem modelo). Resumo feito pelo modelo fica como opção futura.
 
@@ -96,7 +96,7 @@ Usado pelo Auto-Run:
 
 - `__version__` em `AntigravityGate.py` é a fonte da versão (aparece na dica do cabeçalho, no log e no autoteste do `.exe`). Histórico em `CHANGELOG.md`.
 - Publicar: subir `__version__`, registrar no CHANGELOG, commit em `main`, tag `vX.Y.Z` igual. O workflow confere a tag contra `__version__`, monta o `.exe`, testa e cria a Release (marcada como pré-lançamento enquanto a versão começar com 0).
-- 0.9.0 = candidato a 1.0.0.
+- 0.9.0 = candidato a 1.0.0. 1.0.0 publicada em 2026-10-27.
 
 ## Auto-Run (implementado)
 
