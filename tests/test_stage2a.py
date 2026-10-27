@@ -90,7 +90,10 @@ assert "35" in tip and "Exportar diálogo" in tip and "Falhas de ferramenta" in 
 assert app.cell_tip(dict(row, failures=0), "col_fail") == ""
 app.handoffs[U(1)] = "0b49637d-35c2"
 assert "0b49637d" in app.cell_tip(row, "#0") and "Auto-Run" in app.cell_tip(row, "#0")
-assert "não existe mais" in app.cell_tip(row, "ws")
+assert "não existe" in app.cell_tip(row, "ws") and "✖ c:\\x" in app.cell_tip(row, "ws")
+two = dict(row, workspace=root + ", c:\\sumiu")
+tip = app.cell_tip(two, "ws")
+assert "1 de 2" in tip and ("✔ " + root) in tip and "✖ c:\\sumiu" in tip, tip
 long_title = "Verifica as alterações recentes nos ficheiros do projeto e resume tudo"
 assert app.cell_tip(dict(row, title=long_title), "col_title") == long_title
 assert app.cell_tip(dict(row, title="curto"), "col_title") == ""
@@ -108,6 +111,6 @@ app.cell_tips.on_motion(types.SimpleNamespace(x=x + 3, y=9000)); assert app.cell
 # painel de detalhes: falhas e workspace com dica
 app.tree.selection_set(sid); app.update()
 r1.update(workspace="c:\\sumiu", ws_ok=False)
-assert "7" in app.fact_tips["fails"].fn() and "não existe mais" in app.fact_tips["ws"].fn()
+assert "7" in app.fact_tips["fails"].fn() and "não existe" in app.fact_tips["ws"].fn()
 app.destroy()
 print("TODOS OS TESTES DA ETAPA 2A OK")

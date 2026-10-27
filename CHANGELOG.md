@@ -29,6 +29,7 @@ Correções dos três críticos da auditoria `reviews/audit-full-v0.9.0.md`, tod
 - Duplo clique numa sessão abre o painel de detalhes (antes abria "Salvar como"). Exportar continua no botão e no menu.
 - Exportar e Dossiê ficam desabilitados, com o motivo, quando há mais de uma sessão selecionada (antes usavam só a primeira, sem aviso).
 - Dicas nos alertas: contexto (nível, limites e o que fazer), falhas de ferramenta (onde ver os detalhes), retomada, título longo; no painel, falhas, workspace, estado e medidor.
+- Dica do Workspace lista cada pasta com ✔ (existe) ou ✖ (não existe mais); antes dizia só "não existe mais", sem dizer qual, quando a sessão tinha várias pastas.
 
 ### Segurança e dados (revisão final, etapa 1)
 - Máscara de segredos do dossiê cobre também chaves Stripe (`sk_live_`/`rk_test_`), JWT, tokens Slack (`xox…`), Google OAuth (`ya29.`), GitHub granular (`github_pat_`), `Authorization: Basic` e senha em URL (`postgres://usuário:[REDACTED]@host`). O dossiê agora vai dentro do prompt enviado ao modelo, então a máscara passou a importar mais.

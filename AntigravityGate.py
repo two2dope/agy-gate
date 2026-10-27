@@ -3281,11 +3281,15 @@ class AntigravityGateApp(tk.Tk):
         if col == "col_title":
             return r['title'] if len(r.get('title') or "") > 40 else ""
         if col == "ws":
-            if r.get('ws_ok') is False:
-                return "A pasta do workspace não existe mais neste computador: o Auto-Run não vai poder anexá-la ao agy."
-            if r.get('ws_ok'):
-                return f"Pasta encontrada neste computador: {r['workspace']}"
-            return ""
+            paths = [x for x in (r.get('workspace') or "").split(", ") if x]
+            if not paths:
+                return ""
+            missing = [x for x in paths if not os.path.isdir(x)]
+            lines = "\n".join(("✖ " if x in missing else "✔ ") + x for x in paths)
+            if missing:
+                return (f"{len(missing)} de {len(paths)} pasta(s) do workspace não existe(m) mais neste computador; "
+                        f"o Auto-Run anexa ao agy só as que existem.\n{lines}")
+            return "Pastas encontradas neste computador:\n" + lines
         return ""
 
     def tree_cell_tip(self, iid, col):
