@@ -23,6 +23,15 @@ Correções dos três críticos da auditoria `reviews/audit-full-v0.9.0.md`, tod
 - Painel de detalhes: os quatro botões têm a mesma largura e o conteúdo centralizado.
 - Ícone de Exportar: disquete (Segoe MDL2 `E74E`; `↧` no modo Unicode) no lugar da folha em branco. Glifo não visto num Windows.
 
+### Teclado e janelas (revisão final, etapa 2b)
+- Confirmação do Auto-Run no tema do app, com uma caixa por sessão aprovada: só as marcadas rodam. As já retomadas vêm desmarcadas; "Refazer" marca todas.
+- Janela de andamento do Auto-Run no tema, com tamanho escalado pelo DPI.
+- Menu de contexto pelo teclado (Shift+F10 ou tecla Menu). Rótulos do menu sem emoji fora do BMP (o Tk 8.6 desenha mal).
+- Barra "Detalhes da sessão" abre e fecha com Enter ou Espaço.
+- Dicas aparecem também com o foco do teclado (inclusive o motivo de um botão desabilitado).
+- Notificação com Desfazer não some enquanto o mouse ou o foco estão nela; some 4 s depois.
+- Janela que fechou maximizada reabre maximizada (a maximização agora espera a janela aparecer).
+
 ### Tabela (revisão final, etapa 2a)
 - Duplo clique no divisor do cabeçalho ajusta a largura da coluna ao conteúdo. As colunas não se esticam mais sozinhas (o Tk desfazia o ajuste); a rolagem horizontal mostra o resto.
 - Coluna Título logo depois de Projeto / Sessão.

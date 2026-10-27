@@ -1823,6 +1823,8 @@ class Tooltip:
         widget.bind("<Enter>", self._enter, add="+")
         widget.bind("<Leave>", self._leave, add="+")
         widget.bind("<ButtonPress>", self._leave, add="+")
+        widget.bind("<FocusIn>", self._enter, add="+")   # teclado: a dica (e o motivo de um botão desabilitado) aparece no Tab
+        widget.bind("<FocusOut>", self._leave, add="+")
 
     def _enter(self, _e):
         self._leave()
@@ -1944,7 +1946,7 @@ class IconButton(tk.Canvas):
         self.bind("<FocusOut>", lambda e: self._set(focused=False))
         self.bind("<space>", lambda e: self.invoke())
         self.bind("<Return>", lambda e: self.invoke())
-        Tooltip(self, app, self.tooltip_text)
+        self.tooltip = Tooltip(self, app, self.tooltip_text)
         if stretch:
             self.bind("<Configure>", lambda e: self.redraw(), add="+")
         self.relayout()
@@ -2141,7 +2143,35 @@ class Toast(tk.Frame):
             self.buttons.append(b)
         close = IconButton(self, app, "clear", "", self.dismiss, bg_token="panel2", tip="Fechar")
         close.pack(side=tk.LEFT, padx=(app.px(8), 0))
+        self.resume_ms = 4000  # depois que o mouse/foco sai, ainda fica este tempo
         self.job = self.after(ttl, self.dismiss)
+        # Com o mouse ou o foco em cima (para clicar em Desfazer), o relógio para.
+        self.bind("<Enter>", lambda e: self.pause(), add="+")
+        self.bind("<Leave>", lambda e: self.after_idle(self.resume_if_away), add="+")
+        for b in self.buttons + [close]:
+            b.bind("<FocusIn>", lambda e: self.pause(), add="+")
+            b.bind("<FocusOut>", lambda e: self.after_idle(self.resume_if_away), add="+")
+
+    def pause(self):
+        if self.job:
+            self.after_cancel(self.job)
+            self.job = None
+
+    def resume(self):
+        if not self.job and self.winfo_exists():
+            self.job = self.after(self.resume_ms, self.dismiss)
+
+    def resume_if_away(self):
+        try:
+            x, y = self.winfo_pointerxy()
+            inside = self.winfo_containing(x, y)
+            focus = self.focus_get()
+        except (tk.TclError, KeyError):
+            inside = focus = None
+        def mine(w):
+            return w is not None and str(w).startswith(str(self))
+        if not mine(inside) and not mine(focus):
+            self.resume()
 
     def dismiss(self):
         if self.job:
@@ -2451,7 +2481,8 @@ class AntigravityGateApp(tk.Tk):
         self.minsize(min(WIN_MIN[0], w), min(WIN_MIN[1], h))
         self.start_zoomed = saved_zoomed(self.settings.get("window"))
         if self.start_zoomed:
-            self.after_idle(self.zoom)
+            # Antes de a janela aparecer o Windows ignora o "zoomed": maximiza no primeiro <Map>.
+            self._zoom_bind = self.bind("<Map>", self._zoom_on_map, add="+")
         self.limit_preset, att, crit = limits_from_settings(self.settings)
         set_context_limits(att, crit)
         c = self.settings.get("context") if isinstance(self.settings.get("context"), dict) else {}
@@ -2821,8 +2852,12 @@ class AntigravityGateApp(tk.Tk):
         # Painel de detalhes da seleção (recolhível), acima do rodapé
         self.details = self.themed_widget(tk.Frame(self, highlightthickness=1), bg="panel", highlightbackground="border")
         self.details.pack(side=tk.BOTTOM, fill=tk.X, padx=self.px(16), pady=(0, self.px(8)))
-        bar = self.themed_widget(tk.Frame(self.details, padx=self.px(10), pady=self.px(4), cursor="hand2"), bg="panel2")
+        bar = self.details_bar = self.themed_widget(tk.Frame(self.details, padx=self.px(10), pady=self.px(4), cursor="hand2",
+                                                             takefocus=1, highlightthickness=1), bg="panel2", highlightbackground="panel2",
+                                                    highlightcolor="accent")
         bar.pack(fill=tk.X)
+        for seq in ("<Return>", "<space>"):
+            bar.bind(seq, lambda e: self.toggle_details())
         self.details_toggle = self.themed_widget(tk.Label(bar, font=self.f_bold, cursor="hand2"), bg="panel2", fg="fg")
         self.details_toggle.pack(side=tk.LEFT)
         for w in (bar, self.details_toggle):
@@ -2886,6 +2921,11 @@ class AntigravityGateApp(tk.Tk):
         self.cell_tips = CellTooltip(self.tree, self, self.tree_cell_tip)
         self.tree.bind("<Double-1>", self.on_double_click)
         self.tree.bind("<Button-3>", self.show_menu)
+        for seq in ("<Shift-F10>", "<App>"):
+            try:
+                self.tree.bind(seq, self.menu_from_keyboard)
+            except tk.TclError:  # <App> só existe no Windows
+                pass
         self.tree.bind("<<TreeviewSelect>>", lambda e: self.update_actions())
         self.bind("<F5>", lambda e: self.refresh())
         self.bind("<F1>", lambda e: self.open_about())
@@ -2908,6 +2948,13 @@ class AntigravityGateApp(tk.Tk):
         if self._win_job:
             self.after_cancel(self._win_job)
         self._win_job = self.after(700, self.save_window)
+
+    def _zoom_on_map(self, e):
+        if e.widget is not self or not getattr(self, "_zoom_bind", None):
+            return
+        self.unbind("<Map>", self._zoom_bind)
+        self._zoom_bind = None
+        self.after(50, self.zoom)
 
     def zoom(self):
         """Maximiza (Windows: estado 'zoomed'; X11: atributo -zoomed)."""
@@ -3460,6 +3507,21 @@ class AntigravityGateApp(tk.Tk):
             return
         if iid not in self.tree.selection():
             self.tree.selection_set(iid)
+        self.build_menu(iid).tk_popup(event.x_root, event.y_root)
+
+    def menu_from_keyboard(self, _e=None):
+        """Shift+F10 ou tecla Menu: abre o menu de contexto na linha com foco (ou na primeira selecionada)."""
+        iid = self.tree.focus() or (self.tree.selection() or ("",))[0]
+        if not iid:
+            return "break"
+        if iid not in self.tree.selection():
+            self.tree.selection_set(iid)
+        self.tree.see(iid)
+        box = self.tree.bbox(iid) or (0, 0, 0, 0)
+        self.build_menu(iid).tk_popup(self.tree.winfo_rootx() + box[0] + self.px(40), self.tree.winfo_rooty() + box[1] + box[3])
+        return "break"
+
+    def build_menu(self, iid):
         m = tk.Menu(self, tearoff=0)
         if self.is_session(iid):
             m.add_command(label="Copiar UUID", command=lambda: self.copy_uuid(iid))
@@ -3467,9 +3529,9 @@ class AntigravityGateApp(tk.Tk):
             m.add_command(label="Exportar diálogo", command=self.open_selected)
             m.add_command(label="Dossiê de retomada", command=lambda: self.start_export('dossier'))
             m.add_separator()
-        for status, text in (("aprovada", "✅ Aprovar"), ("arquivada", "📦 Arquivar"), ("pendente", "↩ Pendente")):
+        for status, text in (("aprovada", "✔ Aprovar"), ("arquivada", "▣ Arquivar"), ("pendente", "↩ Pendente")):
             m.add_command(label=text, command=lambda st=status: self.mark_selected(st))
-        m.tk_popup(event.x_root, event.y_root)
+        return m
 
     def copy_uuid(self, iid):
         self.clipboard_clear()
@@ -3692,45 +3754,84 @@ class AntigravityGateApp(tk.Tk):
     # --- Auto-Run ---
 
     def confirm_autorun(self, items, done):
-        """Janela de confirmação. Devolve {'dry_run', 'redo'} ou None se o usuário cancelar."""
-        win = tk.Toplevel(self)
+        """Confirmação no tema do app: uma caixa por sessão aprovada (já retomadas vêm desmarcadas, salvo Refazer), simulação,
+        modelo. Devolve {'dry_run', 'redo', 'model', 'cids'} ou None se o usuário cancelar."""
+        t = self.t
+        win = self.confirm_win = tk.Toplevel(self)
         win.title("Auto-Run — confirmar")
         win.transient(self)
+        win.configure(bg=t['panel'], padx=self.px(16), pady=self.px(12))
         result = {'v': None}
-        tk.Label(win, text=f"{len(items)} sessão(ões) aprovada(s) nesta fonte. Para cada uma o app gera o dossiê de retomada e, "
-                           "fora do modo simulação, abre uma sessão NOVA com o agy (a original não é alterada).",
-                 wraplength=620, justify=tk.LEFT, padx=12, pady=8).pack(anchor=tk.W)
-        box = tk.Listbox(win, width=90, height=min(12, max(3, len(items))))
+
+        def lab(parent, text, fg='fg', font=None, **kw):
+            return tk.Label(parent, text=text, bg=t['panel'], fg=t[fg], font=font or self.f_ui, justify=tk.LEFT, anchor="w", **kw)
+
+        def check(parent, text, var, command=None, font=None):
+            return tk.Checkbutton(parent, text=text, variable=var, command=command, bg=t['panel'], fg=t['fg'], selectcolor=t['panel2'],
+                                  activebackground=t['panel'], activeforeground=t['fg'], font=font or self.f_ui, anchor="w",
+                                  highlightthickness=1, highlightbackground=t['panel'], highlightcolor=t['accent'])
+
+        lab(win, f"{len(items)} sessão(ões) aprovada(s) nesta fonte. Marque as que vão rodar agora.", font=self.f_bold).pack(anchor="w")
+        lab(win, "Para cada uma o app gera o dossiê de retomada e, fora da simulação, abre uma sessão NOVA com o agy "
+                 "(a original não é alterada). Rodam uma de cada vez.", 'muted', self.f_small, wraplength=self.px(640)).pack(anchor="w", pady=(2, 8))
+
+        # lista com rolagem (até ~8 linhas visíveis)
+        outer = tk.Frame(win, bg=t['border'], padx=1, pady=1)
+        outer.pack(fill=tk.BOTH, expand=True)
+        canvas = tk.Canvas(outer, bg=t['panel2'], highlightthickness=0, height=self.px(30) * min(8, max(2, len(items))))
+        sb = ttk.Scrollbar(outer, orient=tk.VERTICAL, command=canvas.yview)
+        inner = tk.Frame(canvas, bg=t['panel2'])
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=sb.set, width=self.px(640))
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        if len(items) > 8:
+            sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.confirm_checks = {}
         for it in items:
-            marca = "  (já retomada)" if it['cid'] in done else ""
-            box.insert(tk.END, f"{it['title'][:60]}  [{it['cid'][:8]}]  {it.get('workspace_label', '')}{marca}")
-        box.pack(padx=12, fill=tk.BOTH, expand=True)
+            var = tk.BooleanVar(value=it['cid'] not in done)
+            self.confirm_checks[it['cid']] = var
+            ws = f"  ·  {it['workspace_label']}" if it.get('workspace_label') else ""
+            mark = "  (já retomada)" if it['cid'] in done else ""
+            tk.Checkbutton(inner, text=f"{it['title'][:60]}  [{it['cid'][:8]}]{ws}{mark}", variable=var, bg=t['panel2'], fg=t['fg'],
+                           selectcolor=t['panel'], activebackground=t['panel2'], activeforeground=t['fg'], font=self.f_ui,
+                           anchor="w", highlightthickness=1, highlightbackground=t['panel2'],
+                           highlightcolor=t['accent']).pack(fill=tk.X, anchor="w", padx=self.px(6), pady=1)
+
         dry, redo = tk.BooleanVar(value=True), tk.BooleanVar(value=False)
-        tk.Checkbutton(win, text="Só gerar os dossiês (simulação: não chama o agy, não gasta cota)", variable=dry).pack(anchor=tk.W, padx=12, pady=(8, 0))
-        tk.Checkbutton(win, text="Refazer as que já foram retomadas", variable=redo).pack(anchor=tk.W, padx=12)
-        mrow = tk.Frame(win, padx=12)
-        mrow.pack(anchor=tk.W, fill=tk.X, pady=(6, 0))
-        tk.Label(mrow, text="Modelo do agy:").pack(side=tk.LEFT)
+
+        def redo_changed():  # Refazer marca/desmarca as já retomadas
+            for cid in done:
+                if cid in self.confirm_checks:
+                    self.confirm_checks[cid].set(redo.get())
+        self.confirm_redo_changed = redo_changed
+        check(win, "Só gerar os dossiês (simulação: não chama o agy, não gasta cota)", dry).pack(anchor="w", pady=(10, 0))
+        check(win, "Refazer as que já foram retomadas", redo, redo_changed).pack(anchor="w")
+        mrow = tk.Frame(win, bg=t['panel'])
+        mrow.pack(anchor="w", fill=tk.X, pady=(8, 0))
+        lab(mrow, "Modelo do agy:").pack(side=tk.LEFT)
         self.model_var = tk.StringVar(value=str(self.settings.get("agy_model") or ""))
         history = [m for m in self.settings.get("agy_models", []) if isinstance(m, str)]
         self.model_box = ttk.Combobox(mrow, textvariable=self.model_var, values=self.agy_model_choices(), width=32)
         self.model_box.pack(side=tk.LEFT, padx=(6, 8))
-        tk.Label(mrow, text="vazio = padrão do agy; o nome inclui o esforço, ex.: Gemini 3.8 Flash (Medium)", fg="#555555").pack(side=tk.LEFT)
-        tk.Label(win, text="Modo do agy: plan (somente leitura). Um erro de cota interrompe o lote inteiro.", fg="#555555", padx=12).pack(anchor=tk.W)
+        lab(mrow, "vazio = padrão do agy", 'muted', self.f_small).pack(side=tk.LEFT)
+        lab(win, "Modo do agy: plan (somente leitura). Um erro de cota interrompe o lote inteiro.", 'muted', self.f_small).pack(anchor="w", pady=(6, 0))
 
         def go():
             model = self.model_var.get().strip()
-            result['v'] = {'dry_run': dry.get(), 'redo': redo.get(), 'model': model}
+            cids = {cid for cid, v in self.confirm_checks.items() if v.get()}
+            result['v'] = {'dry_run': dry.get(), 'redo': redo.get(), 'model': model, 'cids': cids}
             self.settings["agy_model"] = model
             if model:
                 self.settings["agy_models"] = ([model] + [m for m in history if m != model])[:6]
             save_settings(self.settings)
             win.destroy()
         self.confirm_go, self.confirm_dry, self.confirm_redo = go, dry, redo  # usados pelos testes
-        row = tk.Frame(win, pady=10)
-        row.pack()
-        tk.Button(row, text="Iniciar", width=12, command=go).pack(side=tk.LEFT, padx=6)
-        tk.Button(row, text="Cancelar", width=12, command=win.destroy).pack(side=tk.LEFT, padx=6)
+        row = tk.Frame(win, bg=t['panel'])
+        row.pack(anchor="e", pady=(self.px(12), 0))
+        IconButton(row, self, "", "Cancelar", win.destroy, bg_token="panel").pack(side=tk.LEFT, padx=(0, self.px(8)))
+        IconButton(row, self, "autorun", "Iniciar", go, kind="primary", bg_token="panel").pack(side=tk.LEFT)
+        win.bind("<Escape>", lambda e: win.destroy())
         place_over(win, self)
         win.grab_set()
         self.wait_window(win)
@@ -3762,7 +3863,13 @@ class AntigravityGateApp(tk.Tk):
         opts = self.confirm_autorun(cands, set(self.handoffs))
         if not opts:
             return
-        items = [c for c in cands if opts['redo'] or c['cid'] not in self.handoffs]
+        if 'cids' in opts:  # caixas marcadas na confirmação
+            items = [c for c in cands if c['cid'] in opts['cids']]
+            if not items:
+                messagebox.showinfo("Auto-Run", "Nenhuma sessão marcada. Marque ao menos uma na lista para rodar.")
+                return
+        else:
+            items = [c for c in cands if opts['redo'] or c['cid'] not in self.handoffs]
         if not items:
             messagebox.showinfo("Auto-Run", "Todas as sessões aprovadas já foram retomadas. Marque \"Refazer\" para repetir.")
             return
@@ -3793,14 +3900,19 @@ class AntigravityGateApp(tk.Tk):
         self.auto_thread.start()
 
     def open_autorun_window(self, n, dry_run, model=""):
+        t = self.t
         win = tk.Toplevel(self)
         win.title("Auto-Run — " + ("simulação" if dry_run else "executando"))
-        txt = tk.Text(win, wrap=tk.WORD, state=tk.DISABLED, font=('Consolas', 9))
-        txt.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-        btn = tk.Button(win, text="Cancelar", width=14, command=self.cancel_autorun)
-        btn.pack(pady=(0, 8))
+        win.configure(bg=t['panel'])
+        mono = next((f for f in ("Consolas", "DejaVu Sans Mono") if f in self.families), "TkFixedFont")
+        txt = tk.Text(win, wrap=tk.WORD, state=tk.DISABLED, font=(mono, 9), bg=t['panel'], fg=t['fg'], insertbackground=t['fg'],
+                      selectbackground=t['sel_bg'], selectforeground=t['sel_fg'], relief=tk.FLAT, highlightthickness=1,
+                      highlightbackground=t['border'], highlightcolor=t['border'], padx=self.px(8), pady=self.px(6))
+        txt.pack(fill=tk.BOTH, expand=True, padx=self.px(10), pady=self.px(10))
+        btn = IconButton(win, self, "", "Cancelar", self.cancel_autorun, bg_token="panel")
+        btn.pack(pady=(0, self.px(10)))
         win.protocol("WM_DELETE_WINDOW", self.cancel_autorun)  # X = Cancelar (lote rodando) ou Fechar (depois do Fim)
-        place_over(win, self, size=(780, 420))
+        place_over(win, self, size=(self.px(780), self.px(420)))
         self.auto_win = (win, txt, btn)
         mode = 'simulação (só dossiês)' if dry_run else 'agy --mode plan, modelo ' + (model or 'padrão do agy')
         self.append_auto(f"{n} sessão(ões) na fila. Modo: {mode}.")
@@ -3841,10 +3953,10 @@ class AntigravityGateApp(tk.Tk):
         if 'error' in payload:
             self.append_auto(f"Erro inesperado: {payload['error']}")
         else:
-            self.append_auto(f"Fim. ✔ {payload['ok']} retomadas · 📋 {payload['dossier']} dossiês (simulação) · ✖ {payload['failed']} falhas · "
-                             f"⏭ {payload['skipped']} não executadas" + (f" · motivo: {payload['aborted']}" if payload['aborted'] else ""))
+            self.append_auto(f"Fim. ✔ {payload['ok']} retomadas · ▤ {payload['dossier']} dossiês (simulação) · ✖ {payload['failed']} falhas · "
+                             f"» {payload['skipped']} não executadas" + (f" · motivo: {payload['aborted']}" if payload['aborted'] else ""))
         if self.auto_win:
-            self.auto_win[2].configure(text="Fechar")
+            self.auto_win[2].set_text("Fechar")
         try:
             self.states = self.state.load()
             self.handoffs = self.state.handoffs_ok()
