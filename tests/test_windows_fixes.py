@@ -93,7 +93,9 @@ assert res['failed'] == 1 and res['models'] and "Novo Modelo X (Low)" in res['mo
 assert any("Modelos aceitos pelo agy" in l and "Gemini 3.8 Flash (Medium)" in l for l in logs), logs
 
 app.settings["agy_models_known"] = ["Novo Modelo X (Low)"]
-assert app.agy_model_choices()[:1] == ["Novo Modelo X (Low)"] and "Gemini 4 Argon (Medium)" in app.agy_model_choices()
+assert app.agy_model_choices() == ["Novo Modelo X (Low)"], "a lista devolvida pelo agy substitui a embutida"
+app.settings["agy_models_known"] = []
+assert "Gemini 4 Argon (Medium)" in app.agy_model_choices(), "sem lista do agy, vale a embutida"
 app.on_auto_event('auto_done', dict(ok=0, dossier=0, failed=1, skipped=0, quota='', aborted='', junk=[], models=["Outro (High)"]))
 assert G.load_settings().get("agy_models_known") == ["Outro (High)"]
 app.destroy()

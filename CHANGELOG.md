@@ -10,13 +10,20 @@ Correções dos três críticos da auditoria `reviews/audit-full-v0.9.0.md`, tod
 - Escolha do modelo do `agy` na confirmação do Auto-Run (`--model`; vazio = padrão do `agy`). Último valor e histórico ficam em `settings.json`.
 - Janela **Sobre** (botão no cabeçalho e F1): versão, autor, e-mail, GitHub, projeto, aviso de independência e diagnóstico do ambiente com **Copiar informações**.
 
+### Adicionado (segunda rodada de teste no Windows)
+- Selos do rodapé (pendentes, aprovadas, arquivadas, em atenção, críticas) filtram a tabela. Clique, Enter ou Espaço; de novo, mostra todas.
+
 ### Alterado
+- A janela reabre no monitor em que estava e, se estava maximizada, reabre maximizada nele.
+- O X da janela do Auto-Run faz o mesmo que o botão: cancela o lote em andamento ou fecha depois do "Fim.".
+- Nome de modelo recusado pelo `agy` sai da lista e do campo; o erro aparece numa linha só no log.
 - Campo Modelo do Auto-Run vem com a lista de modelos aceitos pelo `agy` (o esforço faz parte do nome: `Gemini 3.8 Flash (Medium)`). Se o `agy` recusar um nome, o log mostra a lista que ele aceita e o app passa a oferecê-la.
 - Botão Sobre só com o ícone (o texto aparece na dica, ou no botão quando o tema está sem ícones).
 - Painel de detalhes: os quatro botões têm a mesma largura e o conteúdo centralizado.
 - Ícone de Exportar: disquete (Segoe MDL2 `E74E`; `↧` no modo Unicode) no lugar da folha em branco. Glifo não visto num Windows.
 
 ### Corrigido
+- Sessão que o `agy` cria numa tentativa com erro, sem informar o id, ficava como pendente. Agora o app compara a pasta de sessões antes e depois da chamada e arquiva o que surgiu numa tentativa que falhou.
 - Workspace aparecia como `\c:\Users\...` (barra a mais): o Windows não reconhecia a unidade com `:` codificado (`%3A`). Com isso o Auto-Run não passava a pasta do projeto ao `agy` (`--add-dir`) e o painel marcava o workspace como inexistente.
 - Lista de temas abria no monitor principal quando a janela estava num monitor à esquerda dele (coordenadas negativas). Agora abre sob o botão, no monitor da janela, e para cima se faltar espaço embaixo.
 - Sucesso do `agy` agora exige código de saída 0, `conversation_id` preenchido e status diferente de `ERROR`. Antes, qualquer saída sem erro explícito contava como retomada. A saída bruta de cada chamada vai para o `gate.log`.

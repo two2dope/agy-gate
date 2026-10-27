@@ -30,6 +30,15 @@ elif mode == "badmodel":  # saída real do agy (26/10) com nome de modelo sem o 
     print("error: " + msg, file=sys.stderr)
     print(json.dumps({"conversation_id": "", "status": "ERROR", "response": "", "error": msg, "duration_seconds": 0, "num_turns": 0, "usage": {}}))
     sys.exit(1)
+elif mode == "badmodel_creates":  # erro com conversation_id vazio, mas o agy criou a sessão mesmo assim
+    conv = os.environ["AGY_FAKE_CONV"]
+    open(os.path.join(conv, "bbbbbbbb-0000-0000-0000-%012d.db" % (n + 1)), "w").close()
+    msg = 'invalid model selection (--model "X" --effort ""): model X is not recognized\nAvailable models:\n  Gemini 3.8 Flash (Medium)\n  Gemini 4 Argon (Medium)'
+    print(json.dumps({"conversation_id": "", "status": "ERROR", "response": "", "error": msg})); sys.exit(1)
+elif mode == "ok_with_sub":  # sucesso que cria também um sub-agente: nada é arquivado
+    conv = os.environ["AGY_FAKE_CONV"]
+    open(os.path.join(conv, cid + ".db"), "w").close(); open(os.path.join(conv, "cccccccc-0000-0000-0000-%012d.db" % (n + 1)), "w").close()
+    print(json.dumps({"conversation_id": cid, "status": "OK", "response": "ok", "error": ""}))
 elif mode == "nostatus":  # JSON sem status e sem conversation_id: não é sucesso
     print(json.dumps({"response": "algo"}))
 elif mode == "okexit1":  # JSON de sucesso, mas código de saída 1: não é sucesso

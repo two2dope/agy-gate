@@ -59,6 +59,7 @@ Usado pelo Auto-Run:
 - **Cada chamada cria um `conversation_id`, mesmo quando falha.** Sessões vazias aparecem na lista: arquive-as pelo app.
 - `--model` exige o nome com o esforço, como o agy lista: `Gemini 3.8 Flash (Medium)`. Nome sem esforço dá código 1, `status` `ERROR`, `conversation_id` vazio e a lista `Available models:` no erro. Verificado em 2026-10-26.
 - Primeiro teste real (2026-10-26, 20:03): erro de modelo tratado como falha, sem retomada falsa e sem sessão vazia (C1 validado no caminho de erro). Formato de sucesso ainda não visto.
+- Segundo teste real (2026-10-26, 21:11): nome sem esforço recusado (código 1) e criou uma sessão sem informar o id; `Gemini 4 Argon (Medium)` deu cota esgotada (reset em 26h29m). A cota com saldo é a do Gemini 3.8 Flash.
 - O Auto-Run aceita `--model` (campo na confirmação). Hipótese não verificada: o padrão do `agy` usa a cota do Gemini 4 Argon (o reset informado no erro de 26/10 bateu com o dele).
 - Opções úteis: `--mode plan|accept-edits|auto`, `--add-dir`, `--project`, `--print-timeout`, `--effort`, `--model`, `--conversation` (retoma e muda a conversa original).
 - Nunca usar `--dangerously-skip-permissions`.
@@ -83,7 +84,7 @@ Usado pelo Auto-Run:
 
 ## Como testar
 
-`tests/run_all.sh` (precisa de Python 3.12 com `tkinter` e, sem tela, `xvfb`). São 19 conjuntos com bancos sintéticos e um `agy` simulado (`tests/fake_agy.py`). Os scripts `tools/inspect_*.py` dão a estrutura (sem conteúdo) de qualquer banco de sessão.
+`tests/run_all.sh` (precisa de Python 3.12 com `tkinter` e, sem tela, `xvfb`). São 20 conjuntos com bancos sintéticos e um `agy` simulado (`tests/fake_agy.py`). Os scripts `tools/inspect_*.py` dão a estrutura (sem conteúdo) de qualquer banco de sessão.
 
 ## Versões
 

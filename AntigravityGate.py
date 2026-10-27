@@ -1046,6 +1046,11 @@ class AutoRunner:
             except OSError:
                 pass
 
+    @staticmethod
+    def _session_files():
+        """UUIDs das sessões na pasta ativa (para achar a sessão que o agy cria mesmo quando falha)."""
+        return {os.path.splitext(e.name)[0] for e in scandir_safe(ACTIVE_CONV_DIR) if e.is_file() and UUID_DB_RE.match(e.name)}
+
     def _run_agy(self, args):
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         self.proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -1074,7 +1079,7 @@ class AutoRunner:
 
     def run(self):
         os.makedirs(HANDOFF_DIR, exist_ok=True)
-        summary = {'ok': 0, 'dossier': 0, 'failed': 0, 'skipped': 0, 'quota': '', 'junk': [], 'aborted': '', 'models': []}
+        summary = {'ok': 0, 'dossier': 0, 'failed': 0, 'skipped': 0, 'quota': '', 'junk': [], 'aborted': '', 'models': [], 'bad_model': ''}
         failures = 0
         stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
         n = len(self.items)
@@ -1115,6 +1120,7 @@ class AutoRunner:
                 summary['aborted'] = 'agy .cmd/.bat inseguro'
                 self.log_cb(f"    ✖ não executado: {problem}")
                 break
+            before = self._session_files()
             try:
                 out, err, why, code = self._run_agy(args)
             except OSError as e:
@@ -1147,12 +1153,16 @@ class AutoRunner:
                     continue
                 self.store.add_handoff(cid, new_cid, dossier, 'erro', res['error'])
                 summary['failed'] += 1
-                if new_cid:
-                    summary['junk'].append(new_cid)
-                self.log_cb(f"    ✖ {res['error'][:300]}")
+                # O agy cria a sessão mesmo quando falha, às vezes sem informar o id: o que surgiu na pasta é dessa tentativa.
+                for junk in ([new_cid] if new_cid else []) + sorted(self._session_files() - before - {new_cid}):
+                    if junk not in summary['junk']:
+                        summary['junk'].append(junk)
+                self.log_cb(f"    ✖ {(res['error'].strip().splitlines() or [''])[0][:300]}")
                 models = parse_agy_models(res['error']) or parse_agy_models(err)
                 if models:
                     summary['models'] = models
+                    if self.model and self.model not in models:
+                        summary['bad_model'] = self.model
                     self.log_cb("    Modelos aceitos pelo agy (escolha um na lista do campo Modelo): " + "; ".join(models))
                 if res['quota']:
                     summary['quota'] = res['reset'] or 'horário não informado'
@@ -1477,6 +1487,12 @@ def fit_rect(area, scale, w, h, x=None, y=None, min_size=WIN_MIN):
     return w, h, min(max(x, l), max(l, l + aw - w)), min(max(y, t), max(t, t + ah - h - frame))
 
 
+def saved_zoomed(saved):
+    """True se a janela estava maximizada ao fechar (com o ponto do monitor onde estava)."""
+    return (isinstance(saved, dict) and saved.get("zoomed") is True
+            and all(isinstance(saved.get(k), int) and not isinstance(saved.get(k), bool) for k in ("zx", "zy")))
+
+
 def window_geometry(work_at, scale, saved=None):
     """(largura, altura, x, y) da janela principal. Parte do tamanho de projeto (ou do salvo) e fica dentro da área útil do monitor
     onde estava (ou do principal, se não houver posição salva). `work_at(x, y)` devolve a área útil do monitor desse ponto."""
@@ -1485,6 +1501,13 @@ def window_geometry(work_at, scale, saved=None):
         vals = [saved.get(k) for k in ("w", "h", "x", "y")]
         if all(isinstance(v, int) and not isinstance(v, bool) for v in vals) and 300 <= vals[0] <= 20000 and 300 <= vals[1] <= 20000:
             w, h, x, y = vals
+    if saved_zoomed(saved):
+        # Maximizada: o tamanho normal fica no monitor onde ela estava maximizada (o mesmo em que vai reabrir).
+        area = work_at(saved["zx"], saved["zy"])
+        l, t, aw, ah = area
+        if x is not None and not (l <= x + w // 2 < l + aw and t <= y + h // 2 < t + ah):
+            x = y = None
+        return fit_rect(area, scale, w, h, x, y)
     area = work_at(None, None) if x is None else work_at(x + w // 2, y + h // 2)
     return fit_rect(area, scale, w, h, x, y)
 
@@ -1913,16 +1936,26 @@ class IconButton(tk.Canvas):
 
 
 class Chip(tk.Label):
-    """Selo colorido de contagem na barra de status."""
+    """Selo colorido de contagem na barra de status. Clicar (ou Enter/Espaço com foco) filtra a tabela; de novo, mostra tudo."""
 
-    def __init__(self, master, app, token):
-        super().__init__(master, font=app.f_small, padx=8, pady=2, highlightthickness=1)
-        self.app, self.token = app, token
+    def __init__(self, master, app, token, key=None):
+        super().__init__(master, font=app.f_small, padx=8, pady=2, highlightthickness=1, takefocus=1 if key else 0,
+                         cursor="hand2" if key else "")
+        self.app, self.token, self.key = app, token, key
+        if key:
+            for seq in ("<Button-1>", "<Return>", "<space>"):
+                self.bind(seq, lambda e: app.toggle_chip_filter(key))
+            self.bind("<FocusIn>", lambda e: self.repaint(), add="+")
+            self.bind("<FocusOut>", lambda e: self.repaint(), add="+")
+            Tooltip(self, app, lambda: "Mostrar todas as sessões" if app.chip_filter == key else "Mostrar só estas sessões")
         self.repaint()
 
     def repaint(self):
         t = self.app.t
-        self.configure(bg=t['panel'], fg=t[self.token], highlightbackground=blend(t['panel2'], t[self.token], 0.4))
+        on = self.key is not None and getattr(self.app, "chip_filter", None) == self.key
+        focused = self.key is not None and self.focus_displayof() is self
+        self.configure(bg=blend(t['panel'], t[self.token], 0.22) if on else t['panel'], fg=t[self.token],
+                       highlightbackground=t[self.token] if (on or focused) else blend(t['panel2'], t[self.token], 0.4))
 
 
 class Toast(tk.Frame):
@@ -2244,12 +2277,16 @@ class AntigravityGateApp(tk.Tk):
         self.states = {}
         self.grouped, self.total, self.sub_count, self.row_by_cid = {}, 0, {}, {}
         self.match, self.sort_col, self.sort_rev = None, "col_date", True
+        self.chip_filter = None
         self.search_note = ""
 
         self.settings = load_settings()
         w, h, x, y = window_geometry(lambda px, py: work_area_at(self, px, py), self.winfo_fpixels('1i') / 96, self.settings.get("window"))
         self.geometry(f"{w}x{h}+{x}+{y}")
         self.minsize(min(WIN_MIN[0], w), min(WIN_MIN[1], h))
+        self.start_zoomed = saved_zoomed(self.settings.get("window"))
+        if self.start_zoomed:
+            self.after_idle(self.zoom)
         self.limit_preset, att, crit = limits_from_settings(self.settings)
         set_context_limits(att, crit)
         c = self.settings.get("context") if isinstance(self.settings.get("context"), dict) else {}
@@ -2517,6 +2554,7 @@ class AntigravityGateApp(tk.Tk):
     def show_critical(self):
         crit = self.critical_rows()
         self.match = {r['cid'] for r in crit}
+        self.chip_filter = None
         self.search_note = f"{len(crit)} sessão(ões) críticas"
         self.populate()
 
@@ -2608,7 +2646,7 @@ class AntigravityGateApp(tk.Tk):
         self.footer = self.themed_widget(tk.Frame(self, padx=self.px(14), pady=self.px(6)), bg="panel2")
         self.footer.pack(side=tk.BOTTOM, fill=tk.X)
         for token, key in (("danger", "crit"), ("warning", "rot"), ("muted", "arquivada"), ("success", "aprovada"), ("accent_text", "pendente")):
-            chip = Chip(self.footer, self, token)
+            chip = Chip(self.footer, self, token, key)
             chip.pack(side=tk.RIGHT, padx=(self.px(6), 0))
             self.chips[key] = chip
         self.status = self.themed_widget(tk.Label(self.footer, anchor=tk.W, font=self.f_small), bg="panel2", fg="fg")
@@ -2700,13 +2738,31 @@ class AntigravityGateApp(tk.Tk):
             self.after_cancel(self._win_job)
         self._win_job = self.after(700, self.save_window)
 
+    def zoom(self):
+        """Maximiza (Windows: estado 'zoomed'; X11: atributo -zoomed)."""
+        try:
+            self.state("zoomed")
+        except tk.TclError:
+            try:
+                self.attributes("-zoomed", True)
+            except tk.TclError:
+                pass
+
     def save_window(self):
-        """Grava tamanho e posição (só com a janela em estado normal; maximizada não conta)."""
+        """Grava tamanho e posição. Maximizada: guarda só que estava maximizada e em que monitor (centro da janela);
+        o tamanho normal anterior é mantido."""
         self._win_job = None
         m = re.match(r"(\d+)x(\d+)([+-]-?\d+)([+-]-?\d+)$", self.geometry())
-        if self.wm_state() != "normal" or not m:
+        state = self.wm_state()
+        if not m or state not in ("normal", "zoomed"):
             return
-        self.settings["window"] = dict(w=int(m[1]), h=int(m[2]), x=int(m[3]), y=int(m[4]))
+        w, h, x, y = int(m[1]), int(m[2]), int(m[3]), int(m[4])
+        if state == "zoomed":
+            win = dict(self.settings.get("window") or {})
+            win.update(zoomed=True, zx=x + w // 2, zy=y + h // 2)
+        else:
+            win = dict(w=w, h=h, x=x, y=y, zoomed=False)
+        self.settings["window"] = win
         save_settings(self.settings)
 
     def on_close(self):
@@ -2788,8 +2844,31 @@ class AntigravityGateApp(tk.Tk):
             self.btn["d_folder"].set_enabled(bool(fpath), "" if fpath else "Selecione uma sessão com arquivo nesta fonte.")
         self.update_details()
 
+    CHIP_FILTERS = {"pendente": "pendentes", "aprovada": "aprovadas", "arquivada": "arquivadas", "rot": "em atenção", "crit": "críticas"}
+
+    def chip_match(self, key, r):
+        if key in ("rot", "crit"):
+            return ctx_level(r['ctx']) == (1 if key == "rot" else 2)
+        return self.states.get(r['cid'], "pendente") == key
+
+    def toggle_chip_filter(self, key):
+        """Selo do rodapé como filtro: mostra só as sessões dele; clicar de novo volta a mostrar todas."""
+        if not self.grouped:
+            return
+        if self.chip_filter == key:
+            self.clear_search()
+            return
+        self.search_var.set("")
+        rows = list(self.row_by_cid.values())
+        self.match = {r['cid'] for r in rows if self.chip_match(key, r)}
+        self.chip_filter = key
+        self.search_note = f"Filtro: {len(self.match)} {self.CHIP_FILTERS[key]} (clique no selo de novo para ver todas)"
+        self.populate()
+
     def update_chips(self):
         shown = [self.row_by_cid[self.cid_of(i)] for i in self.iter_sessions() if self.cid_of(i) in self.row_by_cid]
+        if self.chip_filter:  # com filtro de selo, cada selo continua contando todas as sessões
+            shown = list(self.row_by_cid.values())
         st = lambda r: self.states.get(r['cid'], "pendente")
         counts = {k: sum(1 for r in shown if st(r) == k) for k in ("pendente", "aprovada", "arquivada")}
         levels = [ctx_level(r['ctx']) for r in shown]
@@ -2798,6 +2877,8 @@ class AntigravityGateApp(tk.Tk):
         self.chips['arquivada'].configure(text=f"▣ {counts['arquivada']} arquivadas")
         self.chips['rot'].configure(text=f"⚠ {levels.count(1)} em atenção")
         self.chips['crit'].configure(text=f"‼ {levels.count(2)} críticas")
+        for c in self.chips.values():
+            c.repaint()
 
     def is_session(self, iid):
         v = self.tree.item(iid, 'values') if iid else ()
@@ -3101,12 +3182,14 @@ class AntigravityGateApp(tk.Tk):
         else:
             content_ok = False
         self.match = hits & {r['cid'] for r in rows}
+        self.chip_filter = None
         self.search_note = f"{len(self.match)} resultado(s) para “{q}”" + ("" if content_ok else " (só metadados: sem índice de conteúdo nesta fonte)")
         self.populate()
 
     def clear_search(self):
         self.search_var.set("")
         self.match = None
+        self.chip_filter = None
         self.search_note = ""
         if self.grouped:
             self.populate()
@@ -3222,7 +3305,7 @@ class AntigravityGateApp(tk.Tk):
         self.warnings = len(res['warnings'])
         self.grouped, self.total = res['grouped'], res['total']
         self.row_by_cid = {r['cid']: r for grp in self.grouped.values() for r in grp}
-        self.match, self.search_note = None, ""
+        self.match, self.search_note, self.chip_filter = None, "", None
         self.search_var.set("")
         try:
             self.states = self.state.load()
@@ -3397,7 +3480,8 @@ class AntigravityGateApp(tk.Tk):
         """Usados por último, depois a lista conhecida (a mais recente que o agy devolveu, ou a do app), sem repetir."""
         known = [m for m in self.settings.get("agy_models_known", []) if isinstance(m, str)] or AGY_MODELS
         recent = [m for m in self.settings.get("agy_models", []) if isinstance(m, str)]
-        return list(dict.fromkeys(recent + known + AGY_MODELS))
+        # usados por último que o agy conhece vêm primeiro; nomes fora da lista (modelo personalizado) vão para o fim
+        return list(dict.fromkeys([m for m in recent if m in known] + known + recent))
 
     def start_autorun(self):
         if self.autorunning:
@@ -3455,7 +3539,7 @@ class AntigravityGateApp(tk.Tk):
         txt.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
         btn = tk.Button(win, text="Cancelar", width=14, command=self.cancel_autorun)
         btn.pack(pady=(0, 8))
-        win.protocol("WM_DELETE_WINDOW", lambda: messagebox.showinfo("Auto-Run", "Use o botão Cancelar/Fechar."))
+        win.protocol("WM_DELETE_WINDOW", self.cancel_autorun)  # X = Cancelar (lote rodando) ou Fechar (depois do Fim)
         place_over(win, self, size=(780, 420))
         self.auto_win = (win, txt, btn)
         mode = 'simulação (só dossiês)' if dry_run else 'agy --mode plan, modelo ' + (model or 'padrão do agy')
@@ -3486,6 +3570,11 @@ class AntigravityGateApp(tk.Tk):
         self.btn["autorun"].set_busy(False, "Auto-Run")
         if payload.get('models'):
             self.settings["agy_models_known"] = payload['models']
+            bad = payload.get('bad_model')
+            if bad:  # nome recusado pelo agy não volta a ser oferecido
+                self.settings["agy_models"] = [m for m in self.settings.get("agy_models", []) if m != bad]
+                if self.settings.get("agy_model") == bad:
+                    self.settings["agy_model"] = ""
             save_settings(self.settings)
         if 'error' not in payload:
             self.btn["autorun"].flash_ok()
