@@ -12,7 +12,7 @@ Registrado em 2026-10-27. Duas entregas do Google Stitch, enviadas pelo usuário
 | 1 | **Caminho A:** evolução em Tk | A tabela continua no Treeview; sem WebView |
 | 2 | Aba "Em Revisão" vira **"Aprovadas aguardando"** | Sessões aprovadas sem retomada registrada (`gate_state.handoffs`). Mesmo número do selo do Auto-Run, que já desconta as retomadas |
 | 3 | **Font Awesome, Bootstrap Icons e Material Icons ficam** | Três fontes de ícones no M1, além de Windows (MDL2), Unicode e sem ícones |
-| 4 | **Tema padrão: Escuro com a paleta Obsidian (azul-preto)** | Tokens do Escuro na tabela "Tokens propostos". O nome no app continua "Escuro", para não confundir com a Obsidiana |
+| 4 | **Tema padrão: "Dark Alloy"** (paleta Obsidian, azul-preto), no lugar do "Escuro" | Tokens na tabela "Tokens propostos". A chave interna `escuro` fica: quem já tem o tema salvo em `settings.json` continua nele |
 | 5 | **Tabela padrão: Compacta** (1 linha por sessão) | O modo Confortável (2 linhas) fica como opção |
 | 6 | **Barra lateral aberta ao abrir o app** | Ctrl+B recolhe durante o uso; o app abre sempre com ela aberta. Trilho automático só em janela estreita |
 
@@ -67,7 +67,7 @@ Derivados dos mocks. Os 8 passam em todos os pares do `test_theme` (texto ≥ 4,
 
 | Tema | bg · panel · panel2 · border | fg · muted | accent / texto do botão · accent_text | success · warning · danger | seleção | cabeçalho | menor |
 |---|---|---|---|---|---|---|---|
-| Escuro | `#07090e` `#0c0f17` `#161b2c` `#1e263d` | `#e2e8f0` `#94a3b8` | `#38bdf8` / `#04121f` · `#38bdf8` | `#34d399` `#fbbf24` `#f43f5e` | `#0c3a57` / `#ffffff` | `#0c0f17` / `#e2e8f0` | 4,89 |
+| Dark Alloy (era Escuro) | `#07090e` `#0c0f17` `#161b2c` `#1e263d` | `#e2e8f0` `#94a3b8` | `#38bdf8` / `#04121f` · `#38bdf8` | `#34d399` `#fbbf24` `#f43f5e` | `#0c3a57` / `#ffffff` | `#0c0f17` / `#e2e8f0` | 4,89 |
 | Claro | `#f1f5f9` `#ffffff` `#e9eef5` `#cbd5e1` | `#0f172a` `#475569` | `#0369a1` / `#ffffff` · `#0369a1` | `#047857` `#b45309` `#be123c` | `#e0f2fe` / `#0f172a` | `#ffffff` / `#0f172a` | 4,58 |
 | Mil-Spec | `#070a09` `#0d1311` `#111916` `#2a4536` | `#e5e7eb` `#8aa597` | `#22c55e` / `#04140a` · `#4ade80` | `#4ade80` `#f59e0b` `#f87171` | `#243b31` / `#4ade80` | `#0d1311` / `#4ade80` | 4,65 |
 | Cyber | `#070814` `#0d0f22` `#12142d` `#1e2348` | `#e6fbff` `#8e97b8` | `#00f3ff` / `#001418` · `#00f3ff` | `#4ade80` `#fbbf24` `#ff3d8b` | `#2a0a3d` / `#00f3ff` | `#0d0f22` / `#00f3ff` | 4,96 |
@@ -76,7 +76,7 @@ Derivados dos mocks. Os 8 passam em todos os pares do `test_theme` (texto ≥ 4,
 | Obsidiana | `#07050d` `#0b0816` `#151027` `#34295c` | `#f3ecff` `#a99dbd` | `#c084fc` / `#12081f` · `#c084fc` | `#34d399` `#fbbf24` `#f43f5e` | `#2b1646` / `#f3ecff` | `#07050d` / `#f3ecff` | 4,89 |
 | Mecha | `#080a0e` `#0d1117` `#121620` `#323d53` | `#e2e8f0` `#94a3b8` | `#f97316` / `#1a0802` · `#ff8c38` | `#10b981` `#f59e0b` `#ef4444` | `#33200f` / `#fdba74` | `#0d1117` / `#f97316` | 4,99 |
 
-O que muda em relação a hoje: **Escuro** (cinza do VS Code → azul-preto Obsidian), **Claro** (cinza neutro → ardósia com azul-céu), **Mil-Spec** (neutro → verde tático), **Brutalista** (borda branca e seleção amarela → borda `#2a2a2a` e seleção âmbar-escura com texto amarelo). Vidro, Cyber, Obsidiana e Mecha mudam pouco: os temas atuais já vinham de paletas parecidas (Cyber-HUD do navigator-agy). Os botões primários usam texto escuro sobre o acento: texto branco sobre azul-céu ou ametista não passa (o mock do Claro usa branco sobre `#0284c7`, 4,1; o Claro proposto usa `#0369a1`, 5,9).
+O que muda em relação a hoje: **Escuro → Dark Alloy** (cinza do VS Code → azul-preto Obsidian), **Claro** (cinza neutro → ardósia com azul-céu), **Mil-Spec** (neutro → verde tático), **Brutalista** (borda branca e seleção amarela → borda `#2a2a2a` e seleção âmbar-escura com texto amarelo). Vidro, Cyber, Obsidiana e Mecha mudam pouco: os temas atuais já vinham de paletas parecidas (Cyber-HUD do navigator-agy). Os botões primários usam texto escuro sobre o acento: texto branco sobre azul-céu ou ametista não passa (o mock do Claro usa branco sobre `#0284c7`, 4,1; o Claro proposto usa `#0369a1`, 5,9).
 
 ## Tipografia e medidas (`DESIGN.md` → Tk)
 
@@ -105,7 +105,7 @@ O que muda em relação a hoje: **Escuro** (cinza do VS Code → azul-preto Obsi
 1. **M1 — fontes e ícones:** Inter e JetBrains Mono; Font Awesome Free Solid (SIL OFL 1.1), Bootstrap Icons (MIT; vem em WOFF, converter para TTF) e Material Icons (Apache 2.0); registro privado no Windows (`AddFontResourceExW`, `FR_PRIVATE`) e `--add-data` no PyInstaller; seletor com 6 opções (Windows, Font Awesome, Bootstrap, Material, Unicode, sem ícones); licenças no Sobre e na pasta `licenses/`. Cerca de +2,5 MB no `.exe` [estimativa]. Fecha com o `.exe` do CI conferido no Windows: os glifos não aparecem no Linux deste ambiente.
 2. **M2 — barra lateral e cabeçalho:** categorias com contadores; projetos com sessões e retomadas; abas Todas / Aprovadas aguardando / Arquivadas sobre um filtro único; Ctrl+K na busca; Ctrl+B recolhe a barra; o app abre com a barra aberta.
 3. **M3 — tabela e detalhes:** coluna Consumo; estado com bolinha colorida; modos Compacto (padrão) e Confortável; coluna Ações; cartão de detalhes com medidor e marcas.
-4. **M4 — skins e acabamento:** tokens da tabela acima (Escuro com a paleta Obsidian, tema padrão), fonte e raio por skin, contraste testado; indicador do `agy` e do daemon; ícone autoral do app.
+4. **M4 — skins e acabamento:** tokens da tabela acima (Dark Alloy como tema padrão, no lugar do Escuro), fonte e raio por skin, contraste testado; indicador do `agy` e do daemon; ícone autoral do app.
 
 Cada marco fecha com o `.exe` montado no CI e conferência no Windows. O código da 1.1 começa depois do merge da 1.0.2.
 

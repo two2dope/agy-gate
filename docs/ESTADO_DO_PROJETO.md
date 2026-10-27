@@ -1,29 +1,30 @@
 # AntigravityGate: estado do projeto
 
-Atualizado em 2026-10-27, versão **1.0.2** (branch `claude/funny-tesla-4w2i3q`, ainda não publicada; contém a 1.0.1 e a 1.0.2). Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
+Atualizado em 2026-10-27, versão **1.0.2** (aprovada pelo usuário em 27/10, depois de uma retomada real; publicação por PR para a `main` e tag `v1.0.2`; contém a 1.0.1 e a 1.0.2). Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
 
 ## Snapshot
 
 | | |
 |---|---|
-| **Feito** | 1.0.0 publicada. Antigravity restaurado no Windows (27/10: conversas de volta no remoto `dev-thomaz` e na busca do VS Code). Auditoria `reviews/audit-full-v1.0.0.md`. **Na branch:** 1.0.1 (crítico C1: retomada no projeto de origem; simulação conferida no Windows: `d:\Segurança`, `SMT1_WATCHDOG (--project)`) e 1.0.2 (faixa e dica de contexto como alerta em dois níveis; janelas do Auto-Run), com testes. Pacote visual: duas entregas do Stitch avaliadas (8 skins + `DESIGN.md`), caminho A decidido, tokens das 8 skins propostos com contraste conferido, decisões da 1.1 fechadas: `docs/PACOTE_VISUAL_1.1.md` |
-| **Faltando** | Uma retomada real (fora da simulação) conferida no remoto; ver no Windows a dica e a faixa de alerta (ícone e cores). Duas observações de 27/10 sem diagnóstico (editor vazio a cada `agy`; PowerShell piscando no remote control). Não verificado: escala 125–150%, status 6 e 7 |
-| **Próximo passo único** | Com o `.exe` da branch: 1 retomada real (simulação primeiro) e conferir no `dev-thomaz` se a sessão nova aparece **dentro** do projeto de origem; se sim, merge e tag `v1.0.2`. Na mesma execução, com o editor do Antigravity fechado antes, anotar se ele abre |
+| **Feito** | 1.0.0 publicada. Antigravity restaurado no Windows (27/10: conversas de volta no remoto `dev-thomaz` e na busca do VS Code). Auditoria `reviews/audit-full-v1.0.0.md`. **1.0.2 aprovada** (27/10, retomada real `4c326dce` → `3723a6eb`): 1.0.1 (crítico C1: retomada no projeto de origem; simulação conferida no Windows: `d:\Segurança`, `SMT1_WATCHDOG (--project)`) e 1.0.2 (faixa e dica de contexto como alerta em dois níveis; janelas do Auto-Run), com testes. Pacote visual: duas entregas do Stitch avaliadas (8 skins + `DESIGN.md`), caminho A decidido, tokens das 8 skins propostos com contraste conferido, decisões da 1.1 fechadas: `docs/PACOTE_VISUAL_1.1.md` |
+| **Faltando** | Registrar o SHA-256 da Release v1.0.2. Retomada real de uma sessão **com** projeto: o `--project` só foi visto na simulação (a retomada real de 27/10 era de sessão sem projeto). Duas observações de 27/10 sem diagnóstico (editor vazio a cada `agy`; PowerShell piscando no remote control). Não verificado: escala 125–150%, status 6 e 7 |
+| **Próximo passo único** | M1 da 1.1 (fontes e ícones), na branch reiniciada a partir da `main` depois do merge da 1.0.2 |
 
 ## Pendências (backlog pós-1.0)
 
 Em ordem de prioridade. Cada item vira uma 1.0.x com teste; nada entra sem decidir o que sai.
 
 0. **Auditoria v1.0.0, crítico C2:** junctions (`antigravity-cli`, `antigravity-ide` → `antigravity`) aparecem como fontes "Backup/outros", com os dados vivos. Corrigir com `realpath` em `discover_sources`. Demais recomendações (R2–R17) na auditoria.
-1. **1.1 — pacote visual** (decidido em 27/10: caminho A, evolução em Tk; aba "Em Revisão" vira "Aprovadas aguardando"; os 3 conjuntos de ícones ficam). Também decidido em 27/10: tema padrão Escuro com a paleta Obsidian (azul-preto), tabela padrão compacta, barra lateral aberta ao abrir. Plano e tokens das 8 skins em `docs/PACOTE_VISUAL_1.1.md`. Começa depois do merge da 1.0.2. Já entra:
+1. **1.1 — pacote visual** (decidido em 27/10: caminho A, evolução em Tk; aba "Em Revisão" vira "Aprovadas aguardando"; os 3 conjuntos de ícones ficam). Também decidido em 27/10: tema padrão "Dark Alloy" (paleta Obsidian, azul-preto, no lugar do Escuro), tabela padrão compacta, barra lateral aberta ao abrir. Plano e tokens das 8 skins em `docs/PACOTE_VISUAL_1.1.md`. Começa depois do merge da 1.0.2. Já entra:
    - **Ícone autoral do app** (`.ico` multi-tamanho 16–256 px para o `.exe`, a barra de tarefas e a barra de título). Hoje o `.exe` usa o ícone padrão do PyInstaller e a janela usa a pena do Tk. Fazer: arte própria → `packaging/app.ico` → `--icon` no PyInstaller → `iconbitmap`/`iconphoto` nas janelas.
    - **Mais 3 conjuntos de ícones, com as fontes reais dentro do `.exe`:** Font Awesome Free (Solid, SIL OFL 1.1), Bootstrap Icons (MIT) e Material Icons (Apache 2.0), além dos atuais (Segoe MDL2, Unicode, sem ícones). Com Inter e JetBrains Mono, cerca de +2,5 MB no `.exe`; créditos de licença no Sobre; registro privado da fonte no Windows (`AddFontResourceExW`, `FR_PRIVATE`) e `--add-data` no PyInstaller. As três fontes podem ser baixadas do GitHub (Bootstrap vem em WOFF: converter para TTF). Conferir cada glifo renderizando antes de entregar.
-2. Validar no uso real o fluxo completo (curadoria → dossiê → Auto-Run). Liberado: as sessões foram restauradas no Antigravity em 27/10.
-3. Não verificado no Windows: escala 125% a 150%, glifos Segoe MDL2 em todos os botões, significado dos status 6 e 7 das ferramentas.
-4. Lista de modelos do Auto-Run pelo `agy models` (hoje: lista embutida + a que o `agy` devolve no erro).
-5. Campo "Modelo(s)" vazio no dossiê de algumas sessões (o banco não tinha o nome em `gen_metadata`; não investigado).
-6. Datas `0001-01-01 00:00:00` em sessões sem horário: mostrar "-".
-7. Limpeza opcional de dossiês antigos em `%LOCALAPPDATA%\AntigravityGate\handoffs` (decisão do usuário).
+   - **Ajustes pequenos vistos na retomada real de 27/10:** a janela de andamento continua com o título "executando" depois do "Fim."; o resumo final diz "1 retomadas" (plural fixo).
+2. **1.2 — lixeira com prazo** (pedido do usuário em 27/10; entra depois da 1.1). Sessão arquivada há N dias (padrão 30, ajustável) vai para a lixeira: o Gate a esconde da lista, apaga os próprios dossiês dela (pasta `handoffs`) e lista os IDs para o usuário apagar pela exclusão oficial do `agy` (`/resume`, tecla F4, desde a 1.1.13), que também limpa subagentes, worktrees e anotações (changelog 1.1.24, 1.1.26, 1.2.2, 1.4.8). **O Gate não apaga nada nos bancos do Antigravity:** o motor guarda índice, subagentes e worktrees fora do `.db`, e já recriou como arquivo vazio conversa apagada por fora (corrigido na 1.2.2). Data do arquivamento: `session_state.updated_at`, já gravada. Exportações salvas pelo usuário ficam. Absorve o antigo item "limpeza de dossiês antigos".
+3. Validar no uso real o fluxo completo (curadoria → dossiê → Auto-Run). Retomada real de sessão sem projeto feita em 27/10; falta uma de sessão com projeto (`--project`).
+4. Não verificado no Windows: escala 125% a 150%, glifos Segoe MDL2 em todos os botões, significado dos status 6 e 7 das ferramentas.
+5. Lista de modelos do Auto-Run pelo `agy models` (hoje: lista embutida + a que o `agy` devolve no erro).
+6. Campo "Modelo(s)" vazio no dossiê de algumas sessões (o banco não tinha o nome em `gen_metadata`; não investigado).
+7. Datas `0001-01-01 00:00:00` em sessões sem horário: mostrar "-".
 
 Saiu do backlog em 27/10: divisor de altura entre a tabela e os detalhes (a faixa de alerta da 1.0.2 entrou no lugar dele).
 
@@ -37,7 +38,9 @@ Fora do alcance do app: o editor do Antigravity abre vazio a cada chamada do `ag
 - Testes da 1.0.1 rodados localmente com Python 3.12 e **Tk 9.0**: 24 de 25 passam. `test_theme` falha igual antes e depois da mudança (largura de fonte do Tk 9; o CI usa Tk 8.6). No CI (Tk 8.6), a 1.0.1 passou nos 25 e o `.exe` foi montado e autotestado (execução 40465486627).
 - **1.0.2** (pedido do usuário, mesma sessão): alerta de contexto em dois níveis no lugar do item 8 do backlog. O pedido era para a **dica** do contexto (a "janela de alerta" ao passar o mouse); a primeira entrega mudou só a faixa, e a correção levou o mesmo estilo à dica. Também corrigidas as janelas do Auto-Run (duas abertas se travavam; abriam atrás da principal). Ícones adicionais (Font Awesome, Bootstrap, Material, com as fontes reais) ficaram para a 1.1 "pacote visual", junto com o ícone autoral.
 - Neste ambiente de teste o Tk só enxerga 8 fontes do X, sem símbolos: os ícones (botões e faixa) não aparecem nas capturas de Linux. Não é defeito do app.
-- **Pacote visual, segunda entrega do Stitch** (8 skins + `DESIGN.md`): 6 das 8 telas usam uma linha por sessão, o que o Treeview faz; células de duas linhas verificadas no Tk 9.0. Nas 8 skins o texto terciário fica abaixo de 4,5:1; os tokens propostos passam em todos os pares do `test_theme`. MCP do Stitch: dispensável agora. Decisões fechadas pelo usuário: Escuro com a paleta Obsidian como tema padrão, tabela compacta, barra lateral aberta. Detalhes em `docs/PACOTE_VISUAL_1.1.md`.
+- **Pacote visual, segunda entrega do Stitch** (8 skins + `DESIGN.md`): 6 das 8 telas usam uma linha por sessão, o que o Treeview faz; células de duas linhas verificadas no Tk 9.0. Nas 8 skins o texto terciário fica abaixo de 4,5:1; os tokens propostos passam em todos os pares do `test_theme`. MCP do Stitch: dispensável agora. Decisões fechadas pelo usuário: "Dark Alloy" (paleta Obsidian) como tema padrão no lugar do Escuro, tabela compacta, barra lateral aberta. Detalhes em `docs/PACOTE_VISUAL_1.1.md`.
+- **1.0.2 aprovada** depois da retomada real com o `.exe` da execução 40471275835: `4c326dce` ("cancele o deep coder") → `3723a6eb`, Gemini 3.8 Flash (Medium), resposta completa. A sessão original não tinha projeto em `config/projects` nem pasta de workspace válida: a nova foi para CLI Project, com a pasta `handoffs` como pasta de trabalho (o caminho previsto para esse caso). O `--project` continua visto só na simulação.
+- **Lixeira com prazo** pedida pelo usuário: decidido fazer pela exclusão oficial do `agy`, sem o Gate apagar nada nos bancos, depois da 1.1 (item 2 das pendências).
 
 ### Observações do usuário em 27/10 (sem diagnóstico)
 
