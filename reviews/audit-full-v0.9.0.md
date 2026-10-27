@@ -56,7 +56,7 @@ A parte de leitura, curadoria e exportação está sólida: somente-leitura real
 
 ## Todas as Recomendações
 
-> **Situação (2026-10-27):** R1, R2 e R17 feitos, e rotação do log (nice-to-have), na etapa 1 da revisão final. Ver CHANGELOG.
+> **Situação (2026-10-27):** etapa 1 (R1, R2, R17, rotação do log) e etapa 2a (R12, R13, R14) da revisão final feitas. Ver CHANGELOG.
 
 | # | Recomendação | Lente | Arquivo(s) | Correção |
 |---|--------------|-------|------------|----------|

@@ -23,6 +23,13 @@ Correções dos três críticos da auditoria `reviews/audit-full-v0.9.0.md`, tod
 - Painel de detalhes: os quatro botões têm a mesma largura e o conteúdo centralizado.
 - Ícone de Exportar: disquete (Segoe MDL2 `E74E`; `↧` no modo Unicode) no lugar da folha em branco. Glifo não visto num Windows.
 
+### Tabela (revisão final, etapa 2a)
+- Duplo clique no divisor do cabeçalho ajusta a largura da coluna ao conteúdo. As colunas não se esticam mais sozinhas (o Tk desfazia o ajuste); a rolagem horizontal mostra o resto.
+- Coluna Título logo depois de Projeto / Sessão.
+- Duplo clique numa sessão abre o painel de detalhes (antes abria "Salvar como"). Exportar continua no botão e no menu.
+- Exportar e Dossiê ficam desabilitados, com o motivo, quando há mais de uma sessão selecionada (antes usavam só a primeira, sem aviso).
+- Dicas nos alertas: contexto (nível, limites e o que fazer), falhas de ferramenta (onde ver os detalhes), retomada, título longo; no painel, falhas, workspace, estado e medidor.
+
 ### Segurança e dados (revisão final, etapa 1)
 - Máscara de segredos do dossiê cobre também chaves Stripe (`sk_live_`/`rk_test_`), JWT, tokens Slack (`xox…`), Google OAuth (`ya29.`), GitHub granular (`github_pat_`), `Authorization: Basic` e senha em URL (`postgres://usuário:[REDACTED]@host`). O dossiê agora vai dentro do prompt enviado ao modelo, então a máscara passou a importar mais.
 - Estado em memória (quando a pasta de dados não aceita gravação) funciona também nas threads do Auto-Run e da exportação; antes dava `ProgrammingError` e o Auto-Run falhava.

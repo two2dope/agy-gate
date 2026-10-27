@@ -122,7 +122,7 @@ assert app.empty.winfo_manager() == "place" and app.empty_title.cget("text") == 
 assert app.btn["empty_action"].text == "Limpar busca" and app.btn["empty_action"].winfo_manager() == "pack"
 app.btn["empty_action"].invoke(); app.update()
 assert app.empty.winfo_manager() == "" and len(list(app.iter_sessions())) == 5, "limpar busca traz todas de volta (3 boas, 1 do teste de arquivos, 1 corrompida)"
-app.refresh(); app.update(); assert app.loading
+app.refresh(); assert app.loading  # sem update(): com cache a leitura pode acabar dentro dele
 # (durante a carga a tabela está vazia)
 assert app.empty.winfo_manager() == "place" and app.empty_title.cget("text") == "Lendo as sessões…" and app.btn["empty_action"].winfo_manager() == ""
 wait(app); assert app.empty.winfo_manager() == ""

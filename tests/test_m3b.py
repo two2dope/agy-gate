@@ -87,8 +87,8 @@ assert "Aprovada" in app.tree.item(iid(app, 1), "text") and "Pendente" in app.tr
 app.tree.selection_set(projs(app)["Projeto Um"]); app.mark_selected("arquivada")
 assert all("Arquivada" in app.tree.item(iid(app, n), "text") for n in (1, 2, 3, 4)) and "+2 sub-agentes" in app.tree.item(iid(app, 1), "text")
 
-# 8. duplo clique em sessão filha exporta; copiar UUID; abrir pasta sem arquivo
-opened = []; app.open_selected = lambda: opened.append(1)
+# 8. duplo clique em sessão filha abre os detalhes; copiar UUID; abrir pasta sem arquivo
+opened = []; app.open_details = lambda: opened.append(1)
 app.tree.item(projs(app)["Projeto Um"], open=True); app.tree.item(iid(app, 1), open=True); app.update()
 app.on_double_click(types.SimpleNamespace(y=app.tree.bbox(iid(app, 2))[1] + 5)); assert opened
 app.copy_uuid(iid(app, 4)); assert app.clipboard_get() == U(4)

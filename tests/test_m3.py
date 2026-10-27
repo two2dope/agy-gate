@@ -67,9 +67,9 @@ app.refresh(); wait(app); assert label(app, U(1)) == "Aprovada"
 con = sqlite3.connect(G.STATE_DB); n_log = con.execute("SELECT COUNT(*) FROM state_log").fetchone()[0]; con.close()
 assert n_log == 1 + 2 + 4 + 1, n_log
 
-# 7. duplo clique: pasta não abre popup nem exporta; sessão exporta; área vazia ignora
+# 7. duplo clique: pasta não abre popup nem detalhes; sessão abre os detalhes; área vazia ignora
 proj = app.tree.get_children()[0]
-opened = []; app.open_selected = lambda: opened.append(app.tree.selection())
+opened = []; app.open_details = lambda: opened.append(app.tree.selection())
 app.tree.item(proj, open=True); app.update()
 y_proj = app.tree.bbox(proj)[1] + 5
 infos.clear(); app.on_double_click(types.SimpleNamespace(y=y_proj)); assert not opened and not infos

@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import gc
 import glob
 import re
 import json
@@ -1839,20 +1840,87 @@ class Tooltip:
         text = self.fn()
         if not text:
             return
-        t = self.app.t
-        self.tip = tk.Toplevel(self.w)
-        self.tip.wm_overrideredirect(True)
-        self.tip.withdraw()  # mede antes de mostrar: perto da borda direita a dica é puxada para dentro da janela
-        tk.Label(self.tip, text=text, bg=t['panel2'], fg=t['fg'], font=self.app.f_small, padx=9, pady=5, justify=tk.LEFT,
-                 highlightthickness=1, highlightbackground=t['border'], wraplength=320).pack()
-        self.tip.update_idletasks()
-        top = self.w.winfo_toplevel()
-        ax, ay, aw, ah = self.w.winfo_rootx(), self.w.winfo_rooty(), self.w.winfo_width(), self.w.winfo_height()
-        win = (top.winfo_rootx(), top.winfo_rooty(), top.winfo_width(), top.winfo_height())
-        x, y = tooltip_pos(win, work_area_at(self.w, ax + aw // 2, ay + ah // 2), ax, ay, aw, ah,
-                           self.tip.winfo_reqwidth(), self.tip.winfo_reqheight())
-        self.tip.wm_geometry(f"+{x}+{y}")
-        self.tip.deiconify()
+        w = self.w
+        self.tip = show_tip(w, self.app, text, w.winfo_rootx(), w.winfo_rooty(), w.winfo_width(), w.winfo_height())
+
+
+def show_tip(owner, app, text, ax, ay, aw, ah):
+    """Mostra uma dica sob o retângulo (ax, ay, aw, ah) da tela, dentro da janela de `owner` e do monitor. Devolve o Toplevel."""
+    t = app.t
+    tip = tk.Toplevel(owner)
+    tip.wm_overrideredirect(True)
+    tip.withdraw()  # mede antes de mostrar: perto da borda direita a dica é puxada para dentro da janela
+    tk.Label(tip, text=text, bg=t['panel2'], fg=t['fg'], font=app.f_small, padx=9, pady=5, justify=tk.LEFT,
+             highlightthickness=1, highlightbackground=t['border'], wraplength=app.px(340)).pack()
+    tip.update_idletasks()
+    top = owner.winfo_toplevel()
+    win = (top.winfo_rootx(), top.winfo_rooty(), top.winfo_width(), top.winfo_height())
+    x, y = tooltip_pos(win, work_area_at(owner, ax + aw // 2, ay + ah // 2), ax, ay, aw, ah, tip.winfo_reqwidth(), tip.winfo_reqheight())
+    tip.wm_geometry(f"+{x}+{y}")
+    tip.deiconify()
+    return tip
+
+
+class CellTooltip:
+    """Dica por célula da tabela: ao parar o mouse sobre uma célula com alerta (contexto, falhas, retomada, título longo)."""
+
+    def __init__(self, tree, app, text_fn, delay=450):
+        self.tree, self.app, self.fn, self.delay = tree, app, text_fn, delay
+        self.key = self.tip = self.job = None
+        self.text = ""
+        tree.bind("<Motion>", self.on_motion, add="+")
+        tree.bind("<Leave>", lambda e: self.hide(), add="+")
+        tree.bind("<ButtonPress>", lambda e: self.hide(), add="+")
+
+    def edges(self):
+        """[(coluna, x_esquerda, x_direita)] na tela da tabela, na ordem exibida, já descontada a rolagem horizontal.
+        Calculado pelas larguras: com displaycolumns, o identify_column do Tk 8.6 numera as colunas de outro jeito que o bbox."""
+        disp = list(self.tree["displaycolumns"])
+        if disp == ["#all"]:
+            disp = list(self.tree["columns"])
+        cols = ["#0"] + disp
+        widths = [int(self.tree.column(c, "width")) for c in cols]
+        offset = round(self.tree.xview()[0] * sum(widths))
+        out, x = [], -offset
+        for c, w in zip(cols, widths):
+            out.append((c, x, x + w))
+            x += w
+        return out
+
+    def column_at(self, x):
+        return next((c for c, l, r in self.edges() if l <= x < r), "")
+
+    def on_motion(self, e):
+        iid = self.tree.identify_row(e.y)
+        col = self.column_at(e.x) if iid else ""
+        key = (iid, col) if iid and col else None
+        if key == self.key:
+            return
+        self.hide()
+        self.key = key
+        if key:
+            self.text = self.fn(iid, col)
+            if self.text:
+                self.job = self.tree.after(self.delay, self.show_now)
+
+    def show_now(self):
+        self.job = None
+        if not self.key or not self.text:
+            return
+        box = self.tree.bbox(*self.key)
+        if not box:
+            return
+        x, y, w, h = box
+        self.tip = show_tip(self.tree, self.app, self.text, self.tree.winfo_rootx() + x, self.tree.winfo_rooty() + y, w, h)
+
+    def hide(self):
+        if self.job:
+            self.tree.after_cancel(self.job)
+            self.job = None
+        if self.tip:
+            self.tip.destroy()
+            self.tip = None
+        self.key = None
 
 
 class IconButton(tk.Canvas):
@@ -2347,6 +2415,9 @@ class LimitDialog(tk.Toplevel):
 
 class AntigravityGateApp(tk.Tk):
     def __init__(self):
+        # Janelas do app já fechadas (nos testes, várias por processo) são lixo cíclico com objetos Tk. Se o coletor rodar
+        # dentro da thread de leitura, o Tk aborta ("async handler deleted by the wrong thread"): coleta aqui, na principal.
+        gc.collect()
         super().__init__()
         self.title("AntigravityGate")
         self._win_job = None
@@ -2807,6 +2878,12 @@ class AntigravityGateApp(tk.Tk):
         hscroll.pack(side=tk.BOTTOM, fill=tk.X)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
+        # Título logo depois de Projeto / Sessão; os valores das linhas continuam na ordem de `columns` (COL_*).
+        # Larguras fixas (sem stretch): o Tk encolhia as colunas esticáveis sozinho e desfazia o ajuste do usuário.
+        for c in ("#0",) + columns:
+            self.tree.column(c, stretch=False)
+        self.tree["displaycolumns"] = ("col_title", "col_date", "col_ctx", "col_steps", "col_fail", "col_size", "col_agent", "col_uuid")
+        self.cell_tips = CellTooltip(self.tree, self, self.tree_cell_tip)
         self.tree.bind("<Double-1>", self.on_double_click)
         self.tree.bind("<Button-3>", self.show_menu)
         self.tree.bind("<<TreeviewSelect>>", lambda e: self.update_actions())
@@ -2919,6 +2996,8 @@ class AntigravityGateApp(tk.Tk):
             reason = "Exportação em andamento."
         elif not first_session:
             reason = "Selecione uma sessão na tabela."
+        elif len(self.selected_session_ids()) > 1:
+            reason = "Selecione uma sessão só: exportação e dossiê são de uma conversa por vez."
         elif not fpath:
             reason = "Esta sessão não tem arquivo de banco nesta fonte."
         else:
@@ -2988,11 +3067,41 @@ class AntigravityGateApp(tk.Tk):
         return self.tree.item(iid, 'values')[COL_UUID]
 
     def on_double_click(self, event):
+        """Divisor do cabeçalho: ajusta a largura da coluna ao conteúdo. Sessão: abre o painel de detalhes."""
+        x = getattr(event, "x", 0)
+        if self.tree.identify_region(x, event.y) == "separator":
+            # coluna cuja borda direita está mais perto do clique
+            col, _l, right = min(self.cell_tips.edges(), key=lambda e: abs(e[2] - x))
+            if abs(right - x) <= self.px(8):
+                self.autofit_column(col)
+            return "break"
         iid = self.tree.identify_row(event.y)
         if not self.is_session(iid):
             return  # cabeçalho, área vazia ou pasta de projeto: o duplo clique padrão só expande/recolhe
         self.tree.selection_set(iid)
-        self.open_selected()
+        self.open_details()
+
+    def open_details(self):
+        """Abre o painel de detalhes (se estava recolhido) para a sessão selecionada."""
+        if not self.settings.get('details', True):
+            self.toggle_details()
+        self.update_details()
+
+    def autofit_column(self, col):
+        """Largura da coluna = maior texto (cabeçalho ou células) + folga, entre 50 e 900 px escalados."""
+        pad = self.px(24)
+        width = self.f_bold.measure(self.tree.heading(col, "text")) + pad
+        def walk(parent, depth):
+            nonlocal width
+            for iid in self.tree.get_children(parent):
+                if col == "#0":
+                    w = self.f_ui.measure(self.tree.item(iid, "text")) + self.px(20) * (depth + 1) + self.px(16) + pad
+                else:
+                    w = self.f_ui.measure(str(self.tree.set(iid, col))) + pad
+                width = max(width, w)
+                walk(iid, depth + 1)
+        walk("", 0)
+        self.tree.column(col, width=max(self.px(50), min(width, self.px(900))))
 
     def selected_cids(self):
         """UUIDs das sessões selecionadas; selecionar uma pasta de projeto vale para todas as sessões dela."""
@@ -3099,6 +3208,10 @@ class AntigravityGateApp(tk.Tk):
             v = self.themed_widget(tk.Label(self.d_facts, font=self.f_ui, anchor="w", justify=tk.LEFT), bg="panel", fg="fg")
             v.grid(row=r, column=c + 1, sticky="w", pady=1)
             self.fact_vals[key] = v
+        self.fact_tips = {}
+        for key, col in (("fails", "col_fail"), ("ws", "ws"), ("handoff", "#0"), ("state", "#0")):
+            self.fact_tips[key] = Tooltip(self.fact_vals[key], self, lambda c=col: (self.cell_tip(self.selected_row(), c) if self.selected_row() else ""))
+        Tooltip(self.gauge, self, lambda: (self.cell_tip(self.selected_row(), "col_ctx") if self.selected_row() else ""))
 
         acts = self.themed_widget(tk.Frame(body), bg="panel")
         acts.pack(side=tk.RIGHT, fill=tk.Y)
@@ -3135,6 +3248,55 @@ class AntigravityGateApp(tk.Tk):
         ids = self.selected_session_ids()
         if ids:
             self.open_folder(ids[0])
+
+    def cell_tip(self, r, col):
+        """Dica de uma célula ou de um campo do painel ('ws'): explica o alerta e o que fazer. '' quando não há o que dizer."""
+        if col == "col_ctx":
+            if not r.get('ctx'):
+                return "Sem dado de contexto nesta sessão."
+            level = ctx_level(r['ctx'])
+            text = (f"Contexto: {r['ctx']:,} tokens ({self.level_text(r['ctx'])}).".replace(",", ".")
+                    + f" Atenção a partir de {fmt_tokens(CONTEXT_LIMITS['attention'])}, crítico a partir de "
+                      f"{fmt_tokens(CONTEXT_LIMITS['critical'])} (botão Limites).")
+            if level == 1:
+                text += " Hora de preparar a retomada: gere o Dossiê."
+            elif level == 2:
+                text += " Retome já numa sessão nova (Dossiê ou Auto-Run) para não perder qualidade."
+            return text
+        if col == "col_fail":
+            n = r.get('failures') or 0
+            if not n:
+                return ""
+            return (f"{n} passo(s) de ferramenta terminaram sem sucesso (status diferente de 3). Os detalhes estão no Exportar diálogo "
+                    "(passos marcados com ⚠) e no Dossiê, seção Falhas de ferramenta. O significado exato dos status 6 e 7 não está confirmado.")
+        if col == "#0":
+            bits = []
+            if self.handoffs.get(r['cid']):
+                bits.append(f"Retomada pelo Auto-Run na sessão nova {self.handoffs[r['cid']][:8]}.")
+            if r.get('running'):
+                bits.append("Em execução no Antigravity agora.")
+            if r.get('killed'):
+                bits.append("Encerrada à força no Antigravity.")
+            return " ".join(bits)
+        if col == "col_title":
+            return r['title'] if len(r.get('title') or "") > 40 else ""
+        if col == "ws":
+            if r.get('ws_ok') is False:
+                return "A pasta do workspace não existe mais neste computador: o Auto-Run não vai poder anexá-la ao agy."
+            if r.get('ws_ok'):
+                return f"Pasta encontrada neste computador: {r['workspace']}"
+            return ""
+        return ""
+
+    def tree_cell_tip(self, iid, col):
+        if not self.is_session(iid):
+            return ""
+        r = self.row_by_cid.get(self.cid_of(iid))
+        return self.cell_tip(r, col) if r else ""
+
+    def selected_row(self):
+        ids = self.selected_session_ids()
+        return self.row_by_cid.get(self.cid_of(ids[0])) if len(ids) == 1 else None
 
     def level_text(self, ctx):
         return {0: "normal", 1: "atenção", 2: "crítico"}[ctx_level(ctx)]
