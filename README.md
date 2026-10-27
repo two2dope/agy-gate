@@ -46,7 +46,9 @@ São 24 conjuntos (leitura, exportação, Auto-Run com `agy` simulado, salvaguar
 ## Gerar o `.exe` e publicar uma versão
 
 - A cada push em `main`, o GitHub Actions monta o `.exe`, abre-o em modo de autoteste e guarda o artefato (30 dias).
-- Para publicar uma versão: suba o número em `__version__` (`AntigravityGate.py`), registre no `CHANGELOG.md`, faça o commit em `main` e crie a tag `vX.Y.Z` com o mesmo número (por `git tag` e `git push --tags`, ou pela tela **Releases > Draft a new release**, digitando a tag e escolhendo *Create new tag on publish*). A Release recebe o `.exe`, o SHA-256 e as notas do CHANGELOG sozinha. Se a tag não bater com `__version__`, o build falha de propósito.
+- Os testes (`tests/run_all.sh`) rodam primeiro no GitHub; se algum falhar, o `.exe` não é montado.
+- Para publicar uma versão: suba o número em `__version__` (`AntigravityGate.py`), registre a seção `## [X.Y.Z]` no `CHANGELOG.md`, faça o commit em `main` e envie a tag: `git tag vX.Y.Z` e `git push --tags`. O workflow cria a Release como **rascunho**, anexa o `.exe` e o SHA-256, confere e só então publica. Se a tag não bater com `__version__`, ou faltar a seção no CHANGELOG, nada é publicado.
+- Pela tela (**Releases > Draft a new release**, *Create new tag on publish*) também funciona, mas a Release fica pública **antes** do `.exe` (alguns minutos) e, se a versão não bater, fica sem ele: apague-a nesse caso. Suas notas e marcações da tela são mantidas; o workflow só acrescenta o `.exe` e o SHA-256.
 - Local: `packaging\build_exe.bat`.
 
 ## Estrutura
