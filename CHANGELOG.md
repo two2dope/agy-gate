@@ -7,9 +7,14 @@ Formato: [Versionamento Semântico](https://semver.org/lang/pt-BR/). Enquanto a 
 Alerta de contexto em destaque. Entra no lugar do item 8 do backlog (divisor de altura entre a tabela e os detalhes).
 
 ### Alterado
-- **Faixa de alerta em dois níveis.** Crítico: fundo vermelho do tema, forte, com texto claro, ícone grande, título "CRÍTICO · N sessão(ões) acima do nível crítico" e o que fazer na linha de baixo. Atenção (novo): faixa âmbar suave, "ATENÇÃO · N sessão(ões) acima do nível de atenção", que só aparece quando não há críticas, com o botão `Ver em atenção`. Barra colorida à esquerda nos dois níveis.
+- **Dica do contexto como janela de alerta.** Ao parar o mouse sobre o contexto de uma sessão em atenção ou crítica (na tabela ou no medidor do painel), a dica vem com as cores do nível (vermelho forte ou âmbar), ícone grande e título "CRÍTICO" ou "ATENÇÃO". Sessões no nível normal continuam com a dica comum.
+- **Faixa de alerta em dois níveis.** Crítico: fundo vermelho do tema, forte, com texto claro, ícone grande, título "CRÍTICO · N sessão(ões) acima do nível crítico" e o que fazer na linha de baixo. Atenção (novo): faixa âmbar suave, "ATENÇÃO · N sessão(ões) acima do nível de atenção", que só aparece quando não há críticas, com o botão `Ver em atenção`. Barra colorida à esquerda nos dois níveis. Como antes, a faixa some enquanto há busca ou filtro de selo.
 - Dispensar vale para o nível exibido: a faixa volta se mudar a fonte ou os limites.
-- Contraste das duas faixas conferido nos 8 temas (texto ≥ 4,5:1; ícone e barra ≥ 3:1). O vermelho escurece o mínimo necessário para o texto claro passar.
+- Contraste das duas faixas (e das dicas de alerta) conferido nos 8 temas (texto ≥ 4,5:1; ícone e barra ≥ 3:1). O vermelho escurece o mínimo necessário para o texto claro passar.
+
+### Corrigido
+- **Janelas de andamento do Auto-Run.** Rodar um segundo Auto-Run com a janela do anterior aberta criava outra janela, e o Fechar e o X da antiga passavam a agir sobre a nova (a antiga não fechava, e podia até cancelar o lote novo). Agora fica uma janela por vez (a anterior fecha) e cada uma age só sobre si.
+- A janela de andamento abria atrás da principal. Agora fica sempre acima dela (`transient`) e recebe o foco ao abrir.
 
 ## [1.0.1] - 2026-10-27
 

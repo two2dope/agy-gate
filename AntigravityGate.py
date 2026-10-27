@@ -1900,9 +1900,10 @@ def icon_layers(name, t, handoff=False):
 
 
 class Tooltip:
-    def __init__(self, widget, app, text_fn, delay=450):
+    def __init__(self, widget, app, text_fn, delay=450, level_fn=None):
         self.w, self.app, self.fn, self.delay = widget, app, text_fn, delay
         self.tip = self.job = None
+        self.level_fn = level_fn  # nível de alerta da dica (0, 1, 2); None = dica comum
         widget.bind("<Enter>", self._enter, add="+")
         widget.bind("<Leave>", self._leave, add="+")
         widget.bind("<ButtonPress>", self._leave, add="+")
@@ -1926,17 +1927,42 @@ class Tooltip:
         if not text:
             return
         w = self.w
-        self.tip = show_tip(w, self.app, text, w.winfo_rootx(), w.winfo_rooty(), w.winfo_width(), w.winfo_height())
+        level = self.level_fn() if self.level_fn else 0
+        self.tip = show_tip(w, self.app, text, w.winfo_rootx(), w.winfo_rooty(), w.winfo_width(), w.winfo_height(), level)
 
 
-def show_tip(owner, app, text, ax, ay, aw, ah):
-    """Mostra uma dica sob o retângulo (ax, ay, aw, ah) da tela, dentro da janela de `owner` e do monitor. Devolve o Toplevel."""
+ALERT_TITLE = {1: "ATENÇÃO", 2: "CRÍTICO"}
+
+
+def alert_glyph(app):
+    """Ícone de alerta no modo de ícones atual: Warning do Segoe MDL2, ⚠ Unicode ou ‼ sem ícones. (texto, fonte)."""
+    if app.icon_mode == "none":
+        return "‼", app.f_title
+    return ICONS["warn"][0 if app.icon_mode == "mdl2" else 1], app.f_banner_icon
+
+
+def show_tip(owner, app, text, ax, ay, aw, ah, level=0):
+    """Mostra uma dica sob o retângulo (ax, ay, aw, ah) da tela, dentro da janela de `owner` e do monitor. Devolve o Toplevel.
+    `level` 1 ou 2 (contexto em atenção ou crítico) vira janela de alerta: cores da faixa, ícone grande e título."""
     t = app.t
     tip = tk.Toplevel(owner)
     tip.wm_overrideredirect(True)
     tip.withdraw()  # mede antes de mostrar: perto da borda direita a dica é puxada para dentro da janela
-    tk.Label(tip, text=text, bg=t['panel2'], fg=t['fg'], font=app.f_small, padx=9, pady=5, justify=tk.LEFT,
-             highlightthickness=1, highlightbackground=t['border'], wraplength=app.px(340)).pack()
+    if level in ALERT_TITLE:
+        c = banner_colors(t, level)
+        box = tk.Frame(tip, bg=c['bg'], highlightthickness=1, highlightbackground=c['stripe'])
+        box.pack()
+        tk.Frame(box, bg=c['stripe'], width=app.px(5)).pack(side=tk.LEFT, fill=tk.Y)
+        glyph, font = alert_glyph(app)
+        tk.Label(box, text=glyph, font=font, bg=c['bg'], fg=c['icon']).pack(side=tk.LEFT, anchor="n", padx=(app.px(10), app.px(8)), pady=app.px(6))
+        body = tk.Frame(box, bg=c['bg'])
+        body.pack(side=tk.LEFT, padx=(0, app.px(12)), pady=app.px(6))
+        tk.Label(body, text=ALERT_TITLE[level], font=app.f_bold, bg=c['bg'], fg=c['fg'], anchor="w").pack(fill=tk.X)
+        tk.Label(body, text=text, font=app.f_small, bg=c['bg'], fg=c['fg'], justify=tk.LEFT, anchor="w",
+                 wraplength=app.px(340)).pack(fill=tk.X)
+    else:
+        tk.Label(tip, text=text, bg=t['panel2'], fg=t['fg'], font=app.f_small, padx=9, pady=5, justify=tk.LEFT,
+                 highlightthickness=1, highlightbackground=t['border'], wraplength=app.px(340)).pack()
     tip.update_idletasks()
     top = owner.winfo_toplevel()
     win = (top.winfo_rootx(), top.winfo_rooty(), top.winfo_width(), top.winfo_height())
@@ -1949,8 +1975,8 @@ def show_tip(owner, app, text, ax, ay, aw, ah):
 class CellTooltip:
     """Dica por célula da tabela: ao parar o mouse sobre uma célula com alerta (contexto, falhas, retomada, título longo)."""
 
-    def __init__(self, tree, app, text_fn, delay=450):
-        self.tree, self.app, self.fn, self.delay = tree, app, text_fn, delay
+    def __init__(self, tree, app, text_fn, delay=450, level_fn=None):
+        self.tree, self.app, self.fn, self.delay, self.level_fn = tree, app, text_fn, delay, level_fn
         self.key = self.tip = self.job = None
         self.text = ""
         tree.bind("<Motion>", self.on_motion, add="+")
@@ -1996,7 +2022,8 @@ class CellTooltip:
         if not box:
             return
         x, y, w, h = box
-        self.tip = show_tip(self.tree, self.app, self.text, self.tree.winfo_rootx() + x, self.tree.winfo_rooty() + y, w, h)
+        level = self.level_fn(*self.key) if self.level_fn else 0
+        self.tip = show_tip(self.tree, self.app, self.text, self.tree.winfo_rootx() + x, self.tree.winfo_rooty() + y, w, h, level)
 
     def hide(self):
         if self.job:
@@ -2849,8 +2876,8 @@ class AntigravityGateApp(tk.Tk):
         self.banner.configure(bg=c['bg'], highlightbackground=c['stripe'], highlightcolor=c['stripe'])
         self.banner_stripe.configure(bg=c['stripe'])
         self.banner_text.configure(bg=c['bg'])
-        glyph = "‼" if self.icon_mode == "none" else ICONS["warn"][0 if self.icon_mode == "mdl2" else 1]
-        self.banner_icon.configure(text=glyph, bg=c['bg'], fg=c['icon'], font=self.f_title if self.icon_mode == "none" else self.f_banner_icon)
+        glyph, font = alert_glyph(self)
+        self.banner_icon.configure(text=glyph, bg=c['bg'], fg=c['icon'], font=font)
         for lab in (self.banner_msg, self.banner_detail):
             lab.configure(bg=c['bg'], fg=c['fg'])
         view = self.btn["banner_view"]
@@ -3064,7 +3091,7 @@ class AntigravityGateApp(tk.Tk):
         for c in ("#0",) + columns:
             self.tree.column(c, stretch=False)
         self.tree["displaycolumns"] = ("col_title", "col_date", "col_ctx", "col_steps", "col_fail", "col_size", "col_agent", "col_uuid")
-        self.cell_tips = CellTooltip(self.tree, self, self.tree_cell_tip)
+        self.cell_tips = CellTooltip(self.tree, self, self.tree_cell_tip, level_fn=self.tree_cell_level)
         self.tree.bind("<Double-1>", self.on_double_click)
         self.tree.bind("<Button-3>", self.show_menu)
         for seq in ("<Shift-F10>", "<App>"):
@@ -3409,7 +3436,8 @@ class AntigravityGateApp(tk.Tk):
         self.fact_tips = {}
         for key, col in (("fails", "col_fail"), ("ws", "ws"), ("handoff", "#0"), ("state", "#0")):
             self.fact_tips[key] = Tooltip(self.fact_vals[key], self, lambda c=col: (self.cell_tip(self.selected_row(), c) if self.selected_row() else ""))
-        Tooltip(self.gauge, self, lambda: (self.cell_tip(self.selected_row(), "col_ctx") if self.selected_row() else ""))
+        Tooltip(self.gauge, self, lambda: (self.cell_tip(self.selected_row(), "col_ctx") if self.selected_row() else ""),
+                level_fn=lambda: self.cell_level(self.selected_row(), "col_ctx"))
 
         acts = self.themed_widget(tk.Frame(body), bg="panel")
         acts.pack(side=tk.RIGHT, fill=tk.Y)
@@ -3495,6 +3523,14 @@ class AntigravityGateApp(tk.Tk):
             return ""
         r = self.row_by_cid.get(self.cid_of(iid))
         return self.cell_tip(r, col) if r else ""
+
+    @staticmethod
+    def cell_level(r, col):
+        """Nível de alerta da dica (0 comum, 1 atenção, 2 crítico): só a de contexto vira janela de alerta."""
+        return ctx_level(r['ctx']) if r and col == "col_ctx" and r.get('ctx') else 0
+
+    def tree_cell_level(self, iid, col):
+        return self.cell_level(self.row_by_cid.get(self.cid_of(iid)), col) if self.is_session(iid) else 0
 
     def selected_row(self):
         ids = self.selected_session_ids()
@@ -4057,20 +4093,29 @@ class AntigravityGateApp(tk.Tk):
         self.auto_thread.start()
 
     def open_autorun_window(self, n, dry_run, model=""):
+        if self.auto_win:  # janela de um lote anterior ainda aberta (já no "Fim."): uma por vez
+            try:
+                self.auto_win[0].destroy()
+            except tk.TclError:
+                pass
+            self.auto_win = None
         t = self.t
         win = tk.Toplevel(self)
         win.title("Auto-Run — " + ("simulação" if dry_run else "executando"))
+        win.transient(self)  # sempre acima da janela principal (abria atrás dela)
         win.configure(bg=t['panel'])
         mono = next((f for f in ("Consolas", "DejaVu Sans Mono") if f in self.families), "TkFixedFont")
         txt = tk.Text(win, wrap=tk.WORD, state=tk.DISABLED, font=(mono, 9), bg=t['panel'], fg=t['fg'], insertbackground=t['fg'],
                       selectbackground=t['sel_bg'], selectforeground=t['sel_fg'], relief=tk.FLAT, highlightthickness=1,
                       highlightbackground=t['border'], highlightcolor=t['border'], padx=self.px(8), pady=self.px(6))
         txt.pack(fill=tk.BOTH, expand=True, padx=self.px(10), pady=self.px(10))
-        btn = IconButton(win, self, "", "Cancelar", self.cancel_autorun, bg_token="panel")
+        btn = IconButton(win, self, "", "Cancelar", lambda: self.close_autorun(win), bg_token="panel")
         btn.pack(pady=(0, self.px(10)))
-        win.protocol("WM_DELETE_WINDOW", self.cancel_autorun)  # X = Cancelar (lote rodando) ou Fechar (depois do Fim)
+        win.protocol("WM_DELETE_WINDOW", lambda: self.close_autorun(win))  # X = Cancelar (lote rodando) ou Fechar (depois do Fim)
         place_over(win, self, size=(self.px(780), self.px(420)))
         self.auto_win = (win, txt, btn)
+        win.lift()
+        win.focus_force()
         mode = 'simulação (só dossiês)' if dry_run else 'agy --mode plan, modelo ' + (model or 'padrão do agy')
         self.append_auto(f"{n} sessão(ões) na fila. Modo: {mode}.")
 
@@ -4090,6 +4135,17 @@ class AntigravityGateApp(tk.Tk):
         elif self.auto_win:
             self.auto_win[0].destroy()
             self.auto_win = None
+
+    def close_autorun(self, win):
+        """Botão e X de uma janela de andamento: agem só sobre ela. A atual cancela o lote (ou fecha depois do Fim);
+        uma antiga que tenha ficado aberta apenas fecha, sem tocar no lote em curso."""
+        if self.auto_win and self.auto_win[0] is win:
+            self.cancel_autorun()
+        else:
+            try:
+                win.destroy()
+            except tk.TclError:
+                pass
 
     def on_auto_event(self, kind, payload):
         if kind == 'auto_log':

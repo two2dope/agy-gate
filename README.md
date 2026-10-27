@@ -59,7 +59,8 @@ São 25 conjuntos (leitura, exportação, Auto-Run com `agy` simulado, salvaguar
 | `tests/` | testes e o `agy` simulado |
 | `tools/` | scripts de inspeção da estrutura dos bancos (sem conteúdo) |
 | `docs/ESTADO_DO_PROJETO.md` | estado do projeto, decisões, formato dos bancos, contrato do `agy` |
-| `reviews/` | auditoria do script original |
+| `docs/PACOTE_VISUAL_1.1.md` | avaliação dos mockups da interface nova e plano da 1.1 |
+| `reviews/` | auditorias (script original, v0.9.0 e v1.0.0) |
 | `packaging/`, `.github/workflows/` | geração do `.exe` |
 
 Para retomar o trabalho, leia a seção "Snapshot" de `docs/ESTADO_DO_PROJETO.md`.

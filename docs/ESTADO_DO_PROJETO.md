@@ -6,8 +6,8 @@ Atualizado em 2026-10-27, versão **1.0.2** (branch `claude/funny-tesla-4w2i3q`,
 
 | | |
 |---|---|
-| **Feito** | 1.0.0 publicada. Antigravity restaurado no Windows (27/10: conversas de volta no remoto `dev-thomaz` e na busca do VS Code). Auditoria `reviews/audit-full-v1.0.0.md`. **Na branch:** 1.0.1 (crítico C1: retomada no projeto de origem) e 1.0.2 (faixa de alerta em dois níveis), com testes |
-| **Faltando** | Uma retomada real conferida no remoto; ver a faixa nova no Windows (ícone e cores). Não verificado: escala 125–150%, status 6 e 7 |
+| **Feito** | 1.0.0 publicada. Antigravity restaurado no Windows (27/10: conversas de volta no remoto `dev-thomaz` e na busca do VS Code). Auditoria `reviews/audit-full-v1.0.0.md`. **Na branch:** 1.0.1 (crítico C1: retomada no projeto de origem; simulação conferida no Windows: `d:\Segurança`, `SMT1_WATCHDOG (--project)`) e 1.0.2 (faixa e dica de contexto como alerta em dois níveis; janelas do Auto-Run), com testes. Mockups do pacote visual avaliados: `docs/PACOTE_VISUAL_1.1.md` |
+| **Faltando** | Uma retomada real (fora da simulação) conferida no remoto; ver no Windows a dica e a faixa de alerta (ícone e cores). Decisões da 1.1 (caminho, aba "Em Revisão", conjuntos de ícones). Não verificado: escala 125–150%, status 6 e 7 |
 | **Próximo passo único** | Com o `.exe` da branch: 1 retomada real (simulação primeiro) e conferir no `dev-thomaz` se a sessão nova aparece **dentro** do projeto de origem; se sim, merge e tag `v1.0.2` |
 
 ## Pendências (backlog pós-1.0)
@@ -15,7 +15,7 @@ Atualizado em 2026-10-27, versão **1.0.2** (branch `claude/funny-tesla-4w2i3q`,
 Em ordem de prioridade. Cada item vira uma 1.0.x com teste; nada entra sem decidir o que sai.
 
 0. **Auditoria v1.0.0, crítico C2:** junctions (`antigravity-cli`, `antigravity-ide` → `antigravity`) aparecem como fontes "Backup/outros", com os dados vivos. Corrigir com `realpath` em `discover_sources`. Demais recomendações (R2–R17) na auditoria.
-1. **1.1 — pacote visual** (decidido em 27/10; escopo maior, a definir com as opções de interface que o usuário vai fornecer para avaliar viabilidade). Já entra:
+1. **1.1 — pacote visual** (decidido em 27/10). Mockups recebidos e avaliados em `docs/PACOTE_VISUAL_1.1.md` (recomendação: evolução em Tk, 4 marcos; 3 decisões pendentes do usuário). Já entra:
    - **Ícone autoral do app** (`.ico` multi-tamanho 16–256 px para o `.exe`, a barra de tarefas e a barra de título). Hoje o `.exe` usa o ícone padrão do PyInstaller e a janela usa a pena do Tk. Fazer: arte própria → `packaging/app.ico` → `--icon` no PyInstaller → `iconbitmap`/`iconphoto` nas janelas.
    - **Mais 3 conjuntos de ícones, com as fontes reais dentro do `.exe`:** Font Awesome Free (Solid, SIL OFL 1.1), Bootstrap Icons (MIT) e Material Icons (Apache 2.0), além dos atuais (Segoe MDL2, Unicode, sem ícones). Cerca de +1 MB no `.exe`; créditos de licença no Sobre; registro privado da fonte no Windows (`AddFontResourceExW`, `FR_PRIVATE`) e `--add-data` no PyInstaller. As três fontes podem ser baixadas do GitHub (Bootstrap vem em WOFF: converter para TTF). Conferir cada glifo renderizando antes de entregar.
 2. Validar no uso real o fluxo completo (curadoria → dossiê → Auto-Run). Desbloqueado: as sessões foram restauradas no Antigravity em 27/10.
@@ -35,7 +35,7 @@ Fora do alcance do app: o editor do Antigravity abre sozinho a cada chamada do `
 - **Auditoria full spectrum** do app contra o que a restauração revelou: `reviews/audit-full-v1.0.0.md`. Dois críticos: C1 (retomada fora do projeto, corrigido na 1.0.1) e C2 (junctions como "Backup", no backlog).
 - **Fatos do ambiente real** que os testes não cobriam: junctions para a pasta mestra; JSON de projeto com BOM; a barra lateral do VS Code (extensão 1.9.0 + `agy` 1.4.7) só lista conversas abertas, enquanto a busca 🔍 e o remoto listam tudo; três motores escrevendo na mesma pasta (daemon, VS Code, Auto-Run).
 - Testes da 1.0.1 rodados localmente com Python 3.12 e **Tk 9.0**: 24 de 25 passam. `test_theme` falha igual antes e depois da mudança (largura de fonte do Tk 9; o CI usa Tk 8.6). No CI (Tk 8.6), a 1.0.1 passou nos 25 e o `.exe` foi montado e autotestado (execução 40465486627).
-- **1.0.2** (pedido do usuário, mesma sessão): faixa de alerta em dois níveis no lugar do item 8 do backlog. Ícones adicionais (Font Awesome, Bootstrap, Material, com as fontes reais) ficaram para a 1.1 "pacote visual", junto com o ícone autoral; o usuário vai fornecer opções de interface para avaliar viabilidade.
+- **1.0.2** (pedido do usuário, mesma sessão): alerta de contexto em dois níveis no lugar do item 8 do backlog. O pedido era para a **dica** do contexto (a "janela de alerta" ao passar o mouse); a primeira entrega mudou só a faixa, e a correção levou o mesmo estilo à dica. Também corrigidas as janelas do Auto-Run (duas abertas se travavam; abriam atrás da principal). Ícones adicionais (Font Awesome, Bootstrap, Material, com as fontes reais) ficaram para a 1.1 "pacote visual", junto com o ícone autoral.
 - Neste ambiente de teste o Tk só enxerga 8 fontes do X, sem símbolos: os ícones (botões e faixa) não aparecem nas capturas de Linux. Não é defeito do app.
 
 ## Registro da sessão de 2026-10-26/27 (0.9.0 → 1.0.0)
@@ -140,6 +140,7 @@ Usado pelo Auto-Run:
 ## Auto-Run (implementado)
 
 - Botão `⚡ Auto-Run`: pega as sessões **aprovadas** da fonte aberta, pede confirmação (simulação marcada por padrão) e, para cada uma, gera o dossiê em `%LOCALAPPDATA%\AntigravityGate\handoffs` e abre uma sessão nova com `agy --print ... --mode plan --output-format json`.
+- Janela de andamento: uma por vez (um novo Auto-Run fecha a do anterior), sempre acima da principal (`transient`), e o Fechar ou o X de cada janela agem só sobre ela (`close_autorun`).
 - Erro 429 interrompe o lote e mostra o reset. Três falhas seguidas interrompem. Sessões vazias criadas por tentativas com erro vão para arquivadas. Retomadas concluídas aparecem como `↪ retomada <id>` e ficam gravadas em `gate_state.db`.
 - **Só foi testado com um `agy` simulado** que imita a saída real do erro de cota. A saída de sucesso real do `agy` ainda não foi vista: o código lê `status`, `conversation_id`, `response` e `error`, e aceita variações, mas isso é **não verificado**.
 - Variável `AGY_EXE` aponta para outro `agy.exe` se ele não estiver no PATH.
@@ -176,6 +177,7 @@ Usado pelo Auto-Run:
 - Os valores das faixas são **heurísticas**, não medidas: a degradação real depende do modelo e da tarefa **[Não verificado]** para o seu modelo. Nas suas sessões reais, o contexto chegou a ~201 mil e ~213 mil tokens.
 - A janela mostra, antes de aplicar, quantas sessões carregadas ficariam em atenção e críticas.
 - **Atenção:** linha em âmbar, `⚠`. **Crítico:** linha em vermelho, `‼`.
+- **Dica do contexto como janela de alerta (1.0.2):** na tabela e no medidor do painel, a dica de uma sessão em atenção ou crítica usa as cores da faixa, ícone grande e o título "ATENÇÃO" ou "CRÍTICO" (`show_tip(..., level)`, `cell_level`). Nível normal: dica comum.
 - **Faixa de alerta acima da tabela (1.0.2), em dois níveis.** Crítico: fundo vermelho forte do tema, texto claro, ícone grande, "CRÍTICO · N sessão(ões)…" e o que fazer; botões `Ver críticas` e `Dispensar`. Atenção: faixa âmbar suave, só quando não há críticas, com `Ver em atenção` e `Dispensar`. A faixa não conta sessões arquivadas. Dispensar vale para o nível exibido; a faixa volta se você mudar o limite ou a fonte. Cores em `banner_colors` (o vermelho escurece o mínimo para o texto claro ter 4,5:1); o `test_theme` confere o contraste nos 8 temas. Ícone: `Warning` do Segoe MDL2 (`E7BA`), `⚠` no modo Unicode e `‼` sem ícones. **Não visto num Windows.**
 - Selos no rodapé: `N em atenção` e `N críticas`. O dossiê indica o nível no cabeçalho (`tokens (atenção)` ou `(crítico)`).
 - Preferência salva em `settings.json`. A variável `AGY_ROT_TOKENS` (antiga) ainda vale: define a atenção, e o crítico fica 1,5 vez maior.

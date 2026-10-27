@@ -85,6 +85,19 @@ assert app.banner_level == 2 and app.banner_msg.cget("text").startswith("CRÍTIC
 assert app.banner_msg.cget("fg") == "#ffffff" and app.btn["banner_view"].text == "Ver críticas" and app.banner_detail.cget("text")
 vals = lambda n: app.tree.item(iid(app, n), "values")[2]
 assert vals(2).endswith("⚠") and vals(3).endswith("‼") and vals(1) == G.ctx_label(90000)
+# dica do contexto como janela de alerta (1.0.2): crítico e atenção com as cores da faixa, ícone e título; normal segue comum
+def walk(w): return [w] + [d for c in w.winfo_children() for d in walk(c)]
+def ctx_tip(n):
+    app.cell_tips.hide(); key = (iid(app, n), "col_ctx")
+    app.cell_tips.key, app.cell_tips.text = key, app.tree_cell_tip(*key)
+    app.cell_tips.show_now(); app.update()
+    ws = walk(app.cell_tips.tip)[1:]
+    return ws[0].cget("bg"), [w.cget("text") for w in ws if isinstance(w, G.tk.Label)]
+bg, texts = ctx_tip(3); assert bg == G.banner_colors(app.t, 2)['bg'] and "CRÍTICO" in texts and any("260.000 tokens" in x for x in texts), (bg, texts)
+bg, texts = ctx_tip(2); assert bg == G.banner_colors(app.t, 1)['bg'] and "ATENÇÃO" in texts, (bg, texts)
+bg, texts = ctx_tip(1); assert bg == app.t['panel2'] and not {"CRÍTICO", "ATENÇÃO"} & set(texts), (bg, texts)
+app.cell_tips.hide()
+assert app.cell_level(app.row_by_cid[U(3)], "col_ctx") == 2 and app.cell_level(app.row_by_cid[U(3)], "col_fail") == 0
 # arquivar uma crítica: sai do aviso, fica esmaecida, o selo continua contando o nível
 app.tree.selection_set(iid(app, 4)); app.mark_selected("arquivada"); app.update()
 assert tags(4) == ("st_arquivada",) and "1 sessão(ões) acima" in app.banner_msg.cget("text")
