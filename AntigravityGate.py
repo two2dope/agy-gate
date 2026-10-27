@@ -26,7 +26,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from tkinter import font as tkfont
 
-__version__ = "1.0.0"  # ver CHANGELOG.md
+__version__ = "1.0.1"  # ver CHANGELOG.md
 __build__ = "código-fonte"  # o CI troca pelo commit e pela data da montagem do .exe
 APP_AUTHOR = "Thominha"
 APP_EMAIL = "twoo2dope@gmail.com"
@@ -979,14 +979,52 @@ def uri_to_path(uri, nt=None):
     return path
 
 
+def gate_owned(path):
+    """True para pastas do próprio AntigravityGate (dados em LOCALAPPDATA, handoffs ou a pasta do .exe).
+    Não são workspace de projeto: as retomadas até a 1.0.0 gravaram essas pastas como workspace da sessão nova."""
+    real = os.path.normcase(os.path.realpath(path))
+    for own in (LOG_DIR, HANDOFF_DIR):
+        own = os.path.normcase(os.path.realpath(own))
+        if real == own or real.startswith(own.rstrip(os.sep) + os.sep):
+            return True
+    return os.path.isfile(os.path.join(path, "AntigravityGate.exe"))
+
+
 def workspace_dirs(uris):
-    """Pastas existentes citadas em workspace_uris (file:///...)."""
+    """Pastas existentes citadas em workspace_uris (file:///...), sem as pastas do próprio app."""
     out = []
     for uri in re.findall(r"file://[^\s,;\"'\[\]<>]+", uris or ""):  # URIs vêm codificadas (%20), às vezes dentro de uma lista JSON
         path = uri_to_path(uri)
-        if os.path.isdir(path) and path not in out:
+        if os.path.isdir(path) and path not in out and not gate_owned(path):
             out.append(path)
     return out[:3]
+
+
+NO_PROJECT_IDS = ("outside-of-project", "default-cli-project")
+
+
+def project_target(pid):
+    """(valor para --project, pastas existentes do projeto) a partir de config/projects.
+    Sem --project o agy põe toda sessão do CLI em "CLI Project", qualquer que seja a pasta (CHANGELOG do agy 1.0.12).
+    Só devolve o id de um projeto que existe em config/projects: um id desconhecido faria o agy falhar."""
+    if not pid or pid in NO_PROJECT_IDS:
+        return "", []
+    for p_file in glob.glob(os.path.join(PROJECTS_DIR, "*.json")):
+        try:
+            with open(p_file, encoding="utf-8-sig") as f:
+                d = json.load(f)
+            if not isinstance(d, dict) or d.get("id") != pid:
+                continue
+            dirs = []
+            for res in (d.get("projectResources") or {}).get("resources") or []:
+                u = res.get("folderUri") or (res.get("gitFolder") or {}).get("folderUri")
+                path = uri_to_path(u) if u else ""
+                if path and os.path.isdir(path) and not gate_owned(path) and path not in dirs:
+                    dirs.append(path)
+            return pid, dirs
+        except (OSError, ValueError, AttributeError, TypeError):
+            continue
+    return "", []
 
 
 def uri_paths(uris):
@@ -1016,13 +1054,18 @@ def inline_dossier(text, path, limit=DOSSIER_INLINE_MAX):
             + text[-tail:])
 
 
-def build_agy_args(agy, dossier_path, extra_dirs, mode="plan", timeout_s=AGY_TIMEOUT_S, model=None, dossier_text=None):
+def build_agy_args(agy, dossier_path, extra_dirs, mode="plan", timeout_s=AGY_TIMEOUT_S, model=None, dossier_text=None, project=None):
     """Lista de argumentos (sem shell). Nunca inclui --dangerously-skip-permissions.
     As flags de segurança vêm antes do prompt: se algo truncar a linha, o prompt se perde, nunca o `--mode`."""
-    args = [agy, "--output-format", "json", "--mode", mode, "--print-timeout", f"{timeout_s}s",
-            "--add-dir", os.path.dirname(dossier_path)]
+    args = [agy, "--output-format", "json", "--mode", mode, "--print-timeout", f"{timeout_s}s"]
+    if dossier_text is None:
+        # O prompt manda ler o arquivo: a pasta do dossiê precisa ser acessível. Com o dossiê no prompt ela não serve,
+        # e era a pasta que aparecia como workspace das retomadas, no lugar do projeto.
+        args += ["--add-dir", os.path.dirname(dossier_path)]
     for d in extra_dirs:
         args += ["--add-dir", d]
+    if project:
+        args += ["--project", project]
     if model and model.strip():  # vazio = modelo padrão do agy
         args += ["--model", model.strip()]
     if dossier_text is not None:
@@ -1120,10 +1163,18 @@ class AutoRunner:
         except (sqlite3.Error, OSError, ValueError):
             return False
 
-    def _run_agy(self, args):
+    @staticmethod
+    def _target(it):
+        """(--project, pastas para --add-dir, pasta de trabalho) da retomada: o projeto e as pastas da sessão original.
+        O agy registra a pasta de trabalho como workspace; sem `cwd`, herdava a pasta de onde o app foi aberto."""
+        project, pdirs = project_target(it.get('project_id', ''))
+        dirs = list(dict.fromkeys(pdirs + workspace_dirs(it.get('workspace', ''))))[:3]
+        return project, dirs, (dirs[0] if dirs else HANDOFF_DIR)
+
+    def _run_agy(self, args, cwd=None):
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         self.proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                     encoding="utf-8", errors="replace", creationflags=flags)
+                                     encoding="utf-8", errors="replace", creationflags=flags, cwd=cwd)
         deadline = time.time() + self.timeout_s + self.grace_s
         while True:
             try:
@@ -1176,13 +1227,16 @@ class AutoRunner:
                     break
                 continue
             self.log_cb(f"    dossiê: {dossier}")
+            project, dirs, cwd = self._target(it)
+            self.log_cb(f"    pasta: {cwd} · projeto: " + (f"{it['meta'].get('project') or project} (--project)" if project
+                                                             else "CLI Project (sem --project: a sessão original não tem projeto em config/projects)"))
             if self.dry_run:
                 self.store.add_handoff(cid, '', dossier, 'dossie', 'simulação: agy não foi chamado')
                 summary['dossier'] += 1
                 continue
             with open(dossier, encoding="utf-8") as fh:
                 dossier_text = fh.read()
-            args = build_agy_args(self.agy, dossier, workspace_dirs(it.get('workspace', '')), self.mode, self.timeout_s, self.model, dossier_text)
+            args = build_agy_args(self.agy, dossier, dirs, self.mode, self.timeout_s, self.model, dossier_text, project)
             problem = cmd_shim_problem(args)
             if problem:
                 self.store.add_handoff(cid, '', dossier, 'erro', problem)
@@ -1193,7 +1247,7 @@ class AutoRunner:
                 break
             before = self._session_files()
             try:
-                out, err, why, code = self._run_agy(args)
+                out, err, why, code = self._run_agy(args, cwd)
             except OSError as e:
                 self.store.add_handoff(cid, '', dossier, 'erro', f"não executou o agy: {e}")
                 summary['failed'] += 1
@@ -1293,7 +1347,7 @@ def load_projects(warn):
     if os.path.exists(PROJECTS_DIR):
         for p_file in glob.glob(os.path.join(PROJECTS_DIR, '*.json')):
             try:
-                with open(p_file, 'r', encoding='utf-8') as f:
+                with open(p_file, 'r', encoding='utf-8-sig') as f:  # aceita BOM (JSON regravado pelo PowerShell 5.1)
                     d = json.load(f)
                 if not isinstance(d, dict):
                     raise ValueError("JSON de projeto não é um objeto")
@@ -3879,8 +3933,9 @@ class AntigravityGateApp(tk.Tk):
             for r in grp:
                 if self.states.get(r['cid']) == "aprovada" and r['fpath']:
                     meta = self.meta_for(r['cid'])
+                    s = self.summaries.get(r['cid'], {})
                     cands.append({'cid': r['cid'], 'title': r['title'], 'fpath': r['fpath'], 'meta': meta,
-                                  'workspace': str(val(self.summaries.get(r['cid'], {}), 'workspace_uris')),
+                                  'workspace': str(val(s, 'workspace_uris')), 'project_id': str(val(s, 'project_id')),
                                   'workspace_label': meta['workspace'][-40:]})
         if not cands:
             messagebox.showinfo("Auto-Run", "Nenhuma sessão aprovada com arquivo nesta fonte. Aprove sessões primeiro (botão ✅ Aprovar).")

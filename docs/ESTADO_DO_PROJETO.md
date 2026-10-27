@@ -1,21 +1,22 @@
 # AntigravityGate: estado do projeto
 
-Atualizado em 2026-10-27, versão **1.0.0**. Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
+Atualizado em 2026-10-27, versão **1.0.1** (branch `claude/funny-tesla-4w2i3q`, ainda não publicada). Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
 
 ## Snapshot
 
 | | |
 |---|---|
-| **Feito** | **1.0.0 publicada.** Leitura, curadoria, exportação, dossiê; Auto-Run validado no Windows (dossiê no prompt); auditoria e revisão final (etapas 1 a 3); testes no GitHub barram a montagem; Release em rascunho primeiro |
-| **Faltando** | Uso real: restaurar as sessões no Antigravity e validar o fluxo completo. Não verificado: escala 125–150%, status 6 e 7 |
-| **Próximo passo único** | Usar no dia a dia; problemas novos viram 1.0.x com teste |
+| **Feito** | 1.0.0 publicada. Antigravity restaurado no Windows (27/10: conversas de volta no remoto `dev-thomaz` e na busca do VS Code). Auditoria `reviews/audit-full-v1.0.0.md`. **1.0.1 na branch:** crítico C1 corrigido (retomada no projeto de origem), com teste |
+| **Faltando** | Uma retomada real com a 1.0.1, conferida no remoto. Não verificado: escala 125–150%, status 6 e 7 |
+| **Próximo passo único** | Rodar 1 retomada real (simulação primeiro) e conferir no `dev-thomaz` se a sessão nova aparece **dentro** do projeto de origem; se sim, merge e tag `v1.0.1` |
 
 ## Pendências (backlog pós-1.0)
 
 Em ordem de prioridade. Cada item vira uma 1.0.x com teste; nada entra sem decidir o que sai.
 
+0. **Auditoria v1.0.0, crítico C2:** junctions (`antigravity-cli`, `antigravity-ide` → `antigravity`) aparecem como fontes "Backup/outros", com os dados vivos. Corrigir com `realpath` em `discover_sources`. Demais recomendações (R2–R17) na auditoria.
 1. **Ícone autoral do app** (`.ico` multi-tamanho 16–256 px para o `.exe`, a barra de tarefas e a barra de título). Hoje o `.exe` usa o ícone padrão do PyInstaller e a janela usa a pena do Tk. Fazer: arte própria → `packaging/app.ico` → `--icon` no PyInstaller → `iconbitmap`/`iconphoto` nas janelas.
-2. Validar no uso real: restaurar as sessões no Antigravity e rodar o fluxo completo (curadoria → dossiê → Auto-Run).
+2. Validar no uso real o fluxo completo (curadoria → dossiê → Auto-Run). Desbloqueado: as sessões foram restauradas no Antigravity em 27/10.
 3. Não verificado no Windows: escala 125% a 150%, glifos Segoe MDL2 em todos os botões, significado dos status 6 e 7 das ferramentas.
 4. Lista de modelos do Auto-Run pelo `agy models` (hoje: lista embutida + a que o `agy` devolve no erro).
 5. Campo "Modelo(s)" vazio no dossiê de algumas sessões (o banco não tinha o nome em `gen_metadata`; não investigado).
@@ -24,6 +25,13 @@ Em ordem de prioridade. Cada item vira uma 1.0.x com teste; nada entra sem decid
 8. Divisor de altura entre a tabela e os detalhes (pedido e adiado: só se o painel ganhar mais informação).
 
 Fora do alcance do app: o editor do Antigravity abre sozinho a cada chamada do `agy` (comportamento do `agy`; o `--help` não tem opção para evitar).
+
+## Registro da sessão de 2026-10-27 (1.0.0 → 1.0.1)
+
+- **Restauração do Antigravity** (fora do app): a config `~/.gemini/config/projects` tinha sido alterada por scripts do Gemini e o daemon de remote control estava desregistrado. Registro completo: `handoffs/2026-10-27-antigravity-sync.md` no repositório `zuvuya`.
+- **Auditoria full spectrum** do app contra o que a restauração revelou: `reviews/audit-full-v1.0.0.md`. Dois críticos: C1 (retomada fora do projeto, corrigido na 1.0.1) e C2 (junctions como "Backup", no backlog).
+- **Fatos do ambiente real** que os testes não cobriam: junctions para a pasta mestra; JSON de projeto com BOM; a barra lateral do VS Code (extensão 1.9.0 + `agy` 1.4.7) só lista conversas abertas, enquanto a busca 🔍 e o remoto listam tudo; três motores escrevendo na mesma pasta (daemon, VS Code, Auto-Run).
+- Testes da 1.0.1 rodados localmente com Python 3.12 e **Tk 9.0**: 24 de 25 passam. `test_theme` falha igual antes e depois da mudança (largura de fonte do Tk 9; o CI usa Tk 8.6).
 
 ## Registro da sessão de 2026-10-26/27 (0.9.0 → 1.0.0)
 
@@ -92,6 +100,8 @@ Usado pelo Auto-Run:
 - Depois de uma chamada do `agy`, o editor do Antigravity abre uma janela vazia. Vem do próprio `agy`, não do app [conferir em `agy --help` se há opção para evitar].
 - O Auto-Run aceita `--model` (campo na confirmação). Hipótese não verificada: o padrão do `agy` usa a cota do Gemini 4 Argon (o reset informado no erro de 26/10 bateu com o dele).
 - Opções úteis: `--mode plan|accept-edits|auto`, `--add-dir`, `--project`, `--print-timeout`, `--effort`, `--model`, `--conversation` (retoma e muda a conversa original).
+- **Projeto da sessão:** sem `--project`, toda sessão do CLI vai para "CLI Project" (`default-cli-project`), qualquer que seja a pasta. Fonte: CHANGELOG oficial do `agy` (github.com/google-antigravity/antigravity-cli): 1.0.12 "Added support for `--project` [...] updated the project resolution logic to default regardless of the active workspace"; 1.1.18 "Added support for passing a project name to `--project`". Confirmado no banco do usuário em 27/10: as retomadas da 1.0.0 ficaram em `default-cli-project`. A 1.0.1 passa `--project <id>` quando o projeto existe em `config/projects`.
+- **Pasta de trabalho = workspace.** Visto em 27/10: `agy --print` rodado no PowerShell em `C:\Users\Thomáz`, sem `--add-dir`, gravou `workspace_uris = ["file:///C:/Users/Thom%C3%A1z"]`; as retomadas da 1.0.0 levaram a pasta de onde o app foi aberto. A 1.0.1 roda o `agy` com `cwd` na pasta do projeto. O `agy` grava `workspace_uris` em ordem alfabética.
 - Nunca usar `--dangerously-skip-permissions`.
 
 ## Salvaguardas do Auto-Run

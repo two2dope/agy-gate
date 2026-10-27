@@ -21,7 +21,7 @@ A conferência da integridade do download: a Release mostra o SHA-256 do `.exe`.
 - **Limites de contexto** (botão Limites): três faixas prontas e uma personalizada, com alerta de nível crítico.
 - Painel de detalhes, busca (inclusive no conteúdo das conversas), ordenação e menu de contexto.
 - **Diálogo completo** e **dossiê de retomada** em Markdown, com lista de arquivos alterados e consultados. O dossiê mascara chaves e senhas por padrões conhecidos (heurística: confira antes de compartilhar).
-- **Auto-Run**: abre uma sessão nova no `agy` com o dossiê das sessões aprovadas (modo simulação disponível).
+- **Auto-Run**: abre uma sessão nova no `agy` com o dossiê das sessões aprovadas, no projeto e na pasta da sessão original (modo simulação disponível). O app não grava nos bancos do Antigravity, mas cada sessão nova que o `agy` cria fica neles.
 - 8 temas, botões com ícones e estados, barra de título que segue o tema.
 
 ## Rodar a partir do código
