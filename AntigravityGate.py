@@ -25,6 +25,7 @@ from tkinter import ttk, messagebox, filedialog
 from tkinter import font as tkfont
 
 __version__ = "0.9.0"  # ver CHANGELOG.md; 1.0.0 = revisão final + Auto-Run real testado
+__build__ = "código-fonte"  # o CI troca pelo commit e pela data da montagem do .exe
 APP_AUTHOR = "Thominha"
 APP_EMAIL = "twoo2dope@gmail.com"
 APP_GITHUB = "https://github.com/two2dope"
@@ -1403,7 +1404,7 @@ def about_info():
     import sys
     run = "executável (.exe)" if getattr(sys, "frozen", False) else "código-fonte"
     return "\n".join([
-        f"AntigravityGate {__version__} ({run})",
+        f"AntigravityGate {__version__} ({run}; montagem {__build__})",
         f"Python {platform.python_version()} · Tk {tk.TkVersion}",
         f"Sistema: {platform.platform()}",
         f"Pasta do Antigravity: {BASE_DIR}",
@@ -1485,6 +1486,13 @@ def fit_rect(area, scale, w, h, x=None, y=None, min_size=WIN_MIN):
     if x is None:
         return w, h, l + (aw - w) // 2, t + max(0, (ah - h - frame) // 2)
     return w, h, min(max(x, l), max(l, l + aw - w)), min(max(y, t), max(t, t + ah - h - frame))
+
+
+def parse_geometry(text):
+    """'LxA+X+Y' -> (L, A, X, Y). O Windows escreve coordenada negativa como '+-1928' (monitor à esquerda ou acima
+    do principal). '-N' (distância da borda direita/inferior) não é posição absoluta: devolve None."""
+    m = re.match(r"(\d+)x(\d+)\+(-?\d+)\+(-?\d+)$", text or "")
+    return tuple(int(v) for v in m.groups()) if m else None
 
 
 def saved_zoomed(saved):
@@ -2119,7 +2127,7 @@ class AboutDialog(tk.Toplevel):
         head.pack(anchor="w", fill=tk.X)
         lab(head, "◆", app.f_title, 'accent_text').pack(side=tk.LEFT)
         lab(head, "AntigravityGate", app.f_title).pack(side=tk.LEFT, padx=(app.px(8), app.px(10)))
-        lab(head, f"versão {__version__}", app.f_small, 'muted').pack(side=tk.LEFT, anchor="s", pady=(0, app.px(3)))
+        lab(head, f"versão {__version__} · {__build__}", app.f_small, 'muted').pack(side=tk.LEFT, anchor="s", pady=(0, app.px(3)))
         lab(self, "Gestão de contexto e curadoria de sessões do Antigravity.").pack(anchor="w", pady=(app.px(4), app.px(12)))
 
         grid = tk.Frame(self, bg=t['panel'])
@@ -2752,11 +2760,11 @@ class AntigravityGateApp(tk.Tk):
         """Grava tamanho e posição. Maximizada: guarda só que estava maximizada e em que monitor (centro da janela);
         o tamanho normal anterior é mantido."""
         self._win_job = None
-        m = re.match(r"(\d+)x(\d+)([+-]-?\d+)([+-]-?\d+)$", self.geometry())
+        geo = parse_geometry(self.geometry())
         state = self.wm_state()
-        if not m or state not in ("normal", "zoomed"):
+        if not geo or state not in ("normal", "zoomed"):
             return
-        w, h, x, y = int(m[1]), int(m[2]), int(m[3]), int(m[4])
+        w, h, x, y = geo
         if state == "zoomed":
             win = dict(self.settings.get("window") or {})
             win.update(zoomed=True, zx=x + w // 2, zy=y + h // 2)

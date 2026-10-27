@@ -32,6 +32,16 @@ jobs:
           Write-Host "Versão do código: $v"
           if ($env:GITHUB_REF_TYPE -eq "tag" -and $env:GITHUB_REF_NAME -ne "v$v") { throw "A tag $env:GITHUB_REF_NAME não bate com a versão do código ($v)" }
 
+      - name: Marcar a montagem (commit e data) no código
+        shell: pwsh
+        run: |
+          $build = "$($env:GITHUB_SHA.Substring(0,7)) $((Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm')) UTC"
+          $src = Get-Content AntigravityGate.py -Raw -Encoding UTF8
+          $new = $src -replace '(?m)^__build__ = "[^"]*"', "__build__ = `"$build`""
+          if ($new -eq $src) { throw "__build__ não encontrado em AntigravityGate.py" }
+          [IO.File]::WriteAllText((Resolve-Path AntigravityGate.py), $new, (New-Object Text.UTF8Encoding $false))
+          Write-Host "Montagem: $build"
+
       - name: Instalar PyInstaller
         run: python -m pip install --upgrade pip pyinstaller
 

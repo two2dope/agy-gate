@@ -66,6 +66,23 @@ s = G.load_settings(); s["window"].update(zoomed=True, zx=200, zy=200); G.save_s
 app = G.AntigravityGateApp(); wait(app)
 assert app.start_zoomed, "maximizada ao fechar: reabre maximizada"
 
+# --- 1b. coordenadas negativas no texto da geometria (o Windows informa "+-1928" no monitor à esquerda)
+assert G.parse_geometry("1920x1017+-1928+-8") == (1920, 1017, -1928, -8)
+assert G.parse_geometry("900x600+40+30") == (900, 600, 40, 30)
+assert G.parse_geometry("900x600-10+30") is None, "'-N' conta da borda direita: não é posição absoluta"
+assert G.parse_geometry("lixo") is None
+real_geo, real_state = app.geometry, app.wm_state
+app.wm_state = lambda *a: "zoomed"; app.geometry = lambda *a: "1920x1017+-1928+-8" if not a else real_geo(*a)
+app.save_window(); win = G.load_settings()["window"]
+assert win["zoomed"] is True and (win["zx"], win["zy"]) == (-968, 500), win
+app.wm_state = lambda *a: "normal"; app.geometry = lambda *a: "900x600+-1500+40" if not a else real_geo(*a)
+app.save_window(); win = G.load_settings()["window"]
+assert (win["x"], win["y"], win["zoomed"]) == (-1500, 40, False), win
+app.wm_state = real_state; app.geometry = real_geo
+
+# --- 1c. número da montagem aparece no Sobre e no diagnóstico
+assert G.__build__ and G.__build__ in G.about_info()
+
 # --- 2. X da janela do Auto-Run = botão Cancelar/Fechar
 from tkinter import messagebox
 shown = []
