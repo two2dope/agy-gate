@@ -1,76 +1,124 @@
-# 1.1 — pacote visual: avaliação dos mockups
+# 1.1 — pacote visual: avaliação dos mockups e plano
 
-Registrado em 2026-10-27. Fonte: `stitch_desktop_interface_layout_variations.zip`, enviado pelo usuário: 4 telas geradas no Google Stitch (HTML com Tailwind e PNG de 1600×1280), uma por skin: Vidro Aero, Cyber Synthwave, Mil-Spec e Mecha. Os arquivos ficaram fora do repositório. Os scripts deles só configuram o Tailwind, destacam a linha clicada e ligam o atalho Ctrl+K.
+Registrado em 2026-10-27. Duas entregas do Google Stitch, enviadas pelo usuário (HTML com Tailwind e PNG de 1600×1280; ficaram fora do repositório; os scripts dos HTML só configuram o Tailwind, destacam a linha clicada e ligam o atalho da busca; não foram executados):
 
-## O que os mockups propõem (comum às 4 skins)
+1. `stitch_desktop_interface_layout_variations.zip`: 4 skins (Vidro Aero, Cyber Synthwave, Mil-Spec, Mecha), tabela em cartões.
+2. `stitch_multi_theme_ui_design_system.zip`: uma tela para cada uma das 8 skins do app e um `DESIGN.md` ("Obsidian Telemetry Aero") com tokens de cor, tipografia, espaçamento e componentes.
 
-| Área | Proposta |
-|---|---|
-| Barra lateral | Fonte de dados; **Categorias** (Pendentes, Em Atenção, Aprovadas, Arquivadas) com contadores; **Projetos & Espaços** com contadores; o projeto aberto lista as sessões com um ponto de estado |
-| Cabeçalho | Marca + "Gestão de contexto e curadoria"; abas **Todas as Sessões / Em Revisão / Arquivadas**; Atualizar, Limites, tema, Sobre |
-| Busca | Campo com atalho (⌘K no mock; Ctrl+K no Windows) e limpar |
-| Ações | Aprovar, Arquivar, Pendente · Exportar Diálogo, **Dossiê de Retomada** (botão primário), Auto-Run |
-| Tabela | Linhas em **cartão**: caixa de seleção; projeto + selo de estado; chip do id (`5c583e36`) + título + linha de metadados (agente · CLI · há 19 horas); data e hora em duas linhas; **Consumo**: % do nível crítico, `146.624/250k`, barra e rótulo da faixa ("faixa segura") |
-| Detalhes | Cartão com projeto, agente, título, medidor com as marcas 150k/250k, grade de fatos (Estado, UUID, Workspace, Passos, Modificação, Tamanho, Falhas, Retomada) e botões UUID, Pasta, Dossiê |
-| Rodapé | Indicador "Engine Online v2.18-ag"; fonte, contagem e selos |
-| Estilo | Fontes Inter + JetBrains Mono (Chakra Petch no Mecha); ícones **Font Awesome 6**; gradientes, brilho, desfoque e pulsação |
+## Decisões do usuário (27/10)
 
-## O que vale manter
-
-1. **Categorias na barra lateral.** Hoje são selos no rodapé, pouco visíveis. Como navegação principal, com contadores, é o maior ganho de uso.
-2. **Coluna Consumo** com % do nível crítico, valor/limite e rótulo da faixa. Lê-se melhor que `■■■□□□` e reforça os níveis de alerta da 1.0.2.
-3. **Linha de metadados** (agente · origem · tempo relativo) e **chip do id**: a tabela fica escaneável.
-4. **Retomada visível como relação** (`5c583e36: retomada`). O Gate já grava a linhagem em `gate_state.handoffs`.
-5. **Font Awesome** como conjunto de ícones do layout novo. É o pedido A, e o mock já usa.
-
-## O que precisa de ajuste
-
-| Ponto | Por quê | Proposta |
+| # | Decisão | Consequência |
 |---|---|---|
-| Aba **"Em Revisão"** | O Gate não tem esse estado (só pendente, aprovada, arquivada) | **Decisão do usuário:** virar "Aprovadas aguardando Auto-Run" ou sair |
-| Densidade | Cartões de ~110 px mostram ~6 sessões por tela (hoje ~20). Com 57 sessões, 3× mais rolagem | Modo compacto e confortável |
-| Contraste | Textos secundários e linha arquivada em cinza escuro sobre quase preto ficam abaixo de 4,5:1 | Ajustar os tokens; o `test_theme` já barra |
-| Painel de detalhes da variante 1 | Textos sobrepostos (falha do gerador) | Usar o das variantes 2 a 4 |
-| "Engine Online v2.18-ag" | Não existe "engine" no Gate | Virar um indicador real: `agy` encontrado (versão) e daemon remoto (`dev-thomaz`). Ler sem chamar o `agy`, que abre o editor a cada chamada **[conferir]** |
-| Semáforo do macOS no topo | Elemento do mock | No Windows fica a barra nativa, que já segue o tema (decisão anterior) |
-| Só 4 skins | O app tem 8 (faltam Escuro, Claro, Brutalista, Obsidiana) | Derivar dos tokens. O **Claro** precisa de desenho próprio: os 4 mocks são escuros |
-| Fontes | Inter, JetBrains Mono, Chakra Petch e Font Awesome não vêm no Windows | Empacotar no `.exe` (SIL OFL 1.1) com registro privado (`AddFontResourceExW`, `FR_PRIVATE`), a mesma base do pedido A |
+| 1 | **Caminho A:** evolução em Tk | A tabela continua no Treeview; sem WebView |
+| 2 | Aba "Em Revisão" vira **"Aprovadas aguardando"** | Sessões aprovadas sem retomada registrada (`gate_state.handoffs`). Mesmo número do selo do Auto-Run, que já desconta as retomadas |
+| 3 | **Font Awesome, Bootstrap Icons e Material Icons ficam** | Três fontes de ícones no M1, além de Windows (MDL2), Unicode e sem ícones |
 
-## Viabilidade no Tk (tecnologia atual)
+## O que vale manter (das duas entregas)
+
+1. **Categorias na barra lateral** (Pendentes, Em atenção, Aprovadas, Arquivadas) com contadores. Hoje são selos no rodapé, pouco visíveis. É o maior ganho de uso.
+2. **Coluna Consumo:** % do nível crítico, valor/limite, medidor de 5 blocos e rótulo da faixa ("segura", "atenção", "crítica"). Reforça os níveis de alerta da 1.0.2.
+3. **Metadados e chip do id** (agente · origem · tempo relativo; `5c583e36`): a tabela fica escaneável.
+4. **Retomada como relação** (`5c583e36: retomada`) na árvore de projetos. O Gate já grava a linhagem em `gate_state.handoffs`.
+5. **Detalhes em cartão:** medidor com as marcas de atenção e crítico, grade de fatos (Estado, UUID, Workspace, Passos, Modificação, Tamanho, Falhas, Retomada) e os botões UUID, Pasta e Dossiê.
+6. **Rodapé com selos coloridos** (pendentes, aprovadas, arquivadas, em atenção, críticas). O app já tem; muda só o estilo.
+
+## Segunda entrega: o que mudou na leitura
+
+- **6 das 8 telas usam uma linha por sessão** (Escuro, Vidro, Cyber, Mecha, Brutalista, Obsidiana). Só o Aero Quartz (claro) usa cartões, e o Mil-Spec usa título com subtítulo. O desenho convergiu para o que o Treeview faz: a fidelidade do caminho A sobe de ~65–70% para ~80% [estimativa].
+- **Células de duas linhas funcionam no Treeview** (data sobre hora; passos sobre falhas; tamanho sobre UUID, como no Escuro): altura de linha maior e `\n` no valor. Verificado no Tk 9.0 deste ambiente; o `.exe` usa Tk 8.6 [conferir no M3]. Custo: a linha de 40 px do `DESIGN.md` mostra metade das sessões de hoje. Proposta: modo **Compacto** (1 linha) e **Confortável** (2 linhas).
+- **Limite que continua: cor por linha, não por célula** (Tk 8.6). O medidor colorido, o selo de estado colorido e o chip âmbar "⚠ 1" viram texto com glifo de 5 blocos (`▰▰▱▱▱`, que o `DESIGN.md` já prevê), cor da linha pelo nível e imagem de estado na coluna da árvore (bolinha colorida em PNG gerado, como os ícones atuais). A marca de 2 px à esquerda da linha selecionada não dá; fica a cor de seleção.
+- **Coluna Ações (⋮):** dá, como coluna de texto que abre o menu de contexto no clique.
+- **Fonte:** o Treeview usa uma fonte por estilo ou por linha, não por coluna. Cada skin escolhe a fonte da tabela inteira (Inter ou JetBrains Mono). A Inter tem algarismos proporcionais: colunas numéricas alinhadas à direita.
+
+## Regra: skin muda tokens, não layout
+
+- **Estrutura igual nas 8 skins:** barra lateral (recolhível), cabeçalho com abas, barra de ações, tabela, detalhes, rodapé. Vidro e Cyber vieram sem barra lateral, e o Brutalista com os contadores em grade 2×2: no app, isso é a barra recolhida, não um layout próprio.
+- **Texto igual nas 8 skins.** O Stitch trocou rótulos por skin ("Classificação operacional", "Categorias de triagem", "Pendentes de Curadoria", "ALVO INSPEÇÃO ATIVO", "Gerar Dossiê"). Vale o texto do Escuro e do Claro.
+- **A skin muda:** cores, fonte da tabela e dos títulos, raio, borda, caixa alta nos títulos (Mil-Spec, Brutalista).
+- **Um só filtro:** abas (Todas / Aprovadas aguardando / Arquivadas) e categorias da barra lateral são atalhos para o mesmo filtro; o item ativo aparece marcado nos dois lugares. Sem isso, "Arquivadas" nas abas e na barra viram dois controles que discordam.
+
+## Dados inventados nos mocks (não entram)
+
+"Engine Online v2.18-ag", "HOST 127.0.0.1:8920", "PID 4092", "STORAGE NVMe FREE 48%", "SYS.ACTIVE // HUD: OPERATIONAL", "AERO_WORKSPACE // READY", "PROD-TELEMETRY", "v2.4.0-brutalist", "Buffer Livre 80%", "Agent assigned: orchestrator-main", subtítulos descritivos das sessões (Mil-Spec, Brutalista), limites de 64k, 128k e 200k (o app usa os de Limites) e contagens divergentes entre telas (Aprovadas 0, 1 ou 8; "Em Revisão 11"). O indicador do rodapé vira dado real: `agy` encontrado e daemon remoto, lido sem executar o `agy` (cada execução abre o editor do Antigravity; ver `ESTADO_DO_PROJETO.md`).
+
+## Contraste (WCAG AA, 4,5:1)
+
+Medido sobre a superfície mais clara onde o texto aparece (pior caso). **Nas 8 skins, o texto terciário falha:**
+
+| Skin | Passa | Falha (usos no HTML) |
+|---|---|---|
+| Escuro (Obsidian) | slate-300 11,5; slate-400 6,7 | slate-500 3,6 (40); slate-600 2,3 (12) |
+| Claro (Aero Quartz) | quartz-600 6,9; quartz-700 9,5 | quartz-500 4,3 (35); quartz-400 2,3 (35); âmbar-600 2,9; esmeralda-600 3,4; texto branco no botão primário `#0284c7` 4,1 |
+| Vidro Aero | sky-200 12,6; sky-300/80 6,9 | sky-400/60 3,7 (15); sky-400/50 3,0 (14) |
+| Cyber Synthwave | rosa 4,8; gray-400 7,1 | cinza `#717b9e` 4,3 (60); roxo `#8b5cf6` 4,3 (14) |
+| Mil-Spec | gray-300 12,1; verde 7,9 | verde apagado `#52695c` 3,0 (54) |
+| Mecha | slate-400 7,1; laranja 6,5 | slate-500 3,8 (17); slate-600 2,4 (6) |
+| Brutalista | `#888` 5,2; amarelo 12,0 | `#777` 4,1 (15); `#666` 3,2 (25); `#555` 2,5 (28) |
+| Obsidiana | slate-400 7,2; ametista clara 7,0; ametista 4,7 | slate-500 3,9 (13); slate-600 2,4 (16) |
+
+Regra para o app: um só tom secundário (`muted`) por skin, com 4,5:1 sobre `bg`, `panel` e `panel2`. O `test_theme` barra o resto.
+
+## Tokens propostos (rascunho para o M4)
+
+Derivados dos mocks. Os 8 passam em todos os pares do `test_theme` (texto ≥ 4,5; ícone e barra da faixa de alerta ≥ 3). A última coluna traz o menor contraste de cada tema.
+
+| Tema | bg · panel · panel2 · border | fg · muted | accent / texto do botão · accent_text | success · warning · danger | seleção | cabeçalho | menor |
+|---|---|---|---|---|---|---|---|
+| Escuro | `#07090e` `#0c0f17` `#161b2c` `#1e263d` | `#e2e8f0` `#94a3b8` | `#38bdf8` / `#04121f` · `#38bdf8` | `#34d399` `#fbbf24` `#f43f5e` | `#0c3a57` / `#ffffff` | `#0c0f17` / `#e2e8f0` | 4,89 |
+| Claro | `#f1f5f9` `#ffffff` `#e9eef5` `#cbd5e1` | `#0f172a` `#475569` | `#0369a1` / `#ffffff` · `#0369a1` | `#047857` `#b45309` `#be123c` | `#e0f2fe` / `#0f172a` | `#ffffff` / `#0f172a` | 4,58 |
+| Mil-Spec | `#070a09` `#0d1311` `#111916` `#2a4536` | `#e5e7eb` `#8aa597` | `#22c55e` / `#04140a` · `#4ade80` | `#4ade80` `#f59e0b` `#f87171` | `#243b31` / `#4ade80` | `#0d1311` / `#4ade80` | 4,65 |
+| Cyber | `#070814` `#0d0f22` `#12142d` `#1e2348` | `#e6fbff` `#8e97b8` | `#00f3ff` / `#001418` · `#00f3ff` | `#4ade80` `#fbbf24` `#ff3d8b` | `#2a0a3d` / `#00f3ff` | `#0d0f22` / `#00f3ff` | 4,96 |
+| Vidro | `#030b18` `#06132a` `#0a1d3d` `#1d4d6e` | `#e0f2fe` `#8fbfdf` | `#38bdf8` / `#04121f` · `#38bdf8` | `#34d399` `#fbbf24` `#fb7185` | `#0f3d66` / `#ffffff` | `#030b18` / `#e0f2fe` | 5,09 |
+| Brutalista | `#000000` `#0b0b0b` `#141414` `#2a2a2a` | `#ffffff` `#999999` | `#facc15` / `#000000` · `#facc15` | `#4ade80` `#facc15` `#f87171` | `#262208` / `#facc15` | `#facc15` / `#000000` | 4,65 |
+| Obsidiana | `#07050d` `#0b0816` `#151027` `#34295c` | `#f3ecff` `#a99dbd` | `#c084fc` / `#12081f` · `#c084fc` | `#34d399` `#fbbf24` `#f43f5e` | `#2b1646` / `#f3ecff` | `#07050d` / `#f3ecff` | 4,89 |
+| Mecha | `#080a0e` `#0d1117` `#121620` `#323d53` | `#e2e8f0` `#94a3b8` | `#f97316` / `#1a0802` · `#ff8c38` | `#10b981` `#f59e0b` `#ef4444` | `#33200f` / `#fdba74` | `#0d1117` / `#f97316` | 4,99 |
+
+O que muda em relação a hoje: **Escuro** (cinza do VS Code → azul-preto Obsidian), **Claro** (cinza neutro → ardósia com azul-céu), **Mil-Spec** (neutro → verde tático), **Brutalista** (borda branca e seleção amarela → borda `#2a2a2a` e seleção âmbar-escura com texto amarelo). Vidro, Cyber, Obsidiana e Mecha mudam pouco: os temas atuais já vinham de paletas parecidas (Cyber-HUD do navigator-agy). Os botões primários usam texto escuro sobre o acento: texto branco sobre azul-céu ou ametista não passa (o mock do Claro usa branco sobre `#0284c7`, 4,1; o Claro proposto usa `#0369a1`, 5,9).
+
+## Tipografia e medidas (`DESIGN.md` → Tk)
+
+- **Inter** (interface) e **JetBrains Mono** (métricas e UUID), em arquivos estáticos. Fonte variável no Windows: o GDI usa só a instância padrão [não verificado; usar estáticas evita a dúvida]. A Chakra Petch saiu: estava só na primeira entrega.
+- Tamanhos de 10 a 16 px viram tamanhos negativos (pixels) no Tk, multiplicados pela escala do monitor.
+- **Barra lateral:** o `DESIGN.md` pede 288 px, com trilho de 64 px abaixo de 1280 px de largura. Com a janela padrão de 1240 px, o app abriria sempre no trilho. Proposta: 232 px, recolhível (Ctrl+B), trilho automático abaixo de ~1100 px.
+- Barra de título de 44 px: no Windows fica a barra nativa, que já segue o tema. Sub-cabeçalho de 48 px, rodapé de 28 px, botões de 28 px e raios de 0 a 16 px: viáveis (Canvas, como os botões atuais).
+- Brilho, desfoque, vidro e transparência: não dão no Tk. Gradiente só como imagem gerada; fora da 1.1.
+
+## Viabilidade no Tk (caminho A)
 
 | Elemento | Dá no Tk? | Custo |
 |---|---|---|
-| Barra lateral com categorias, contadores e projetos | Sim (Frames + Canvas) | Médio |
-| Abas segmentadas, Ctrl+K | Sim | Baixo |
+| Barra lateral com categorias, contadores e projetos (recolhível) | Sim (Frames + Canvas) | Médio |
+| Abas segmentadas, Ctrl+K, Ctrl+B | Sim | Baixo |
 | Fontes e ícones empacotados | Sim, no Windows | Médio |
-| Cartão de detalhes, selos, chips | Sim (Canvas e PNG gerado, como os ícones atuais) | Médio |
-| Coluna Consumo **como texto** (% + medidor em células + rótulo) dentro do Treeview | Sim | Baixo |
-| **Tabela em cartões** (2 linhas, selos e barra por linha, caixa de seleção) | **Não com o Treeview.** Exige uma lista própria em Canvas, refazendo seleção, teclado, ordenação, menu, dicas e rolagem | **Alto** (~800–1.200 linhas + testes); risco de regressão |
-| Gradientes | Só como imagem gerada | Médio |
-| Brilho, desfoque, transparência | **Não** | — |
-| Pulsação | Possível com `after`, mas gasta e distrai | Não recomendo |
+| Cartão de detalhes, selos, chips | Sim (Canvas e PNG gerado) | Médio |
+| Coluna Consumo como texto (% + 5 blocos + rótulo) | Sim | Baixo |
+| Células de duas linhas (modo Confortável) | Sim (verificado no Tk 9.0; conferir no 8.6) | Baixo |
+| Cor por célula, marca lateral da linha selecionada | Não no Tk 8.6 | — |
+| Tabela em cartões (só no Claro) | Não com o Treeview; lista própria em Canvas | Alto (caminho B) |
+| Brilho, desfoque, transparência, pulsação | Não (pulsação daria, mas distrai) | — |
 
-## Caminhos
+## Marcos da 1.1 (caminho A)
 
-| Caminho | O que entrega | Fidelidade ao mock | Custo | Risco |
-|---|---|---|---|---|
-| **A. Evolução em Tk** (recomendado para a 1.1) | Barra lateral, abas, fontes, Font Awesome, coluna Consumo em %, detalhes em cartão, indicador do `agy`/daemon. A tabela continua com uma linha por sessão | ~65–70% | Médio | Baixo |
-| **B. Tk com lista em cartões** (1.2, se A agradar) | A + tabela em cartões | ~85% | Alto | Médio-alto |
-| **C. Interface web** (2.0) | Janela WebView2 (pywebview) com o próprio HTML/Tailwind do Stitch, compilado sem CDN; Python como backend | ~100% | Muito alto: reescrever ~2.500 linhas de interface e os testes de UI | Alto; depende do WebView2 **[não verificado na máquina do usuário]** |
+1. **M1 — fontes e ícones:** Inter e JetBrains Mono; Font Awesome Free Solid (SIL OFL 1.1), Bootstrap Icons (MIT; vem em WOFF, converter para TTF) e Material Icons (Apache 2.0); registro privado no Windows (`AddFontResourceExW`, `FR_PRIVATE`) e `--add-data` no PyInstaller; seletor com 6 opções (Windows, Font Awesome, Bootstrap, Material, Unicode, sem ícones); licenças no Sobre e na pasta `licenses/`. Cerca de +2,5 MB no `.exe` [estimativa]. Fecha com o `.exe` do CI conferido no Windows: os glifos não aparecem no Linux deste ambiente.
+2. **M2 — barra lateral e cabeçalho:** categorias com contadores; projetos com sessões e retomadas; abas Todas / Aprovadas aguardando / Arquivadas sobre um filtro único; Ctrl+K na busca; Ctrl+B recolhe a barra.
+3. **M3 — tabela e detalhes:** coluna Consumo; estado com bolinha colorida; modos Compacto e Confortável; coluna Ações; cartão de detalhes com medidor e marcas.
+4. **M4 — skins e acabamento:** tokens da tabela acima, fonte e raio por skin, contraste testado; indicador do `agy` e do daemon; ícone autoral do app.
 
-**Recomendação:** A agora. Ele entrega o grosso do ganho de uso (categorias, consumo legível, fontes e ícones) com risco baixo. O que A não alcança é sobretudo efeito visual (brilho, desfoque) e as linhas em cartão. Decidir B ou C só depois de usar A.
+Cada marco fecha com o `.exe` montado no CI e conferência no Windows. O código da 1.1 começa depois do merge da 1.0.2.
 
-## Marcos sugeridos para a 1.1 (caminho A)
+## MCP do Stitch
 
-1. **M1 — fontes e ícones:** Inter, JetBrains Mono e Font Awesome empacotadas; seletor de conjunto de ícones; créditos de licença no Sobre.
-2. **M2 — barra lateral e cabeçalho:** fonte de dados, categorias com contadores, projetos; abas; Ctrl+K.
-3. **M3 — consumo e detalhes:** coluna Consumo em % com rótulo da faixa; cartão de detalhes no estilo novo.
-4. **M4 — skins e acabamento:** tokens novos nas 8 skins (Claro com desenho próprio), contraste AA testado, indicador do `agy`/daemon, ícone autoral do app.
+**Parecer: não vale agora.**
 
-Cada marco fecha com `.exe` montado no CI e conferência no Windows.
+- O caminho A não consome o HTML: usa tokens, medidas e layout, e o zip com o `DESIGN.md` já traz isso.
+- Cada geração nova inventa dados e troca textos (lista acima). Mais material pede mais curadoria.
+- Exigiria a chave do Stitch neste ambiente. A anterior vazou na saída de um script e foi revogada.
+- Passa a valer para telas que faltam no estilo novo: Limites, confirmação e andamento do Auto-Run, Sobre, menu de contexto, estados vazio e de erro, faixa e dica de alerta. Mesmo nesse caso, gerar no Stitch e mandar o zip funciona sem chave aqui.
 
 ## Decisões pendentes do usuário
 
-1. Caminho A, B ou C.
-2. O que é a aba "Em Revisão" (ou se sai).
-3. Bootstrap Icons e Material Icons continuam no escopo? O mock usa só Font Awesome. Tirar os dois corta custo de M1.
+1. **Escuro passa a ser o Obsidian (azul-preto)?** É o tema padrão, a primeira impressão do app.
+2. **Densidade padrão:** Compacto (1 linha, ~20 sessões por tela) ou Confortável (2 linhas, ~10).
+3. **Barra lateral ao abrir:** aberta ou recolhida.
+
+Fora da 1.1: o tema **Crimson Matrix**, citado no `DESIGN.md` sem tela. Seria o 9º tema; só entra no lugar de outro.
