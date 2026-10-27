@@ -140,4 +140,18 @@ app.chips["pendente"].focus_set(); app.chips["pendente"].event_generate("<Return
 assert app.chip_filter == "pendente" and U(1) not in [app.cid_of(i) for i in app.iter_sessions()]
 app.search_var.set("s"); app.run_search(); assert app.chip_filter is None, "busca desliga o filtro do selo"
 app.destroy()
+# --- 6. dica não sai da janela (Sobre fica no canto direito)
+win, area = (0, 0, 1366, 728), (0, 0, 1920, 1040)
+assert G.tooltip_pos(win, area, 1320, 40, 34, 34, 200, 30) == (1366 - 200, 80), "encosta na borda direita da janela"
+assert G.tooltip_pos(win, area, 100, 40, 34, 34, 200, 30) == (100, 80), "longe da borda: alinhada ao botão"
+assert G.tooltip_pos(win, area, 100, 700, 34, 20, 200, 30) == (100, 700 - 30 - 6), "sem espaço embaixo: acima do botão"
+assert G.tooltip_pos((-1920, 0, 1920, 1040), (-1920, 0, 1920, 1040), -40, 40, 34, 34, 200, 30)[0] == -200, "monitor à esquerda"
+app = G.AntigravityGateApp(); wait(app)
+app.geometry("1000x600+0+0"); app.update(); app._fit_all(); app.update()
+b = app.btn["about"]
+tip = G.Tooltip(b, app, lambda: "Sobre: versão, autor e diagnóstico (F1)")
+tip._show(); app.update()
+right = app.winfo_rootx() + app.winfo_width()
+assert tip.tip.winfo_rootx() + tip.tip.winfo_width() <= right, (tip.tip.winfo_rootx(), tip.tip.winfo_width(), right)
+tip._leave(); app.destroy()
 print("TODOS OS TESTES DA RODADA 3 OK")

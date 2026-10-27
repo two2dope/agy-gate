@@ -63,7 +63,8 @@ Usado pelo Auto-Run:
 - **Primeira retomada real com sucesso:** 2026-10-26 22:11, `74a14497` → `0b49637d`, resposta completa (entendimento, pendências, próximos passos).
 - **Sucessos falsos** (21:17, 21:23, 21:26 e 22:17, todos de `a56f46f0`): `status: SUCCESS`, `response` vazia, `denied_actions: [read_file]`; stderr: "a tool required the read_file permission that headless mode cannot prompt for, so it was auto-denied". Correção: o dossiê vai no prompt; resposta vazia é falha.
 - Formato de sucesso visto: `{"conversation_id", "status": "SUCCESS", "response", "duration_seconds", "num_turns", "usage", "denied_actions"?}`, código de saída 0. Cota esgotada: código 3.
-- Critério da 1.0 "Auto-Run real testado": cumprido em 22:11 com leitura de arquivo; falta repetir com o dossiê no prompt.
+- **Dossiê no prompt validado** (montagem 4bb7837, 2026-10-26 22:55): `a56f46f0` → `5c583e36`, resposta completa, sem `denied_actions`. A correção automática marcou 5 retomadas falsas antigas. Critério da 1.0 "Auto-Run real testado": **cumprido**.
+- Pendentes menores do teste: janela não reabre maximizada (reabre no monitor certo); `agy models` pode alimentar a lista de modelos; o editor do Antigravity abre sozinho a cada chamada (vem do `agy`, sem opção para evitar no `--help`).
 - Depois de uma chamada do `agy`, o editor do Antigravity abre uma janela vazia. Vem do próprio `agy`, não do app [conferir em `agy --help` se há opção para evitar].
 - O Auto-Run aceita `--model` (campo na confirmação). Hipótese não verificada: o padrão do `agy` usa a cota do Gemini 4 Argon (o reset informado no erro de 26/10 bateu com o dele).
 - Opções úteis: `--mode plan|accept-edits|auto`, `--add-dir`, `--project`, `--print-timeout`, `--effort`, `--model`, `--conversation` (retoma e muda a conversa original).

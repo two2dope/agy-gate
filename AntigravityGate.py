@@ -1590,6 +1590,18 @@ def dropdown_pos(area, ax, ay, aw, ah, w, h, gap=2):
     return x, y
 
 
+def tooltip_pos(win, area, ax, ay, aw, ah, w, h, gap=6):
+    """Posição (x, y) de uma dica w×h sob o widget (ax, ay, aw, ah): alinhada à esquerda dele, sem passar da borda direita
+    da janela `win` nem da área útil `area` do monitor (ambas (x, y, largura, altura)). Sem espaço embaixo, fica acima."""
+    left, right = max(win[0], area[0]), min(win[0] + win[2], area[0] + area[2])
+    bottom = min(win[1] + win[3], area[1] + area[3])
+    x = max(min(ax, right - w), left)
+    y = ay + ah + gap
+    if y + h > bottom:
+        y = max(area[1], ay - h - gap)
+    return x, y
+
+
 def is_dark_color(h):
     r, g, b = _rgb(h)
     return 0.299 * r + 0.587 * g + 0.114 * b < 128
@@ -1802,9 +1814,17 @@ class Tooltip:
         t = self.app.t
         self.tip = tk.Toplevel(self.w)
         self.tip.wm_overrideredirect(True)
-        self.tip.wm_geometry(f"+{self.w.winfo_rootx()}+{self.w.winfo_rooty() + self.w.winfo_height() + 6}")
+        self.tip.withdraw()  # mede antes de mostrar: perto da borda direita a dica é puxada para dentro da janela
         tk.Label(self.tip, text=text, bg=t['panel2'], fg=t['fg'], font=self.app.f_small, padx=9, pady=5, justify=tk.LEFT,
                  highlightthickness=1, highlightbackground=t['border'], wraplength=320).pack()
+        self.tip.update_idletasks()
+        top = self.w.winfo_toplevel()
+        ax, ay, aw, ah = self.w.winfo_rootx(), self.w.winfo_rooty(), self.w.winfo_width(), self.w.winfo_height()
+        win = (top.winfo_rootx(), top.winfo_rooty(), top.winfo_width(), top.winfo_height())
+        x, y = tooltip_pos(win, work_area_at(self.w, ax + aw // 2, ay + ah // 2), ax, ay, aw, ah,
+                           self.tip.winfo_reqwidth(), self.tip.winfo_reqheight())
+        self.tip.wm_geometry(f"+{x}+{y}")
+        self.tip.deiconify()
 
 
 class IconButton(tk.Canvas):
