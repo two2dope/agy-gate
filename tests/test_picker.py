@@ -29,7 +29,7 @@ assert app.theme_picker is None and btn.text == "Escuro ▾", btn.text
 # abre: 8 temas + 3 modos de ícone, atual selecionado
 btn.command(); app.update()
 p = app.theme_picker; assert isinstance(p, G.ThemePicker) and p.winfo_exists()
-assert len(p.rows) == 8 + 3, len(p.rows)
+assert len(p.rows) == 8 + len(p.ICON_MODES) == 14, len(p.rows)  # 8 temas + 6 estilos de ícones (1.1)
 assert [r[3] for r in p.rows[:8]].count(True) == 1 and p.rows[0][3] and p.cur == 0
 assert sum(1 for r in p.rows[8:] if r[3]) == 1
 # dentro da janela e alinhado ao botão
