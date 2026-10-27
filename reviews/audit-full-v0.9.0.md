@@ -56,6 +56,8 @@ A parte de leitura, curadoria e exportação está sólida: somente-leitura real
 
 ## Todas as Recomendações
 
+> **Situação (2026-10-27):** R1, R2 e R17 feitos, e rotação do log (nice-to-have), na etapa 1 da revisão final. Ver CHANGELOG.
+
 | # | Recomendação | Lente | Arquivo(s) | Correção |
 |---|--------------|-------|------------|----------|
 | R1 | Estado em memória (fallback) quebra o Auto-Run: conexão `:memory:` criada na thread da UI e usada pela thread de trabalho → `ProgrammingError` **[Verificado]** | Backend | `:818-827`, `:1018`, `:1030` | `sqlite3.connect(":memory:", check_same_thread=False)` + um `threading.Lock` em `_connect` |

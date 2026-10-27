@@ -90,7 +90,7 @@ Usado pelo Auto-Run:
 
 ## Como testar
 
-`tests/run_all.sh` (precisa de Python 3.12 com `tkinter` e, sem tela, `xvfb`). São 21 conjuntos com bancos sintéticos e um `agy` simulado (`tests/fake_agy.py`). Os scripts `tools/inspect_*.py` dão a estrutura (sem conteúdo) de qualquer banco de sessão.
+`tests/run_all.sh` (precisa de Python 3.12 com `tkinter` e, sem tela, `xvfb`). São 22 conjuntos com bancos sintéticos e um `agy` simulado (`tests/fake_agy.py`). Os scripts `tools/inspect_*.py` dão a estrutura (sem conteúdo) de qualquer banco de sessão.
 
 ## Versões
 

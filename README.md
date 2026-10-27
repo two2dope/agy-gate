@@ -41,7 +41,7 @@ tests/run_all.sh              # todos
 tests/run_all.sh test_theme   # um só
 ```
 
-São 21 conjuntos (leitura, exportação, Auto-Run com `agy` simulado, salvaguardas do Auto-Run e do fechamento, temas e contraste, janelas e interface). Usam bancos sintéticos; não tocam nos seus dados. Foram escritos e validados em Linux com Xvfb; não foram validados no Windows (o `agy` simulado usa a linha `#!` do arquivo).
+São 22 conjuntos (leitura, exportação, Auto-Run com `agy` simulado, salvaguardas do Auto-Run e do fechamento, temas e contraste, janelas e interface). Usam bancos sintéticos; não tocam nos seus dados. Foram escritos e validados em Linux com Xvfb; não foram validados no Windows (o `agy` simulado usa a linha `#!` do arquivo).
 
 ## Gerar o `.exe` e publicar uma versão
 

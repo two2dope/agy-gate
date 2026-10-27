@@ -4,6 +4,7 @@ import glob
 import re
 import json
 import logging
+import logging.handlers
 import math
 import queue
 import shutil
@@ -17,7 +18,7 @@ import webbrowser
 import zlib
 import base64
 from collections import Counter
-from contextlib import closing
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tkinter as tk
@@ -126,11 +127,17 @@ METRICS_CACHE = {}
 log = logging.getLogger("antigravitygate")
 
 
+LOG_MAX_BYTES = 1_000_000  # gate.log roda ao chegar em ~1 MB; ficam 3 cópias antigas (gate.log.1 a .3)
+
+
 def setup_logging():
     log.setLevel(logging.INFO)
+    for h in list(log.handlers):
+        log.removeHandler(h)
+        h.close()
     try:
         os.makedirs(LOG_DIR, exist_ok=True)
-        handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+        handler = logging.handlers.RotatingFileHandler(LOG_FILE, maxBytes=LOG_MAX_BYTES, backupCount=3, encoding="utf-8")
     except OSError:
         handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
@@ -380,6 +387,13 @@ SECRET_PATTERNS = [
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/\-]{20,}=*"),
+    re.compile(r"(?i)\bBasic\s+[A-Za-z0-9+/]{16,}=*"),                       # Authorization: Basic
+    re.compile(r"\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}"),                    # Stripe
+    re.compile(r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}"),  # JWT
+    re.compile(r"\bxox[abposr]-[A-Za-z0-9\-]{10,}"),                         # Slack
+    re.compile(r"\bya29\.[A-Za-z0-9_\-]{20,}"),                              # Google OAuth
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{40,}"),                            # GitHub (granular)
+    re.compile(r"(\b[a-z][a-z0-9+.\-]*://[^\s:/@]+:)[^\s@/]+(?=@)"),           # senha em URL: user:senha@host
     re.compile(r"(?i)((?:api[_-]?key|secret|token|password|passwd|senha)[\"']?\s*[:=]\s*[\"']?)[^\s\"',;}]{6,}"),
 ]
 
@@ -832,19 +846,26 @@ class StateStore:
     def __init__(self, path):
         self.path = path
         self.persistent = True
+        self._mem_lock = threading.RLock()
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             self._init()
         except (OSError, sqlite3.Error) as e:
             log.warning("Estado não será salvo (%s): %s", path, e)
             self.path, self.persistent = ":memory:", False
-            self._mem = sqlite3.connect(":memory:")
+            # Usado também pelas threads de Auto-Run e exportação: sem check_same_thread, com trava própria.
+            self._mem = sqlite3.connect(":memory:", check_same_thread=False)
             self._init()
 
     def _connect(self):
         if not self.persistent:
-            return closing(_NoClose(self._mem))
+            return self._mem_session()
         return closing(sqlite3.connect(self.path, timeout=5.0))
+
+    @contextmanager
+    def _mem_session(self):
+        with self._mem_lock:
+            yield _NoClose(self._mem)
 
     def _init(self):
         if not self.persistent:
@@ -1462,12 +1483,19 @@ def load_settings():
 
 
 def save_settings(d):
+    """Grava em settings.json.tmp e troca no fim: queda ou erro no meio não estragam o arquivo anterior."""
+    tmp = SETTINGS_FILE + ".tmp"
     try:
         os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
-        with open(SETTINGS_FILE, "w", encoding="utf-8") as fh:
+        with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(d, fh, ensure_ascii=False, indent=2)
-    except OSError as e:
+        os.replace(tmp, SETTINGS_FILE)
+    except (OSError, TypeError, ValueError) as e:
         log.warning("Não foi possível salvar as preferências: %s", e)
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
 
 
 WIN_DEFAULT = (1240, 820)  # tamanho de projeto, em pixels a 96 dpi

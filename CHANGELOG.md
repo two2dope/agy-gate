@@ -23,6 +23,12 @@ Correções dos três críticos da auditoria `reviews/audit-full-v0.9.0.md`, tod
 - Painel de detalhes: os quatro botões têm a mesma largura e o conteúdo centralizado.
 - Ícone de Exportar: disquete (Segoe MDL2 `E74E`; `↧` no modo Unicode) no lugar da folha em branco. Glifo não visto num Windows.
 
+### Segurança e dados (revisão final, etapa 1)
+- Máscara de segredos do dossiê cobre também chaves Stripe (`sk_live_`/`rk_test_`), JWT, tokens Slack (`xox…`), Google OAuth (`ya29.`), GitHub granular (`github_pat_`), `Authorization: Basic` e senha em URL (`postgres://usuário:[REDACTED]@host`). O dossiê agora vai dentro do prompt enviado ao modelo, então a máscara passou a importar mais.
+- Estado em memória (quando a pasta de dados não aceita gravação) funciona também nas threads do Auto-Run e da exportação; antes dava `ProgrammingError` e o Auto-Run falhava.
+- `settings.json` gravado de forma atômica: erro ou queda no meio não estragam as preferências.
+- `gate.log` com rotação em ~1 MB (3 cópias antigas).
+
 ### Corrigido
 - Dicas (tooltips) perto da borda direita saíam da janela (ex.: botão Sobre). Agora ficam dentro da janela e do monitor, e acima do botão se faltar espaço embaixo.
 - **Sucesso falso do Auto-Run:** o `agy` sem janela não tem permissão para ler o arquivo do dossiê (`denied_actions: read_file`) e devolvia `SUCCESS` com resposta vazia, que o app aceitava como retomada. Agora resposta vazia é falha (com as ações negadas no log), e o dossiê vai **dentro do prompt** (até 20 mil caracteres; acima disso o meio é cortado e o caminho do arquivo é citado). Retomadas antigas gravadas como sucesso sem resposta são corrigidas ao abrir o app, e as sessões vazias delas vão para arquivadas (salvo marcação sua).
