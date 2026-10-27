@@ -9,7 +9,7 @@ if not exist AntigravityGate.py (
 where python >nul 2>nul && (set PY=python) || (set PY=py)
 %PY% --version || (echo Python nao encontrado. & pause & exit /b 1)
 %PY% -m pip install --upgrade pip pyinstaller || (echo Falha ao instalar o PyInstaller. & pause & exit /b 1)
-%PY% -m PyInstaller --noconfirm --clean --onefile --windowed --name AntigravityGate AntigravityGate.py || (echo Falha ao gerar o .exe. & pause & exit /b 1)
+%PY% -m PyInstaller --noconfirm --clean --onefile --windowed --add-data "fonts;fonts" --name AntigravityGate AntigravityGate.py || (echo Falha ao gerar o .exe. & pause & exit /b 1)
 echo.
 echo Pronto: %cd%\dist\AntigravityGate.exe
 pause

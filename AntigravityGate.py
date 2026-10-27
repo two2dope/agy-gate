@@ -1522,6 +1522,57 @@ ICONS = {
     "about": ("\uE946", "ⓘ"),
 }
 
+# Conjuntos com a fonte empacotada em fonts/ (registrada só para este processo, no Windows). modo -> (família, arquivo, glifos).
+# Font Awesome Free 6.7.2 Solid (SIL OFL 1.1), Bootstrap Icons 1.11.3 (MIT), Material Icons 4.0.0 (Apache 2.0). Licenças em fonts/.
+ICON_FONTS = {
+    "fa": ("Font Awesome 6 Free Solid", "fa-solid-900.ttf", {
+        "refresh": "\uf2f1", "search": "\uf002", "clear": "\uf00d", "approve": "\uf00c", "archive": "\uf187", "pending": "\uf2ea",
+        "export": "\uf56e", "dossier": "\uf04b", "autorun": "\uf0e7", "theme": "\uf53f", "warn": "\uf071", "limits": "\uf1de",
+        "copy": "\uf0c5", "folder": "\uf07c", "about": "\uf05a"}),
+    "bootstrap": ("bootstrap-icons", "bootstrap-icons.ttf", {
+        "refresh": "\uf116", "search": "\uf52a", "clear": "\uf659", "approve": "\uf633", "archive": "\uf10d", "pending": "\uf117",
+        "export": "\uf1c6", "dossier": "\uf4f4", "autorun": "\uf46e", "theme": "\uf4b1", "warn": "\uf33a", "limits": "\uf56b",
+        "copy": "\uf759", "folder": "\uf3d8", "about": "\uf431"}),
+    "material": ("Material Icons", "MaterialIcons-Regular.ttf", {
+        "refresh": "\ue5d5", "search": "\ue8b6", "clear": "\ue5cd", "approve": "\ue5ca", "archive": "\ue149", "pending": "\ue166",
+        "export": "\ue171", "dossier": "\ue037", "autorun": "\uea0b", "theme": "\ue40a", "warn": "\ue002", "limits": "\ue429",
+        "copy": "\ue14d", "folder": "\ue2c8", "about": "\ue88e"}),
+}
+
+
+def font_dir():
+    """Pasta fonts/: ao lado do código ou, no .exe, na pasta temporária do PyInstaller."""
+    import sys
+    return os.path.join(getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__))), "fonts")
+
+
+def register_fonts(folder=None):
+    """Registra as fontes de fonts/ só para este processo (Windows, FR_PRIVATE): nada é instalado no sistema.
+    Devolve os arquivos registrados. Fora do Windows, ou sem a pasta, não faz nada."""
+    folder = folder or font_dir()
+    if os.name != "nt" or not os.path.isdir(folder):
+        return []
+    import ctypes
+    done = []
+    for name in sorted(os.listdir(folder)):
+        if name.lower().endswith((".ttf", ".otf")):
+            if ctypes.windll.gdi32.AddFontResourceExW(os.path.join(folder, name), 0x10, 0):  # 0x10 = FR_PRIVATE
+                done.append(name)
+            else:
+                log.warning("Fonte não registrada: %s", name)
+    return done
+
+
+def icon_glyph(mode, name, families):
+    """Glifo do ícone `name` no modo `mode`. Sem a fonte do conjunto (fora do Windows, por exemplo): símbolo Unicode."""
+    if mode == "none" or name not in ICONS:
+        return ""
+    if mode == "mdl2":
+        return ICONS[name][0]
+    if mode in ICON_FONTS and ICON_FONTS[mode][0] in families:
+        return ICON_FONTS[mode][2][name]
+    return ICONS[name][1]
+
 
 def about_info():
     """Versão e ambiente em texto simples, para a janela Sobre e para colar num relato de problema."""
@@ -1536,6 +1587,7 @@ def about_info():
         f"agy: {find_agy() or 'não encontrado'}",
         f"Dados do app: {LOG_DIR}",
         f"Log: {LOG_FILE}",
+        "Ícones: Font Awesome Free (SIL OFL 1.1), Bootstrap Icons (MIT), Material Icons (Apache 2.0); licenças em fonts/ no repositório",
     ])
 
 
@@ -1938,7 +1990,7 @@ def alert_glyph(app):
     """Ícone de alerta no modo de ícones atual: Warning do Segoe MDL2, ⚠ Unicode ou ‼ sem ícones. (texto, fonte)."""
     if app.icon_mode == "none":
         return "‼", app.f_title
-    return ICONS["warn"][0 if app.icon_mode == "mdl2" else 1], app.f_banner_icon
+    return icon_glyph(app.icon_mode, "warn", app.families), app.f_banner_icon
 
 
 def show_tip(owner, app, text, ax, ay, aw, ah, level=0):
@@ -2113,10 +2165,7 @@ class IconButton(tk.Canvas):
 
     # --- desenho ---
     def glyph(self):
-        mode = self.app.icon_mode
-        if self.icon not in ICONS or mode == "none":
-            return ""
-        return ICONS[self.icon][0 if mode == "mdl2" else 1]
+        return icon_glyph(self.app.icon_mode, self.icon, self.app.families)
 
     def measure(self, compact=None):
         compact = self.compact if compact is None else compact
@@ -2191,7 +2240,7 @@ class IconButton(tk.Canvas):
             self.create_arc(x + 1, cy - iw // 2 + 1, x + iw - 1, cy + iw // 2 - 1, start=self._spin, extent=250, style=tk.ARC, outline=t['accent'] if self.kind != "primary" else fg, width=2)
             x += iw
         elif g or self.ok_flash:
-            shown = ICONS["approve"][0 if self.app.icon_mode == "mdl2" else 1] if self.ok_flash else g
+            shown = (icon_glyph(self.app.icon_mode, "approve", self.app.families) or ICONS["approve"][1]) if self.ok_flash else g
             self.create_text(x, cy, text=shown, font=self.app.f_icon, fill=t['success'] if self.ok_flash else icon_fg, anchor="w")
             x += self.app.f_icon.measure(shown)
         if self.text and (not self.compact or not g):
@@ -2304,7 +2353,8 @@ class Toast(tk.Frame):
 class ThemePicker(tk.Toplevel):
     """Lista suspensa no visual do app: temas com amostra de cores e estilo de ícones. Setas, Enter e Esc funcionam; clicar fora fecha."""
 
-    ICON_MODES = (("mdl2", "Ícones do Windows (Segoe MDL2)"), ("symbol", "Símbolos Unicode"), ("none", "Sem ícones"))
+    ICON_MODES = (("mdl2", "Ícones do Windows (Segoe MDL2)"), ("fa", "Font Awesome"), ("bootstrap", "Bootstrap Icons"),
+                  ("material", "Material Icons"), ("symbol", "Símbolos Unicode"), ("none", "Sem ícones"))
 
     def __init__(self, app, anchor):
         super().__init__(app)
@@ -2603,12 +2653,13 @@ class AntigravityGateApp(tk.Tk):
         c = self.settings.get("context") if isinstance(self.settings.get("context"), dict) else {}
         self.limits_custom = (c.get("attention") or att, c.get("critical") or crit)
         self.banner_dismissed = None
+        self.fonts_loaded = register_fonts()  # ícones Font Awesome, Bootstrap e Material (Windows; só para este processo)
         self.families = set(tkfont.families(self))
         self.base_family = next((f for f in ("Segoe UI", "Helvetica", "DejaVu Sans") if f in self.families),
                                 tkfont.nametofont("TkDefaultFont").actual("family"))
         self.theme_key = self.settings.get("theme") if self.settings.get("theme") in THEMES else "escuro"
         wanted = (os.environ.get("AGY_ICONS") or self.settings.get("icons") or "auto").lower()
-        self.icon_mode = wanted if wanted in ("mdl2", "symbol", "none") else ("mdl2" if "Segoe MDL2 Assets" in self.families else "symbol")
+        self.icon_mode = wanted if wanted in ("mdl2", "symbol", "none", *ICON_FONTS) else ("mdl2" if "Segoe MDL2 Assets" in self.families else "symbol")
         self.f_ui = tkfont.Font(self, family=self.base_family, size=10)
         self.f_bold = tkfont.Font(self, family=self.base_family, size=10, weight="bold")
         self.f_small = tkfont.Font(self, family=self.base_family, size=9)
@@ -2639,6 +2690,8 @@ class AntigravityGateApp(tk.Tk):
     def update_icon_font(self):
         if self.icon_mode == "mdl2" and "Segoe MDL2 Assets" in self.families:
             family = "Segoe MDL2 Assets"
+        elif self.icon_mode in ICON_FONTS and ICON_FONTS[self.icon_mode][0] in self.families:
+            family = ICON_FONTS[self.icon_mode][0]
         else:
             family = next((f for f in ("Segoe UI Symbol", "DejaVu Sans", self.base_family) if f in self.families), self.base_family)
         self.f_icon.configure(family=family, size=11)
@@ -2752,6 +2805,8 @@ class AntigravityGateApp(tk.Tk):
         self.settings['icons'] = mode
         save_settings(self.settings)
         self.update_icon_font()
+        if hasattr(self, 'search_icon'):  # a lupa da busca acompanha o conjunto escolhido
+            self.search_icon.configure(text=icon_glyph(mode, "search", self.families) or ICONS["search"][1])
         if hasattr(self, 'banner'):
             self._banner_style = None
             self.style_banner()
@@ -2978,7 +3033,7 @@ class AntigravityGateApp(tk.Tk):
         box.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(self.px(12), 0), ipady=self.px(2))
         inner = self.themed_widget(tk.Frame(box), bg="panel")
         inner.pack(fill=tk.BOTH, expand=True)
-        self.search_icon = self.themed_widget(tk.Label(inner, font=self.f_icon, text=ICONS["search"][0 if self.icon_mode == "mdl2" else 1]), bg="panel", fg="muted")
+        self.search_icon = self.themed_widget(tk.Label(inner, font=self.f_icon, text=icon_glyph(self.icon_mode, "search", self.families) or ICONS["search"][1]), bg="panel", fg="muted")
         self.search_icon.pack(side=tk.LEFT, padx=(self.px(8), self.px(4)))
         self.search_var = tk.StringVar()
         self.search_entry = self.themed_widget(tk.Entry(inner, textvariable=self.search_var, relief=tk.FLAT, font=self.f_ui, highlightthickness=0),
@@ -4166,10 +4221,14 @@ class AntigravityGateApp(tk.Tk):
         if 'error' in payload:
             self.append_auto(f"Erro inesperado: {payload['error']}")
         else:
-            self.append_auto(f"Fim. ✔ {payload['ok']} retomadas · ▤ {payload['dossier']} dossiês (simulação) · ✖ {payload['failed']} falhas · "
-                             f"» {payload['skipped']} não executadas" + (f" · motivo: {payload['aborted']}" if payload['aborted'] else ""))
+            n = lambda k, um, varios: f"{payload[k]} {um if payload[k] == 1 else varios}"
+            self.append_auto(f"Fim. ✔ {n('ok', 'retomada', 'retomadas')} · ▤ {n('dossier', 'dossiê', 'dossiês')} (simulação) · "
+                             f"✖ {n('failed', 'falha', 'falhas')} · » {n('skipped', 'não executada', 'não executadas')}"
+                             + (f" · motivo: {payload['aborted']}" if payload['aborted'] else ""))
         if self.auto_win:
             self.auto_win[2].set_text("Fechar")
+            fim = "erro" if 'error' in payload else ("concluído com problemas" if payload.get('failed') or payload.get('aborted') else "concluído")
+            self.auto_win[0].title("Auto-Run — " + fim)  # antes ficava "executando" depois do Fim
         try:
             self.states = self.state.load()
             self.handoffs = self.state.handoffs_ok()
@@ -4228,8 +4287,9 @@ def selftest(out_path):
         if os.name == "nt":  # confere a consulta de monitor no Windows de verdade
             primary, at = _win_work_area(), _win_work_area(app.winfo_x() + 50, app.winfo_y() + 50)
             area = f"; área útil principal {primary}, no ponto {at}; barra de título {style_titlebar(app, app.t)}"
+        fonts = len(app.fonts_loaded)
         app.destroy()
-        msg = f"OK (v{__version__}; {fts}{area})" if done else "FALHA: a carga não terminou em 60 s"
+        msg = f"OK (v{__version__}; {fts}; {fonts} fontes registradas{area})" if done else "FALHA: a carga não terminou em 60 s"
     except Exception as e:
         msg = f"FALHA: {type(e).__name__}: {e}"
     with open(out_path, "w", encoding="utf-8") as fh:

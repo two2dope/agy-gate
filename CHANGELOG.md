@@ -2,6 +2,19 @@
 
 Formato: [Versionamento Semântico](https://semver.org/lang/pt-BR/). Enquanto a versão começar com 0, o app está em candidato a lançamento: funciona, mas faltam itens listados abaixo.
 
+## [1.1.0] - em desenvolvimento
+
+Pacote visual (plano em `docs/PACOTE_VISUAL_1.1.md`). Marco M1a: conjuntos de ícones.
+
+### Adicionado
+- **Três conjuntos de ícones novos, com as fontes dentro do `.exe`:** Font Awesome Free 6.7.2 (Solid), Bootstrap Icons 1.11.3 e Material Icons 4.0.0. Escolha em Tema > Ícones. As fontes são registradas só para o app: nada é instalado no Windows. Sem a fonte (fora do Windows), os botões usam os símbolos Unicode.
+- Licenças das fontes em `fonts/` e créditos no Sobre. O autoteste do `.exe` no CI confere que as 3 fontes foram registradas.
+
+### Corrigido
+- A janela de andamento do Auto-Run continuava com o título "executando" depois do "Fim.". Agora mostra "concluído", "concluído com problemas" ou "erro".
+- Resumo do Auto-Run no singular quando o número é 1 ("1 retomada", "1 falha").
+- A lupa da busca não acompanhava a troca do estilo de ícones.
+
 ## [1.0.2] - 2026-10-27
 
 Alerta de contexto em destaque. Entra no lugar do item 8 do backlog (divisor de altura entre a tabela e os detalhes).
