@@ -26,7 +26,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from tkinter import font as tkfont
 
-__version__ = "1.0.1"  # ver CHANGELOG.md
+__version__ = "1.0.2"  # ver CHANGELOG.md
 __build__ = "código-fonte"  # o CI troca pelo commit e pela data da montagem do .exe
 APP_AUTHOR = "Thominha"
 APP_EMAIL = "twoo2dope@gmail.com"
@@ -1765,6 +1765,24 @@ def ink_on(color):
     return "#000000" if contrast("#000000", color) >= contrast("#ffffff", color) else "#ffffff"
 
 
+def strong_bg(color, ink="#ffffff", target=4.6):
+    """`color` escurecida o mínimo para o texto `ink` passar no contraste WCAG AA (4,5:1)."""
+    for i in range(21):
+        bg = blend(color, "#000000", i * 0.05)
+        if contrast(ink, bg) >= target:
+            return bg
+    return "#000000"
+
+
+def banner_colors(t, level):
+    """Cores da faixa de alerta de contexto. 2 = crítico: vermelho do tema, forte, com texto claro.
+    1 = atenção: âmbar suave, texto normal. Chaves: bg, fg, icon, stripe (borda e barra à esquerda)."""
+    if level == 2:
+        bg = strong_bg(t['danger'])
+        return {'bg': bg, 'fg': "#ffffff", 'icon': "#ffffff", 'stripe': t['danger'] if bg != t['danger'] else blend(bg, "#000000", 0.35)}
+    return {'bg': blend(t['panel'], t['warning'], 0.16), 'fg': t['fg'], 'icon': t['warning'], 'stripe': t['warning']}
+
+
 def round_rect(c, x1, y1, x2, y2, r, **kw):
     if r <= 0:
         return c.create_rectangle(x1, y1, x2, y2, **kw)
@@ -2570,6 +2588,8 @@ class AntigravityGateApp(tk.Tk):
         self.f_btn = tkfont.Font(self, family=self.base_family, size=9, weight="bold")
         self.f_title = tkfont.Font(self, family=self.base_family, size=15, weight="bold")
         self.f_icon = tkfont.Font(self, family=self.base_family, size=11)
+        self.f_banner_icon = tkfont.Font(self, family=self.base_family, size=20)
+        self.banner_level, self._banner_style = 2, None
         self.update_icon_font()
         self.apply_theme()
 
@@ -2591,10 +2611,11 @@ class AntigravityGateApp(tk.Tk):
 
     def update_icon_font(self):
         if self.icon_mode == "mdl2" and "Segoe MDL2 Assets" in self.families:
-            self.f_icon.configure(family="Segoe MDL2 Assets", size=11)
+            family = "Segoe MDL2 Assets"
         else:
-            sym = next((f for f in ("Segoe UI Symbol", "DejaVu Sans", self.base_family) if f in self.families), self.base_family)
-            self.f_icon.configure(family=sym, size=11)
+            family = next((f for f in ("Segoe UI Symbol", "DejaVu Sans", self.base_family) if f in self.families), self.base_family)
+        self.f_icon.configure(family=family, size=11)
+        self.f_banner_icon.configure(family=family, size=20)  # ícone da faixa de alerta, em destaque
 
     @property
     def bg_color(self):
@@ -2606,7 +2627,7 @@ class AntigravityGateApp(tk.Tk):
         t = self.t = dict(THEMES[self.theme_key])
         t['header_sub'] = blend(t['header_fg'], t['header_bg'], 0.12)
         t['btn_fg'] = t['fg']
-        t['banner_bg'] = blend(t['panel'], t['danger'], 0.16)
+        t['banner_bg'] = banner_colors(t, self.banner_level)['bg']  # muda com o nível da faixa (style_banner)
         self.configure(bg=t['bg'])
         self.f_title.configure(family=next((f for f in t['title_fonts'] if f in self.families), self.base_family))
 
@@ -2641,6 +2662,9 @@ class AntigravityGateApp(tk.Tk):
         # Widgets tk (não-ttk): reaplica as cores sem recarregar dados.
         for widget, opts in self.themed:
             widget.configure(**{opt: t[tok] for opt, tok in opts.items()})
+        if hasattr(self, 'banner'):
+            self._banner_style = None
+            self.style_banner()
         for b in self.icon_buttons:
             b.redraw()
         for c in self.chips.values():
@@ -2701,6 +2725,9 @@ class AntigravityGateApp(tk.Tk):
         self.settings['icons'] = mode
         save_settings(self.settings)
         self.update_icon_font()
+        if hasattr(self, 'banner'):
+            self._banner_style = None
+            self.style_banner()
         for b in self.icon_buttons:
             b.relayout()
         self.on_resize()
@@ -2768,9 +2795,13 @@ class AntigravityGateApp(tk.Tk):
         return (f"Níveis de alerta de contexto: {name} — atenção {fmt_tokens(CONTEXT_LIMITS['attention'])}, "
                 f"crítico {fmt_tokens(CONTEXT_LIMITS['critical'])}. Clique para mudar.")
 
-    def critical_rows(self):
+    def level_rows(self, level):
+        """Sessões visíveis e não arquivadas no nível de contexto `level` (1 atenção, 2 crítico)."""
         shown = [self.row_by_cid[self.cid_of(i)] for i in self.iter_sessions() if self.cid_of(i) in self.row_by_cid]
-        return [r for r in shown if ctx_level(r['ctx']) == 2 and self.states.get(r['cid']) != "arquivada"]
+        return [r for r in shown if ctx_level(r['ctx']) == level and self.states.get(r['cid']) != "arquivada"]
+
+    def critical_rows(self):
+        return self.level_rows(2)
 
     def update_empty(self):
         """Mensagem no centro da tabela quando não há linhas: carregando, busca sem resultado ou fonte vazia."""
@@ -2804,28 +2835,64 @@ class AntigravityGateApp(tk.Tk):
         self.empty.place(in_=self.tree, relx=0.5, rely=0.42, anchor="center")
         self.empty.lift()
 
+    def banner_key(self, level):
+        return (self.sources[self.source_idx][0], CONTEXT_LIMITS['attention'], CONTEXT_LIMITS['critical'], level)
+
+    def style_banner(self):
+        """Cores, ícone e botão da faixa conforme o nível atual. Só repinta quando tema, ícones ou nível mudaram."""
+        key = (self.theme_key, self.icon_mode, self.banner_level)
+        if key == self._banner_style:
+            return
+        self._banner_style = key
+        c = banner_colors(self.t, self.banner_level)
+        self.t['banner_bg'] = c['bg']
+        self.banner.configure(bg=c['bg'], highlightbackground=c['stripe'], highlightcolor=c['stripe'])
+        self.banner_stripe.configure(bg=c['stripe'])
+        self.banner_text.configure(bg=c['bg'])
+        glyph = "‼" if self.icon_mode == "none" else ICONS["warn"][0 if self.icon_mode == "mdl2" else 1]
+        self.banner_icon.configure(text=glyph, bg=c['bg'], fg=c['icon'], font=self.f_title if self.icon_mode == "none" else self.f_banner_icon)
+        for lab in (self.banner_msg, self.banner_detail):
+            lab.configure(bg=c['bg'], fg=c['fg'])
+        view = self.btn["banner_view"]
+        view.tip = "Listar só as sessões críticas" if self.banner_level == 2 else "Listar só as sessões em atenção"
+        view.icon_token = "danger" if self.banner_level == 2 else "warning"
+        view.set_text("Ver críticas" if self.banner_level == 2 else "Ver em atenção")
+        for name in ("banner_view", "banner_dismiss"):
+            self.btn[name].redraw()
+
     def update_banner(self):
+        """Faixa de alerta: crítico tem prioridade; atenção aparece só quando não há críticas."""
         crit = self.critical_rows()
-        key = (self.sources[self.source_idx][0], CONTEXT_LIMITS['critical'])
-        show = bool(crit) and self.match is None and self.banner_dismissed != key
+        level, rows = (2, crit) if crit else (1, self.level_rows(1))
+        show = bool(rows) and self.match is None and self.banner_dismissed != self.banner_key(level)
         if show:
-            n = len(crit)
-            self.banner_msg.configure(text=f"{n} sessão(ões) acima do nível crítico ({fmt_tokens(CONTEXT_LIMITS['critical'])} tokens). "
-                                           "Gere o dossiê e retome em uma sessão nova para não perder qualidade.")
+            self.banner_level = level
+            self.style_banner()
+            n, att, cri = len(rows), fmt_tokens(CONTEXT_LIMITS['attention']), fmt_tokens(CONTEXT_LIMITS['critical'])
+            if level == 2:
+                self.banner_msg.configure(text=f"CRÍTICO · {n} sessão(ões) acima do nível crítico ({cri} tokens)")
+                self.banner_detail.configure(text="Gere o dossiê e retome em uma sessão nova para não perder qualidade.")
+            else:
+                self.banner_msg.configure(text=f"ATENÇÃO · {n} sessão(ões) acima do nível de atenção ({att} tokens)")
+                self.banner_detail.configure(text=f"Ainda dá para trabalhar, mas planeje a troca: gere o dossiê antes do nível crítico ({cri} tokens).")
             if not self.banner.winfo_manager():
                 self.banner.pack(fill=tk.X, padx=self.px(16), pady=(0, self.px(8)), before=self.holder)
         elif self.banner.winfo_manager():
             self.banner.pack_forget()
 
-    def show_critical(self):
-        crit = self.critical_rows()
-        self.match = {r['cid'] for r in crit}
+    def show_level(self, level):
+        """Lista só as sessões (não arquivadas) do nível: 2 = críticas, 1 = em atenção."""
+        rows = self.level_rows(level)
+        self.match = {r['cid'] for r in rows}
         self.chip_filter = None
-        self.search_note = f"{len(crit)} sessão(ões) críticas"
+        self.search_note = f"{len(rows)} sessão(ões) " + ("críticas" if level == 2 else "em atenção")
         self.populate()
 
+    def show_critical(self):
+        self.show_level(2)
+
     def dismiss_banner(self):
-        self.banner_dismissed = (self.sources[self.source_idx][0], CONTEXT_LIMITS['critical'])
+        self.banner_dismissed = self.banner_key(self.banner_level)
         self.update_banner()
 
     def show_theme_menu(self):
@@ -2936,13 +3003,22 @@ class AntigravityGateApp(tk.Tk):
         self.build_details()
         self.apply_details_visibility()
 
-        # Aviso de sessões acima do nível crítico (aparece só quando há; fica entre as ações e a tabela)
-        self.banner = self.themed_widget(tk.Frame(self, padx=self.px(12), pady=self.px(8), highlightthickness=1), bg="banner_bg", highlightbackground="danger")
-        self.themed_widget(tk.Label(self.banner, text="‼", font=self.f_title), bg="banner_bg", fg="danger").pack(side=tk.LEFT, padx=(0, self.px(10)))
-        self.banner_msg = self.themed_widget(tk.Label(self.banner, anchor="w", justify=tk.LEFT, font=self.f_ui), bg="banner_bg", fg="fg")
-        self.banner_msg.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.make_button(self.banner, "banner_dismiss", "clear", "Dispensar", self.dismiss_banner, "Esconder este aviso até mudar de fonte ou de limite", bg_token="banner_bg").pack(side=tk.RIGHT, padx=(self.px(8), 0))
-        self.make_button(self.banner, "banner_view", "search", "Ver críticas", self.show_critical, "Listar só as sessões críticas", bg_token="banner_bg", icon_token="danger").pack(side=tk.RIGHT)
+        # Faixa de alerta de contexto (aparece só quando há; fica entre as ações e a tabela). Dois níveis:
+        # crítico (vermelho forte, texto claro) e atenção (âmbar suave, só quando não há críticas). Cores: banner_colors.
+        self.banner = tk.Frame(self, highlightthickness=1)
+        self.banner_stripe = tk.Frame(self.banner, width=self.px(6))
+        self.banner_stripe.pack(side=tk.LEFT, fill=tk.Y)
+        self.banner_icon = tk.Label(self.banner, font=self.f_banner_icon)
+        self.banner_icon.pack(side=tk.LEFT, padx=(self.px(12), self.px(10)), pady=self.px(8))
+        self.make_button(self.banner, "banner_dismiss", "clear", "Dispensar", self.dismiss_banner, "Esconder este aviso até mudar de fonte ou de limite", bg_token="banner_bg").pack(side=tk.RIGHT, padx=(self.px(8), self.px(12)))
+        self.make_button(self.banner, "banner_view", "search", "Ver críticas", lambda: self.show_level(self.banner_level), "Listar só as sessões críticas", bg_token="banner_bg", icon_token="danger").pack(side=tk.RIGHT)
+        self.banner_text = tk.Frame(self.banner)
+        self.banner_text.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=self.px(8))
+        self.banner_msg = tk.Label(self.banner_text, anchor="w", justify=tk.LEFT, font=self.f_bold)
+        self.banner_msg.pack(fill=tk.X)
+        self.banner_detail = tk.Label(self.banner_text, anchor="w", justify=tk.LEFT, font=self.f_ui)
+        self.banner_detail.pack(fill=tk.X)
+        self.style_banner()
 
         holder = self.holder = self.themed_widget(tk.Frame(self, padx=self.px(16)), bg="bg")
         holder.pack(fill=tk.BOTH, expand=True, pady=(0, self.px(10)))

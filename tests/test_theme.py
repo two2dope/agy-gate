@@ -38,9 +38,11 @@ for key, th in G.THEMES.items():
     # selos de contagem: texto na cor do token sobre o fundo misturado; e a cor das linhas marcadas sobre a seleção
     for tok in ("danger", "warning", "muted", "success", "accent_text"):
         pairs.append((f"chip {tok}", t[tok], t['panel']))
-    banner = G.blend(t['panel'], t['danger'], 0.16)
-    pairs += [("banner texto", t['fg'], banner), ("banner muted", t['muted'], banner)]
-    large = [("banner glifo ‼ (texto grande, mínimo 3:1)", t['danger'], banner)]
+    large = []
+    for lvl, nome in ((2, "crítica"), (1, "atenção")):  # faixa de alerta de contexto (1.0.2)
+        c = G.banner_colors(t, lvl)
+        pairs.append((f"faixa {nome}: texto", c['fg'], c['bg']))
+        large += [(f"faixa {nome}: ícone (grande, mínimo 3:1)", c['icon'], c['bg']), (f"faixa {nome}: barra lateral (mínimo 3:1)", c['stripe'], t['bg'])]
     bad += [(key, n, a, b, round(cr(a, b), 2)) for n, a, b in large if cr(a, b) < 3.0]
     pairs += [("badge", G.ink_on(t['warning']), t['warning']), ("badge primário", t['accent'], t['accent_fg'])]
     bad += [(key, n, a, b, round(cr(a, b), 2)) for n, a, b in pairs if cr(a, b) < 4.5]

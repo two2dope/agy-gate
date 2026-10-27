@@ -80,6 +80,9 @@ tags = lambda n: app.tree.item(iid(app, n), "tags")
 assert not tags(1) and tags(2) == ("rot",) and tags(3) == ("crit",) and tags(4) == ("crit",)
 assert app.chips["rot"].cget("text") == "⚠ 1 em atenção" and app.chips["crit"].cget("text") == "‼ 2 críticas"
 assert app.banner.winfo_manager() == "pack" and "2 sessão(ões) acima do nível crítico (250k tokens)" in app.banner_msg.cget("text")
+# faixa crítica em destaque (1.0.2): vermelho forte do tema, texto claro, título com o nível, botão do nível
+assert app.banner_level == 2 and app.banner_msg.cget("text").startswith("CRÍTICO · ") and app.banner.cget("bg") == G.banner_colors(app.t, 2)['bg']
+assert app.banner_msg.cget("fg") == "#ffffff" and app.btn["banner_view"].text == "Ver críticas" and app.banner_detail.cget("text")
 vals = lambda n: app.tree.item(iid(app, n), "values")[2]
 assert vals(2).endswith("⚠") and vals(3).endswith("‼") and vals(1) == G.ctx_label(90000)
 # arquivar uma crítica: sai do aviso, fica esmaecida, o selo continua contando o nível
@@ -99,6 +102,17 @@ app.clear_search(); app.update(); assert shown(app) == {U(1), U(2), U(3), U(4)} 
 # faixa ampla: ninguém crítico, aviso some, tags mudam
 app.set_limits("amplo", 300000, 500000); app.update()
 assert app.banner.winfo_manager() == "" and not tags(3) and not tags(2) and app.chips["crit"].cget("text") == "‼ 1 críticas"
+# faixa de atenção (1.0.2): só quando não há críticas; âmbar suave, botão próprio; dispensar vale para o nível
+app.set_limits(G.CONTEXT_CUSTOM, 150000, 700000); app.update()   # 2 e 3 em atenção; a 4 também, mas está arquivada
+assert app.banner.winfo_manager() == "pack" and app.banner_level == 1, app.banner_level
+assert app.banner_msg.cget("text") == "ATENÇÃO · 2 sessão(ões) acima do nível de atenção (150k tokens)", app.banner_msg.cget("text")
+assert app.banner.cget("bg") == G.banner_colors(app.t, 1)['bg'] and app.btn["banner_view"].text == "Ver em atenção"
+app.btn["banner_view"].invoke(); app.update()
+assert shown(app) == {U(2), U(3)} and "2 sessão(ões) em atenção" in app.status.cget("text") and app.banner.winfo_manager() == ""
+app.clear_search(); app.update(); assert app.banner.winfo_manager() == "pack"
+app.dismiss_banner(); assert app.banner.winfo_manager() == ""
+app.set_theme("claro"); app.update(); assert app.banner.winfo_manager() == "", "dispensada continua dispensada ao trocar o tema"
+app.set_theme("escuro"); app.set_limits("amplo", 300000, 500000); app.update()
 
 # --- 8. diálogo
 dlg = G.LimitDialog(app); dlg.update()

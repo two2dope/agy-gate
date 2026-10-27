@@ -1,28 +1,31 @@
 # AntigravityGate: estado do projeto
 
-Atualizado em 2026-10-27, versão **1.0.1** (branch `claude/funny-tesla-4w2i3q`, ainda não publicada). Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
+Atualizado em 2026-10-27, versão **1.0.2** (branch `claude/funny-tesla-4w2i3q`, ainda não publicada; contém a 1.0.1 e a 1.0.2). Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
 
 ## Snapshot
 
 | | |
 |---|---|
-| **Feito** | 1.0.0 publicada. Antigravity restaurado no Windows (27/10: conversas de volta no remoto `dev-thomaz` e na busca do VS Code). Auditoria `reviews/audit-full-v1.0.0.md`. **1.0.1 na branch:** crítico C1 corrigido (retomada no projeto de origem), com teste |
-| **Faltando** | Uma retomada real com a 1.0.1, conferida no remoto. Não verificado: escala 125–150%, status 6 e 7 |
-| **Próximo passo único** | Rodar 1 retomada real (simulação primeiro) e conferir no `dev-thomaz` se a sessão nova aparece **dentro** do projeto de origem; se sim, merge e tag `v1.0.1` |
+| **Feito** | 1.0.0 publicada. Antigravity restaurado no Windows (27/10: conversas de volta no remoto `dev-thomaz` e na busca do VS Code). Auditoria `reviews/audit-full-v1.0.0.md`. **Na branch:** 1.0.1 (crítico C1: retomada no projeto de origem) e 1.0.2 (faixa de alerta em dois níveis), com testes |
+| **Faltando** | Uma retomada real conferida no remoto; ver a faixa nova no Windows (ícone e cores). Não verificado: escala 125–150%, status 6 e 7 |
+| **Próximo passo único** | Com o `.exe` da branch: 1 retomada real (simulação primeiro) e conferir no `dev-thomaz` se a sessão nova aparece **dentro** do projeto de origem; se sim, merge e tag `v1.0.2` |
 
 ## Pendências (backlog pós-1.0)
 
 Em ordem de prioridade. Cada item vira uma 1.0.x com teste; nada entra sem decidir o que sai.
 
 0. **Auditoria v1.0.0, crítico C2:** junctions (`antigravity-cli`, `antigravity-ide` → `antigravity`) aparecem como fontes "Backup/outros", com os dados vivos. Corrigir com `realpath` em `discover_sources`. Demais recomendações (R2–R17) na auditoria.
-1. **Ícone autoral do app** (`.ico` multi-tamanho 16–256 px para o `.exe`, a barra de tarefas e a barra de título). Hoje o `.exe` usa o ícone padrão do PyInstaller e a janela usa a pena do Tk. Fazer: arte própria → `packaging/app.ico` → `--icon` no PyInstaller → `iconbitmap`/`iconphoto` nas janelas.
+1. **1.1 — pacote visual** (decidido em 27/10; escopo maior, a definir com as opções de interface que o usuário vai fornecer para avaliar viabilidade). Já entra:
+   - **Ícone autoral do app** (`.ico` multi-tamanho 16–256 px para o `.exe`, a barra de tarefas e a barra de título). Hoje o `.exe` usa o ícone padrão do PyInstaller e a janela usa a pena do Tk. Fazer: arte própria → `packaging/app.ico` → `--icon` no PyInstaller → `iconbitmap`/`iconphoto` nas janelas.
+   - **Mais 3 conjuntos de ícones, com as fontes reais dentro do `.exe`:** Font Awesome Free (Solid, SIL OFL 1.1), Bootstrap Icons (MIT) e Material Icons (Apache 2.0), além dos atuais (Segoe MDL2, Unicode, sem ícones). Cerca de +1 MB no `.exe`; créditos de licença no Sobre; registro privado da fonte no Windows (`AddFontResourceExW`, `FR_PRIVATE`) e `--add-data` no PyInstaller. As três fontes podem ser baixadas do GitHub (Bootstrap vem em WOFF: converter para TTF). Conferir cada glifo renderizando antes de entregar.
 2. Validar no uso real o fluxo completo (curadoria → dossiê → Auto-Run). Desbloqueado: as sessões foram restauradas no Antigravity em 27/10.
 3. Não verificado no Windows: escala 125% a 150%, glifos Segoe MDL2 em todos os botões, significado dos status 6 e 7 das ferramentas.
 4. Lista de modelos do Auto-Run pelo `agy models` (hoje: lista embutida + a que o `agy` devolve no erro).
 5. Campo "Modelo(s)" vazio no dossiê de algumas sessões (o banco não tinha o nome em `gen_metadata`; não investigado).
 6. Datas `0001-01-01 00:00:00` em sessões sem horário: mostrar "-".
 7. Limpeza opcional de dossiês antigos em `%LOCALAPPDATA%\AntigravityGate\handoffs` (decisão do usuário).
-8. Divisor de altura entre a tabela e os detalhes (pedido e adiado: só se o painel ganhar mais informação).
+
+Saiu do backlog em 27/10: divisor de altura entre a tabela e os detalhes (a faixa de alerta da 1.0.2 entrou no lugar dele).
 
 Fora do alcance do app: o editor do Antigravity abre sozinho a cada chamada do `agy` (comportamento do `agy`; o `--help` não tem opção para evitar).
 
@@ -31,7 +34,9 @@ Fora do alcance do app: o editor do Antigravity abre sozinho a cada chamada do `
 - **Restauração do Antigravity** (fora do app): a config `~/.gemini/config/projects` tinha sido alterada por scripts do Gemini e o daemon de remote control estava desregistrado. Registro completo: `handoffs/2026-10-27-antigravity-sync.md` no repositório `zuvuya`.
 - **Auditoria full spectrum** do app contra o que a restauração revelou: `reviews/audit-full-v1.0.0.md`. Dois críticos: C1 (retomada fora do projeto, corrigido na 1.0.1) e C2 (junctions como "Backup", no backlog).
 - **Fatos do ambiente real** que os testes não cobriam: junctions para a pasta mestra; JSON de projeto com BOM; a barra lateral do VS Code (extensão 1.9.0 + `agy` 1.4.7) só lista conversas abertas, enquanto a busca 🔍 e o remoto listam tudo; três motores escrevendo na mesma pasta (daemon, VS Code, Auto-Run).
-- Testes da 1.0.1 rodados localmente com Python 3.12 e **Tk 9.0**: 24 de 25 passam. `test_theme` falha igual antes e depois da mudança (largura de fonte do Tk 9; o CI usa Tk 8.6).
+- Testes da 1.0.1 rodados localmente com Python 3.12 e **Tk 9.0**: 24 de 25 passam. `test_theme` falha igual antes e depois da mudança (largura de fonte do Tk 9; o CI usa Tk 8.6). No CI (Tk 8.6), a 1.0.1 passou nos 25 e o `.exe` foi montado e autotestado (execução 40465486627).
+- **1.0.2** (pedido do usuário, mesma sessão): faixa de alerta em dois níveis no lugar do item 8 do backlog. Ícones adicionais (Font Awesome, Bootstrap, Material, com as fontes reais) ficaram para a 1.1 "pacote visual", junto com o ícone autoral; o usuário vai fornecer opções de interface para avaliar viabilidade.
+- Neste ambiente de teste o Tk só enxerga 8 fontes do X, sem símbolos: os ícones (botões e faixa) não aparecem nas capturas de Linux. Não é defeito do app.
 
 ## Registro da sessão de 2026-10-26/27 (0.9.0 → 1.0.0)
 
@@ -170,7 +175,8 @@ Usado pelo Auto-Run:
 
 - Os valores das faixas são **heurísticas**, não medidas: a degradação real depende do modelo e da tarefa **[Não verificado]** para o seu modelo. Nas suas sessões reais, o contexto chegou a ~201 mil e ~213 mil tokens.
 - A janela mostra, antes de aplicar, quantas sessões carregadas ficariam em atenção e críticas.
-- **Atenção:** linha em âmbar, `⚠`. **Crítico:** linha em vermelho, `‼`, mais um **aviso** acima da tabela com os botões `Ver críticas` (lista só as críticas) e `Dispensar`. O aviso não conta sessões arquivadas. Ele volta se você mudar o limite ou a fonte.
+- **Atenção:** linha em âmbar, `⚠`. **Crítico:** linha em vermelho, `‼`.
+- **Faixa de alerta acima da tabela (1.0.2), em dois níveis.** Crítico: fundo vermelho forte do tema, texto claro, ícone grande, "CRÍTICO · N sessão(ões)…" e o que fazer; botões `Ver críticas` e `Dispensar`. Atenção: faixa âmbar suave, só quando não há críticas, com `Ver em atenção` e `Dispensar`. A faixa não conta sessões arquivadas. Dispensar vale para o nível exibido; a faixa volta se você mudar o limite ou a fonte. Cores em `banner_colors` (o vermelho escurece o mínimo para o texto claro ter 4,5:1); o `test_theme` confere o contraste nos 8 temas. Ícone: `Warning` do Segoe MDL2 (`E7BA`), `⚠` no modo Unicode e `‼` sem ícones. **Não visto num Windows.**
 - Selos no rodapé: `N em atenção` e `N críticas`. O dossiê indica o nível no cabeçalho (`tokens (atenção)` ou `(crítico)`).
 - Preferência salva em `settings.json`. A variável `AGY_ROT_TOKENS` (antiga) ainda vale: define a atenção, e o crítico fica 1,5 vez maior.
 

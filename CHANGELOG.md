@@ -2,6 +2,15 @@
 
 Formato: [Versionamento Semântico](https://semver.org/lang/pt-BR/). Enquanto a versão começar com 0, o app está em candidato a lançamento: funciona, mas faltam itens listados abaixo.
 
+## [1.0.2] - 2026-10-27
+
+Alerta de contexto em destaque. Entra no lugar do item 8 do backlog (divisor de altura entre a tabela e os detalhes).
+
+### Alterado
+- **Faixa de alerta em dois níveis.** Crítico: fundo vermelho do tema, forte, com texto claro, ícone grande, título "CRÍTICO · N sessão(ões) acima do nível crítico" e o que fazer na linha de baixo. Atenção (novo): faixa âmbar suave, "ATENÇÃO · N sessão(ões) acima do nível de atenção", que só aparece quando não há críticas, com o botão `Ver em atenção`. Barra colorida à esquerda nos dois níveis.
+- Dispensar vale para o nível exibido: a faixa volta se mudar a fonte ou os limites.
+- Contraste das duas faixas conferido nos 8 temas (texto ≥ 4,5:1; ícone e barra ≥ 3:1). O vermelho escurece o mínimo necessário para o texto claro passar.
+
 ## [1.0.1] - 2026-10-27
 
 Correção do crítico C1 da auditoria `reviews/audit-full-v1.0.0.md`: a retomada do Auto-Run nascia fora do projeto da sessão original.
