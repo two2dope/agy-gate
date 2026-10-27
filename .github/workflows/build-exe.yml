@@ -128,8 +128,10 @@ jobs:
             Gh release upload $tag dist/AntigravityGate.exe --clobber
             # Preserva notas, título e marcações escolhidos na tela; só acrescenta o SHA-256 (e as notas do CHANGELOG se estiver vazia).
             $body = if ([string]::IsNullOrWhiteSpace($rel.body)) { $m.Groups[1].Value.Trim() } else { $rel.body.Trim() }
+            $body = ($body -replace '(?s)\s*\*\*SHA-256 do \.exe:\*\*.*$', '').Trim()   # nova execução: não duplica o bloco
             Set-Content -Path release_notes.md -Value "$body`n`n$sha" -Encoding UTF8
             Gh release edit $tag --notes-file release_notes.md
+            if ($rel.isDraft) { Gh release edit $tag --draft=false }   # rascunho de uma execução que falhou: publica agora
           } elseif ("$view" -match "release not found") {
             Set-Content -Path release_notes.md -Value "$($m.Groups[1].Value.Trim())`n`n$sha" -Encoding UTF8
             $create = @("release", "create", $tag, "--draft", "--title", "AntigravityGate $tag", "--notes-file", "release_notes.md")

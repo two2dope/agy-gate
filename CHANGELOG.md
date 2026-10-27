@@ -23,6 +23,13 @@ Correções dos três críticos da auditoria `reviews/audit-full-v0.9.0.md`, tod
 - Painel de detalhes: os quatro botões têm a mesma largura e o conteúdo centralizado.
 - Ícone de Exportar: disquete (Segoe MDL2 `E74E`; `↧` no modo Unicode) no lugar da folha em branco. Glifo não visto num Windows.
 
+### Blindagem (revisão final, etapa 3)
+- Testes rodam no GitHub antes da montagem; teste vermelho barra o `.exe`. O executor exige código de saída 0.
+- PyInstaller com versão fixa (6.22.3). Escrita no repositório só no job que publica a Release.
+- Release em rascunho primeiro: anexa o `.exe`, confere, e só então publica; cada chamada do `gh` é conferida; notas e marcações feitas na tela são preservadas.
+- Revisão de código de todo o branch. Corrigido: resposta do `agy` ia para o `gate.log` sem máscara de segredos; conversa aberta por você durante uma tentativa com erro podia ser arquivada (agora só arquiva sessão cuja primeira fala é o prompt do Auto-Run); "basic" em texto comum era mascarado; menu do botão direito exportava a primeira de várias selecionadas; filtro de selo desatualizava ao marcar; dica podia apontar para linha recriada; notificações vizinhas confundiam a pausa.
+- **Maximizar nunca funcionou:** o atributo `self.state` (estado das sessões) escondia o método `state()` do Tk. Agora usa `wm_state`.
+
 ### Teclado e janelas (revisão final, etapa 2b)
 - Confirmação do Auto-Run no tema do app, com uma caixa por sessão aprovada: só as marcadas rodam. As já retomadas vêm desmarcadas; "Refazer" marca todas.
 - Janela de andamento do Auto-Run no tema, com tamanho escalado pelo DPI.

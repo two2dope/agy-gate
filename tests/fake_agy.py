@@ -31,8 +31,17 @@ elif mode == "badmodel":  # saída real do agy (26/10) com nome de modelo sem o 
     print(json.dumps({"conversation_id": "", "status": "ERROR", "response": "", "error": msg, "duration_seconds": 0, "num_turns": 0, "usage": {}}))
     sys.exit(1)
 elif mode == "badmodel_creates":  # erro com conversation_id vazio, mas o agy criou a sessão mesmo assim
-    conv = os.environ["AGY_FAKE_CONV"]
-    open(os.path.join(conv, "bbbbbbbb-0000-0000-0000-%012d.db" % (n + 1)), "w").close()
+    import sqlite3  # como o agy real: a sessão nova começa com o prompt recebido (passo 14, f19.f2)
+    def vi(x):
+        o = bytearray()
+        while True:
+            b = x & 0x7f; x >>= 7
+            if x: o.append(b | 0x80)
+            else: o.append(b); return bytes(o)
+    fl = lambda f, b: vi(f << 3 | 2) + vi(len(b)) + b
+    c = sqlite3.connect(os.path.join(os.environ["AGY_FAKE_CONV"], "bbbbbbbb-0000-0000-0000-%012d.db" % (n + 1)))
+    c.execute("CREATE TABLE steps (idx integer PRIMARY KEY, step_type integer, status integer, step_payload blob, error_details blob)")
+    c.execute("INSERT INTO steps VALUES(0,14,3,?,NULL)", (fl(19, fl(2, ("/plan " + sys.argv[-1]).encode())),)); c.commit(); c.close()
     msg = 'invalid model selection (--model "X" --effort ""): model X is not recognized\nAvailable models:\n  Gemini 3.8 Flash (Medium)\n  Gemini 4 Argon (Medium)'
     print(json.dumps({"conversation_id": "", "status": "ERROR", "response": "", "error": msg})); sys.exit(1)
 elif mode == "ok_with_sub":  # sucesso que cria também um sub-agente: nada é arquivado

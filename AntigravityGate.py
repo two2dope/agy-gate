@@ -388,7 +388,7 @@ SECRET_PATTERNS = [
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/\-]{20,}=*"),
-    re.compile(r"(?i)\bBasic\s+[A-Za-z0-9+/]{16,}=*"),                       # Authorization: Basic
+    re.compile(r"(?i)(\bAuthorization:\s*Basic\s+)[A-Za-z0-9+/]{8,}=*"),        # cabeçalho Authorization: Basic
     re.compile(r"\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}"),                    # Stripe
     re.compile(r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}"),  # JWT
     re.compile(r"\bxox[abposr]-[A-Za-z0-9\-]{10,}"),                         # Slack
@@ -999,6 +999,7 @@ def uri_paths(uris):
     return out
 
 
+AGY_PROMPT_MARK = "Você está retomando o trabalho de uma sessão anterior"  # início dos dois prompts do Auto-Run
 DOSSIER_INLINE_MAX = 20000  # caracteres do dossiê dentro do prompt (a linha de comando do Windows aceita ~32 mil)
 AGY_PROMPT_INLINE = ("Você está retomando o trabalho de uma sessão anterior. O dossiê de retomada está abaixo, entre as marcas "
                      "INÍCIO DO DOSSIÊ e FIM DO DOSSIÊ (cópia em: {path}). Depois de ler, responda em poucas linhas: (1) o que entendeu "
@@ -1044,8 +1045,8 @@ def cmd_shim_problem(args):
     if not bad:
         return ""
     shown = " ".join(repr(ch) for ch in bad)
-    return (f"o agy é um script {os.path.splitext(args[0])[1]} (passa pelo cmd.exe) e os argumentos têm caracteres "
-            f"que o cmd.exe reinterpreta ({shown}). Defina AGY_EXE com o caminho de um agy.exe ou use uma pasta sem esses caracteres.")
+    return (f"o agy é um script {os.path.splitext(args[0])[1]} (passa pelo cmd.exe), e o prompt com o dossiê tem caracteres "
+            f"que o cmd.exe reinterpreta ({shown}). Defina AGY_EXE com o caminho de um agy.exe.")
 
 
 def parse_agy_output(stdout, stderr, returncode=None):
@@ -1109,6 +1110,15 @@ class AutoRunner:
     def _session_files():
         """UUIDs das sessões na pasta ativa (para achar a sessão que o agy cria mesmo quando falha)."""
         return {os.path.splitext(e.name)[0] for e in scandir_safe(ACTIVE_CONV_DIR) if e.is_file() and UUID_DB_RE.match(e.name)}
+
+    @staticmethod
+    def _started_by_autorun(cid):
+        """True se a primeira fala da sessão é o prompt do Auto-Run (não uma conversa que o usuário abriu no meio)."""
+        try:
+            with open_ro(os.path.join(ACTIVE_CONV_DIR, cid + ".db")) as c:
+                return AGY_PROMPT_MARK in first_user_text(c)
+        except (sqlite3.Error, OSError, ValueError):
+            return False
 
     def _run_agy(self, args):
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -1201,7 +1211,7 @@ class AutoRunner:
                     break
                 failures += 1
             else:
-                log.info("agy %s: código %s; stdout %s; stderr %s", cid[:8], code, out[:4000], err[:2000])
+                log.info("agy %s: código %s; stdout %s; stderr %s", cid[:8], code, redact(out[:4000]), redact(err[:2000]))
                 res = parse_agy_output(out, err, code)
                 new_cid = res['conversation_id']
                 if res['ok']:
@@ -1215,7 +1225,8 @@ class AutoRunner:
                 self.store.add_handoff(cid, new_cid, dossier, 'erro', res['error'])
                 summary['failed'] += 1
                 # O agy cria a sessão mesmo quando falha, às vezes sem informar o id: o que surgiu na pasta é dessa tentativa.
-                for junk in ([new_cid] if new_cid else []) + sorted(self._session_files() - before - {new_cid}):
+                for junk in ([new_cid] if new_cid else []) + [c for c in sorted(self._session_files() - before - {new_cid})
+                                                              if self._started_by_autorun(c)]:
                     if junk not in summary['junk']:
                         summary['junk'].append(junk)
                 self.log_cb(f"    ✖ {(res['error'].strip().splitlines() or [''])[0][:300]}")
@@ -1907,7 +1918,7 @@ class CellTooltip:
 
     def show_now(self):
         self.job = None
-        if not self.key or not self.text:
+        if not self.key or not self.text or not self.tree.exists(self.key[0]):
             return
         box = self.tree.bbox(*self.key)
         if not box:
@@ -2168,10 +2179,15 @@ class Toast(tk.Frame):
             focus = self.focus_get()
         except (tk.TclError, KeyError):
             inside = focus = None
-        def mine(w):
-            return w is not None and str(w).startswith(str(self))
-        if not mine(inside) and not mine(focus):
+        if not self._mine(inside) and not self._mine(focus):
             self.resume()
+
+    def _mine(self, w):
+        """True se `w` é esta notificação ou um widget dentro dela (".!toast" não pode casar com ".!toast2")."""
+        if w is None:
+            return False
+        name, me = str(w), str(self)
+        return name == me or name.startswith(me + ".")
 
     def dismiss(self):
         if self.job:
@@ -2959,7 +2975,7 @@ class AntigravityGateApp(tk.Tk):
     def zoom(self):
         """Maximiza (Windows: estado 'zoomed'; X11: atributo -zoomed)."""
         try:
-            self.state("zoomed")
+            self.wm_state("zoomed")  # não self.state(): o atributo self.state é o StateStore e esconde o método do Tk
         except tk.TclError:
             try:
                 self.attributes("-zoomed", True)
@@ -3219,6 +3235,11 @@ class AntigravityGateApp(tk.Tk):
         return "  " + STATUS_NAME[self.states.get(cid, "pendente")] + ret + sub
 
     def refresh_labels(self):
+        if self.chip_filter:  # filtro de selo: refaz a lista (uma sessão marcada pode ter saído do filtro)
+            key = self.chip_filter
+            self.chip_filter = None
+            self.toggle_chip_filter(key)
+            return
         for iid in self.iter_sessions():
             cid = self.cid_of(iid)
             self.tree.item(iid, text=self.leaf_text(cid), tags=self.row_tags(cid), image=self.status_icon(cid))
@@ -3643,6 +3664,8 @@ class AntigravityGateApp(tk.Tk):
     def populate(self):
         """Monta a árvore a partir dos dados carregados, aplicando ordenação e busca. Não toca no disco."""
         label = self.sources[self.source_idx][0]
+        if hasattr(self, "cell_tips"):
+            self.cell_tips.hide()  # as linhas (e os ids) vão ser recriados
         for item in self.tree.get_children():
             self.tree.delete(item)
         self.sub_count = {}
@@ -3709,6 +3732,9 @@ class AntigravityGateApp(tk.Tk):
             return
         if not self.is_session(sel[0]):
             messagebox.showinfo("Aviso", "Clique numa conversa específica dentro da pasta do projeto.")
+            return
+        if len(self.selected_session_ids()) > 1:  # vale para botão, menu e duplo clique
+            messagebox.showinfo("Aviso", "Selecione uma sessão só: exportação e dossiê são de uma conversa por vez.")
             return
         cid = self.cid_of(sel[0])
         meta = self.meta_for(cid)

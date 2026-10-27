@@ -50,12 +50,15 @@ def wait(a, secs=20):
     a.update()
 
 zoomed = []
+orig_zoom = G.AntigravityGateApp.zoom
 G.AntigravityGateApp.zoom = lambda self: zoomed.append(self.winfo_ismapped())
 s = G.load_settings(); s["window"] = {"w": 900, "h": 600, "x": 40, "y": 30, "zoomed": True, "zx": 400, "zy": 300}; G.save_settings(s)
 app = G.AntigravityGateApp(); wait(app)
 for _ in range(20): app.update(); time.sleep(0.02)
 # --- 1. maximizada: maximiza depois que a janela aparece (antes de aparecer o Windows ignora)
 assert zoomed and zoomed[-1], ("zoom chamado com a janela já visível", zoomed)
+# o zoom de verdade não pode quebrar (self.state é o StateStore; precisa usar wm_state)
+orig_zoom(app); app.update()
 sessions = list(app.iter_sessions())
 
 # --- 2. menu de contexto pelo teclado (Shift+F10 e tecla Menu), na linha com foco
