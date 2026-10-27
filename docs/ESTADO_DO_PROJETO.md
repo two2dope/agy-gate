@@ -1,14 +1,14 @@
 # AntigravityGate: estado do projeto
 
-Atualizado em 2026-10-27, versão **1.0.2** (aprovada pelo usuário em 27/10, depois de uma retomada real; publicação por PR para a `main` e tag `v1.0.2`; contém a 1.0.1 e a 1.0.2). Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
+Atualizado em 2026-10-27, versão **1.0.2** (publicada em 27/10: Release `v1.0.2`, PR two2dope/agy-gate#4; contém a 1.0.1 e a 1.0.2). Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
 
 ## Snapshot
 
 | | |
 |---|---|
-| **Feito** | 1.0.0 publicada. Antigravity restaurado no Windows (27/10: conversas de volta no remoto `dev-thomaz` e na busca do VS Code). Auditoria `reviews/audit-full-v1.0.0.md`. **1.0.2 aprovada** (27/10, retomada real `4c326dce` → `3723a6eb`): 1.0.1 (crítico C1: retomada no projeto de origem; simulação conferida no Windows: `d:\Segurança`, `SMT1_WATCHDOG (--project)`) e 1.0.2 (faixa e dica de contexto como alerta em dois níveis; janelas do Auto-Run), com testes. Pacote visual: duas entregas do Stitch avaliadas (8 skins + `DESIGN.md`), caminho A decidido, tokens das 8 skins propostos com contraste conferido, decisões da 1.1 fechadas: `docs/PACOTE_VISUAL_1.1.md` |
-| **Faltando** | Registrar o SHA-256 da Release v1.0.2. Retomada real de uma sessão **com** projeto: o `--project` só foi visto na simulação (a retomada real de 27/10 era de sessão sem projeto). Duas observações de 27/10 sem diagnóstico (editor vazio a cada `agy`; PowerShell piscando no remote control). Não verificado: escala 125–150%, status 6 e 7 |
-| **Próximo passo único** | M1 da 1.1 (fontes e ícones), na branch reiniciada a partir da `main` depois do merge da 1.0.2 |
+| **Feito** | 1.0.0 publicada. Antigravity restaurado no Windows (27/10: conversas de volta no remoto `dev-thomaz` e na busca do VS Code). Auditoria `reviews/audit-full-v1.0.0.md`. **1.0.2 publicada** (27/10; aprovada depois da retomada real `4c326dce` → `3723a6eb`; Release `v1.0.2`): 1.0.1 (crítico C1: retomada no projeto de origem; simulação conferida no Windows: `d:\Segurança`, `SMT1_WATCHDOG (--project)`) e 1.0.2 (faixa e dica de contexto como alerta em dois níveis; janelas do Auto-Run), com testes. Pacote visual: duas entregas do Stitch avaliadas (8 skins + `DESIGN.md`), caminho A decidido, tokens das 8 skins propostos com contraste conferido, decisões da 1.1 fechadas: `docs/PACOTE_VISUAL_1.1.md` |
+| **Faltando** | Retomada real de uma sessão **com** projeto: o `--project` só foi visto na simulação (a retomada real de 27/10 era de sessão sem projeto). Duas observações de 27/10 sem diagnóstico (editor vazio a cada `agy`; PowerShell piscando no remote control). Não verificado: escala 125–150%, status 6 e 7 |
+| **Próximo passo único** | M1 da 1.1 (fontes e ícones). A branch já parte da `main` com a 1.0.2 |
 
 ## Pendências (backlog pós-1.0)
 
@@ -40,6 +40,7 @@ Fora do alcance do app: o editor do Antigravity abre vazio a cada chamada do `ag
 - Neste ambiente de teste o Tk só enxerga 8 fontes do X, sem símbolos: os ícones (botões e faixa) não aparecem nas capturas de Linux. Não é defeito do app.
 - **Pacote visual, segunda entrega do Stitch** (8 skins + `DESIGN.md`): 6 das 8 telas usam uma linha por sessão, o que o Treeview faz; células de duas linhas verificadas no Tk 9.0. Nas 8 skins o texto terciário fica abaixo de 4,5:1; os tokens propostos passam em todos os pares do `test_theme`. MCP do Stitch: dispensável agora. Decisões fechadas pelo usuário: "Dark Alloy" (paleta Obsidian) como tema padrão no lugar do Escuro, tabela compacta, barra lateral aberta. Detalhes em `docs/PACOTE_VISUAL_1.1.md`.
 - **1.0.2 aprovada** depois da retomada real com o `.exe` da execução 40471275835: `4c326dce` ("cancele o deep coder") → `3723a6eb`, Gemini 3.8 Flash (Medium), resposta completa. A sessão original não tinha projeto em `config/projects` nem pasta de workspace válida: a nova foi para CLI Project, com a pasta `handoffs` como pasta de trabalho (o caminho previsto para esse caso). O `--project` continua visto só na simulação.
+- **Publicação da 1.0.2:** PR two2dope/agy-gate#4 (merge `bc50fcf`). O push da tag a partir desta sessão foi recusado (HTTP 403); a Release saiu pelo `workflow_dispatch` com `release_tag: v1.0.2` (execução 40483779704), que cria a tag na `main` ao publicar. `AntigravityGate.exe` de 13,3 MB, SHA-256 `8D2EB3E241EE8B5EDCDFAEC7A97132A0982254A3E9AD360D13AB05B4DCDB7757`. As notas da Release trazem só a seção 1.0.2 do CHANGELOG; a 1.0.1 está no CHANGELOG.
 - **Lixeira com prazo** pedida pelo usuário: decidido fazer pela exclusão oficial do `agy`, sem o Gate apagar nada nos bancos, depois da 1.1 (item 2 das pendências).
 
 ### Observações do usuário em 27/10 (sem diagnóstico)
