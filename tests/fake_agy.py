@@ -39,6 +39,10 @@ elif mode == "ok_with_sub":  # sucesso que cria também um sub-agente: nada é a
     conv = os.environ["AGY_FAKE_CONV"]
     open(os.path.join(conv, cid + ".db"), "w").close(); open(os.path.join(conv, "cccccccc-0000-0000-0000-%012d.db" % (n + 1)), "w").close()
     print(json.dumps({"conversation_id": cid, "status": "OK", "response": "ok", "error": ""}))
+elif mode == "denied":  # saída real de 26/10: SUCCESS sem resposta porque o modo sem janela negou read_file
+    print(json.dumps({"conversation_id": cid, "status": "SUCCESS", "response": "", "duration_seconds": 15.2, "num_turns": 1,
+                      "usage": {"input_tokens": 25314, "output_tokens": 791}, "denied_actions": [{"action": "read_file", "display_name": "ReadFile"}]}))
+    print('jetski: no output produced — a tool required the "read_file" permission that headless mode cannot prompt for, so it was auto-denied.', file=sys.stderr)
 elif mode == "nostatus":  # JSON sem status e sem conversation_id: não é sucesso
     print(json.dumps({"response": "algo"}))
 elif mode == "okexit1":  # JSON de sucesso, mas código de saída 1: não é sucesso

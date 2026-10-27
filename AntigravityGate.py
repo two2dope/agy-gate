@@ -856,6 +856,17 @@ class StateStore:
             conn.execute("CREATE TABLE IF NOT EXISTS state_log(id INTEGER PRIMARY KEY AUTOINCREMENT, cid TEXT NOT NULL, status TEXT NOT NULL, at TEXT NOT NULL)")
             conn.execute("CREATE TABLE IF NOT EXISTS handoffs(id INTEGER PRIMARY KEY AUTOINCREMENT, src_cid TEXT NOT NULL, new_cid TEXT, "
                          "dossier_path TEXT, status TEXT NOT NULL, detail TEXT, at TEXT NOT NULL)")
+            # Versões até 2026-10-26 aceitavam SUCCESS sem resposta (o agy não conseguia ler o dossiê). Uma retomada real
+            # sempre traz resposta: 'ok' sem detalhe vira erro, e a sessão vazia criada vai para arquivadas se o usuário
+            # não tiver marcado outra coisa. Idempotente.
+            false_ok = [r[0] for r in conn.execute("SELECT new_cid FROM handoffs WHERE status='ok' AND (detail IS NULL OR detail='')")]
+            if false_ok:
+                now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                conn.execute("UPDATE handoffs SET status='erro', detail='sem resposta (sucesso falso de versão anterior, corrigido)' "
+                             "WHERE status='ok' AND (detail IS NULL OR detail='')")
+                for cid in filter(None, false_ok):
+                    conn.execute("INSERT OR IGNORE INTO session_state(cid, status, updated_at) VALUES(?, 'arquivada', ?)", (cid, now))
+                log.info("Corrigidas %d retomadas sem resposta de versões anteriores", len(false_ok))
         if self.persistent:
             conn.close()
 
@@ -966,7 +977,23 @@ def uri_paths(uris):
     return out
 
 
-def build_agy_args(agy, dossier_path, extra_dirs, mode="plan", timeout_s=AGY_TIMEOUT_S, model=None):
+DOSSIER_INLINE_MAX = 20000  # caracteres do dossiê dentro do prompt (a linha de comando do Windows aceita ~32 mil)
+AGY_PROMPT_INLINE = ("Você está retomando o trabalho de uma sessão anterior. O dossiê de retomada está abaixo, entre as marcas "
+                     "INÍCIO DO DOSSIÊ e FIM DO DOSSIÊ (cópia em: {path}). Depois de ler, responda em poucas linhas: (1) o que entendeu "
+                     "do objetivo e do estado atual; (2) o que falta; (3) os próximos passos que propõe. Não altere nenhum arquivo e "
+                     "não execute comandos; aguarde minha confirmação.\n\n=== INÍCIO DO DOSSIÊ ===\n{dossier}\n=== FIM DO DOSSIÊ ===")
+
+
+def inline_dossier(text, path, limit=DOSSIER_INLINE_MAX):
+    """Dossiê para ir dentro do prompt; se for grande, corta o meio e aponta o arquivo completo."""
+    if len(text) <= limit:
+        return text
+    head, tail = int(limit * 0.7), int(limit * 0.3)
+    return (text[:head] + f"\n\n[… dossiê cortado: {len(text) - head - tail} caracteres omitidos; arquivo completo em {path} …]\n\n"
+            + text[-tail:])
+
+
+def build_agy_args(agy, dossier_path, extra_dirs, mode="plan", timeout_s=AGY_TIMEOUT_S, model=None, dossier_text=None):
     """Lista de argumentos (sem shell). Nunca inclui --dangerously-skip-permissions.
     As flags de segurança vêm antes do prompt: se algo truncar a linha, o prompt se perde, nunca o `--mode`."""
     args = [agy, "--output-format", "json", "--mode", mode, "--print-timeout", f"{timeout_s}s",
@@ -975,7 +1002,12 @@ def build_agy_args(agy, dossier_path, extra_dirs, mode="plan", timeout_s=AGY_TIM
         args += ["--add-dir", d]
     if model and model.strip():  # vazio = modelo padrão do agy
         args += ["--model", model.strip()]
-    return args + ["--print", AGY_PROMPT.format(path=dossier_path)]
+    if dossier_text is not None:
+        # O modo sem janela do agy nega read_file: o dossiê vai no prompt em vez de ser lido do disco.
+        prompt = AGY_PROMPT_INLINE.format(path=dossier_path, dossier=inline_dossier(dossier_text, dossier_path))
+    else:
+        prompt = AGY_PROMPT.format(path=dossier_path)
+    return args + ["--print", prompt]
 
 
 CMD_UNSAFE = set('"%^&|<>!\r\n')
@@ -1019,6 +1051,10 @@ def parse_agy_output(stdout, stderr, returncode=None):
             res['error'] = "agy informou status ERROR sem mensagem"
         if not res['error'] and not res['conversation_id']:
             res['error'] = "resposta sem conversation_id"
+        if not res['error'] and not res['response'].strip():
+            # Visto em 26/10: status SUCCESS, resposta vazia e denied_actions=read_file (o modo sem janela não pede permissão).
+            denied = [str(a.get('action') or a.get('display_name')) for a in obj.get('denied_actions') or [] if isinstance(a, dict)]
+            res['error'] = "agy terminou sem resposta" + (f" (ações negadas no modo sem janela: {', '.join(denied)})" if denied else "")
     else:
         res['error'] = "saída sem JSON reconhecível: " + (blob.strip()[:200] or "(vazia)")
     if returncode not in (None, 0) and not res['error']:
@@ -1112,7 +1148,9 @@ class AutoRunner:
                 self.store.add_handoff(cid, '', dossier, 'dossie', 'simulação: agy não foi chamado')
                 summary['dossier'] += 1
                 continue
-            args = build_agy_args(self.agy, dossier, workspace_dirs(it.get('workspace', '')), self.mode, self.timeout_s, self.model)
+            with open(dossier, encoding="utf-8") as fh:
+                dossier_text = fh.read()
+            args = build_agy_args(self.agy, dossier, workspace_dirs(it.get('workspace', '')), self.mode, self.timeout_s, self.model, dossier_text)
             problem = cmd_shim_problem(args)
             if problem:
                 self.store.add_handoff(cid, '', dossier, 'erro', problem)

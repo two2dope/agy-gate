@@ -60,7 +60,10 @@ Usado pelo Auto-Run:
 - `--model` exige o nome com o esforço, como o agy lista: `Gemini 3.8 Flash (Medium)`. Nome sem esforço dá código 1, `status` `ERROR`, `conversation_id` vazio e a lista `Available models:` no erro. Verificado em 2026-10-26.
 - Primeiro teste real (2026-10-26, 20:03): erro de modelo tratado como falha, sem retomada falsa e sem sessão vazia (C1 validado no caminho de erro). Formato de sucesso ainda não visto.
 - Segundo teste real (2026-10-26, 21:11): nome sem esforço recusado (código 1) e criou uma sessão sem informar o id; `Gemini 4 Argon (Medium)` deu cota esgotada (reset em 26h29m). A cota com saldo é a do Gemini 3.8 Flash.
-- **Primeira retomada real com sucesso** (2026-10-26, 22:16, Gemini 3.8 Flash (Medium)): sessão nova `2a6dbfa4` a partir de `a56f46f0`. Critério da 1.0 "Auto-Run real testado" cumprido.
+- **Primeira retomada real com sucesso:** 2026-10-26 22:11, `74a14497` → `0b49637d`, resposta completa (entendimento, pendências, próximos passos).
+- **Sucessos falsos** (21:17, 21:23, 21:26 e 22:17, todos de `a56f46f0`): `status: SUCCESS`, `response` vazia, `denied_actions: [read_file]`; stderr: "a tool required the read_file permission that headless mode cannot prompt for, so it was auto-denied". Correção: o dossiê vai no prompt; resposta vazia é falha.
+- Formato de sucesso visto: `{"conversation_id", "status": "SUCCESS", "response", "duration_seconds", "num_turns", "usage", "denied_actions"?}`, código de saída 0. Cota esgotada: código 3.
+- Critério da 1.0 "Auto-Run real testado": cumprido em 22:11 com leitura de arquivo; falta repetir com o dossiê no prompt.
 - Depois de uma chamada do `agy`, o editor do Antigravity abre uma janela vazia. Vem do próprio `agy`, não do app [conferir em `agy --help` se há opção para evitar].
 - O Auto-Run aceita `--model` (campo na confirmação). Hipótese não verificada: o padrão do `agy` usa a cota do Gemini 4 Argon (o reset informado no erro de 26/10 bateu com o dele).
 - Opções úteis: `--mode plan|accept-edits|auto`, `--add-dir`, `--project`, `--print-timeout`, `--effort`, `--model`, `--conversation` (retoma e muda a conversa original).
@@ -86,7 +89,7 @@ Usado pelo Auto-Run:
 
 ## Como testar
 
-`tests/run_all.sh` (precisa de Python 3.12 com `tkinter` e, sem tela, `xvfb`). São 20 conjuntos com bancos sintéticos e um `agy` simulado (`tests/fake_agy.py`). Os scripts `tools/inspect_*.py` dão a estrutura (sem conteúdo) de qualquer banco de sessão.
+`tests/run_all.sh` (precisa de Python 3.12 com `tkinter` e, sem tela, `xvfb`). São 21 conjuntos com bancos sintéticos e um `agy` simulado (`tests/fake_agy.py`). Os scripts `tools/inspect_*.py` dão a estrutura (sem conteúdo) de qualquer banco de sessão.
 
 ## Versões
 

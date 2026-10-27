@@ -40,8 +40,8 @@ ok_json = json.dumps({"conversation_id": "c1", "status": "OK", "response": "r", 
 assert G.parse_agy_output(ok_json, "", 0)['ok'], "sucesso completo"
 r = G.parse_agy_output(ok_json, "", 1)
 assert not r['ok'] and "código 1" in r['error'], r
-r = G.parse_agy_output(json.dumps({"conversation_id": "x"}), "", 0)
-assert r['ok'], "sem status, com id e código 0: aceito (formato de sucesso real ainda não visto)"
+r = G.parse_agy_output(json.dumps({"conversation_id": "x", "response": "r"}), "", 0)
+assert r['ok'], "sem status, com id, resposta e código 0: aceito"
 r = G.parse_agy_output(json.dumps({"response": "algo"}), "", 0)
 assert not r['ok'] and "conversation_id" in r['error'], r
 r = G.parse_agy_output(json.dumps({"conversation_id": "", "status": "OK"}), "", 0)

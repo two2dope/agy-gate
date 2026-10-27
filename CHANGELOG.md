@@ -24,6 +24,7 @@ Correções dos três críticos da auditoria `reviews/audit-full-v0.9.0.md`, tod
 - Ícone de Exportar: disquete (Segoe MDL2 `E74E`; `↧` no modo Unicode) no lugar da folha em branco. Glifo não visto num Windows.
 
 ### Corrigido
+- **Sucesso falso do Auto-Run:** o `agy` sem janela não tem permissão para ler o arquivo do dossiê (`denied_actions: read_file`) e devolvia `SUCCESS` com resposta vazia, que o app aceitava como retomada. Agora resposta vazia é falha (com as ações negadas no log), e o dossiê vai **dentro do prompt** (até 20 mil caracteres; acima disso o meio é cortado e o caminho do arquivo é citado). Retomadas antigas gravadas como sucesso sem resposta são corrigidas ao abrir o app, e as sessões vazias delas vão para arquivadas (salvo marcação sua).
 - Janela num monitor à esquerda (ou acima) do principal nunca tinha a posição gravada: o Windows informa a coordenada como `+-1928` e o app falhava ao ler. Por isso ela sempre reabria no monitor principal.
 - Sessão que o `agy` cria numa tentativa com erro, sem informar o id, ficava como pendente. Agora o app compara a pasta de sessões antes e depois da chamada e arquiva o que surgiu numa tentativa que falhou.
 - Workspace aparecia como `\c:\Users\...` (barra a mais): o Windows não reconhecia a unidade com `:` codificado (`%3A`). Com isso o Auto-Run não passava a pasta do projeto ao `agy` (`--add-dir`) e o painel marcava o workspace como inexistente.
