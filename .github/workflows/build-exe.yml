@@ -4,6 +4,11 @@ name: Gerar AntigravityGate.exe
 # Teste vermelho barra a montagem. Ao criar uma tag vX.Y.Z: além disso, publica uma Release com o .exe e as notas do CHANGELOG.
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Publicar o .exe numa Release desta tag (ex.: v1.0.0). Vazio = só montar."
+        required: false
+        default: ""
   push:
     branches: [main]
     tags: ["v*"]
@@ -42,6 +47,8 @@ jobs:
       - name: Ler a versão do código
         id: ver
         shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           $m = Select-String -Path AntigravityGate.py -Pattern '^__version__ = "([^"]+)"' | Select-Object -First 1
           if (-not $m) { throw "__version__ não encontrada em AntigravityGate.py" }
@@ -49,6 +56,7 @@ jobs:
           "version=$v" >> $env:GITHUB_OUTPUT
           Write-Host "Versão do código: $v"
           if ($env:GITHUB_REF_TYPE -eq "tag" -and $env:GITHUB_REF_NAME -ne "v$v") { throw "A tag $env:GITHUB_REF_NAME não bate com a versão do código ($v)" }
+          if ($env:RELEASE_TAG -and $env:RELEASE_TAG -ne "v$v") { throw "release_tag $env:RELEASE_TAG não bate com a versão do código ($v)" }
 
       - name: Marcar a montagem (commit e data) no código
         shell: pwsh
@@ -95,7 +103,7 @@ jobs:
 
   release:
     needs: build
-    if: github.ref_type == 'tag'
+    if: github.ref_type == 'tag' || inputs.release_tag != ''
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -112,10 +120,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.build.outputs.version }}
           SHA256: ${{ needs.build.outputs.sha256 }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           $ErrorActionPreference = "Stop"
-          function Gh { & gh @args; if ($LASTEXITCODE -ne 0) { throw "gh $($args -join ' ') falhou (código $LASTEXITCODE)" } }
-          $tag = $env:GITHUB_REF_NAME
+          # Não chamar a função de "Gh": o PowerShell não diferencia maiúsculas e ela chamaria a si mesma (estouro de pilha).
+          function Invoke-GhChecked { & gh @args; if ($LASTEXITCODE -ne 0) { throw "gh $($args -join ' ') falhou (código $LASTEXITCODE)" } }
+          $tag = if ($env:RELEASE_TAG) { $env:RELEASE_TAG } else { $env:GITHUB_REF_NAME }
           if (-not (Test-Path dist/AntigravityGate.exe)) { throw "artefato sem AntigravityGate.exe" }
           $log = Get-Content CHANGELOG.md -Raw -Encoding UTF8
           $m = [regex]::Match($log, "(?ms)^## \[$([regex]::Escape($env:VERSION))\][^\r\n]*\r?\n(.*?)(?=^## \[|\z)")
@@ -125,20 +135,20 @@ jobs:
           $view = & gh release view $tag --json isDraft,body 2>&1
           if ($LASTEXITCODE -eq 0) {
             $rel = $view | ConvertFrom-Json
-            Gh release upload $tag dist/AntigravityGate.exe --clobber
+            Invoke-GhChecked release upload $tag dist/AntigravityGate.exe --clobber
             # Preserva notas, título e marcações escolhidos na tela; só acrescenta o SHA-256 (e as notas do CHANGELOG se estiver vazia).
             $body = if ([string]::IsNullOrWhiteSpace($rel.body)) { $m.Groups[1].Value.Trim() } else { $rel.body.Trim() }
             $body = ($body -replace '(?s)\s*\*\*SHA-256 do \.exe:\*\*.*$', '').Trim()   # nova execução: não duplica o bloco
             Set-Content -Path release_notes.md -Value "$body`n`n$sha" -Encoding UTF8
-            Gh release edit $tag --notes-file release_notes.md
-            if ($rel.isDraft) { Gh release edit $tag --draft=false }   # rascunho de uma execução que falhou: publica agora
+            Invoke-GhChecked release edit $tag --notes-file release_notes.md
+            if ($rel.isDraft) { Invoke-GhChecked release edit $tag --draft=false }   # rascunho de uma execução que falhou: publica agora
           } elseif ("$view" -match "release not found") {
             Set-Content -Path release_notes.md -Value "$($m.Groups[1].Value.Trim())`n`n$sha" -Encoding UTF8
             $create = @("release", "create", $tag, "--draft", "--title", "AntigravityGate $tag", "--notes-file", "release_notes.md")
             if ($env:VERSION -like "0.*") { $create += "--prerelease" }
-            Gh @create
-            Gh release upload $tag dist/AntigravityGate.exe
-            Gh release edit $tag --draft=false   # só fica pública depois de ter o .exe
+            Invoke-GhChecked @create
+            Invoke-GhChecked release upload $tag dist/AntigravityGate.exe
+            Invoke-GhChecked release edit $tag --draft=false   # só fica pública depois de ter o .exe
           } else {
             throw "gh release view falhou: $view"
           }
