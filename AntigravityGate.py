@@ -1,9 +1,11 @@
 import os
 import sqlite3
+import gc
 import glob
 import re
 import json
 import logging
+import logging.handlers
 import math
 import queue
 import shutil
@@ -13,17 +15,23 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+import webbrowser
 import zlib
 import base64
 from collections import Counter
-from contextlib import closing
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from tkinter import font as tkfont
 
-__version__ = "0.9.0"  # ver CHANGELOG.md; 1.0.0 = revisão final + Auto-Run real testado
+__version__ = "1.0.0"  # ver CHANGELOG.md
+__build__ = "código-fonte"  # o CI troca pelo commit e pela data da montagem do .exe
+APP_AUTHOR = "Thominha"
+APP_EMAIL = "twoo2dope@gmail.com"
+APP_GITHUB = "https://github.com/two2dope"
+APP_REPO = "https://github.com/two2dope/agy-gate"
 
 BASE_DIR = os.environ.get("ANTIGRAVITY_HOME") or os.path.join(os.path.expanduser("~"), ".gemini")
 ACTIVE_SUM_DB = os.path.join(BASE_DIR, "antigravity", "conversation_summaries.db")
@@ -120,11 +128,17 @@ METRICS_CACHE = {}
 log = logging.getLogger("antigravitygate")
 
 
+LOG_MAX_BYTES = 1_000_000  # gate.log roda ao chegar em ~1 MB; ficam 3 cópias antigas (gate.log.1 a .3)
+
+
 def setup_logging():
     log.setLevel(logging.INFO)
+    for h in list(log.handlers):
+        log.removeHandler(h)
+        h.close()
     try:
         os.makedirs(LOG_DIR, exist_ok=True)
-        handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+        handler = logging.handlers.RotatingFileHandler(LOG_FILE, maxBytes=LOG_MAX_BYTES, backupCount=3, encoding="utf-8")
     except OSError:
         handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
@@ -374,6 +388,13 @@ SECRET_PATTERNS = [
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/\-]{20,}=*"),
+    re.compile(r"(?i)(\bAuthorization:\s*Basic\s+)[A-Za-z0-9+/]{8,}=*"),        # cabeçalho Authorization: Basic
+    re.compile(r"\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}"),                    # Stripe
+    re.compile(r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}"),  # JWT
+    re.compile(r"\bxox[abposr]-[A-Za-z0-9\-]{10,}"),                         # Slack
+    re.compile(r"\bya29\.[A-Za-z0-9_\-]{20,}"),                              # Google OAuth
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{40,}"),                            # GitHub (granular)
+    re.compile(r"(\b[a-z][a-z0-9+.\-]*://[^\s:/@]+:)[^\s@/]+(?=@)"),           # senha em URL: user:senha@host
     re.compile(r"(?i)((?:api[_-]?key|secret|token|password|passwd|senha)[\"']?\s*[:=]\s*[\"']?)[^\s\"',;}]{6,}"),
 ]
 
@@ -789,18 +810,32 @@ def build_dossier(meta, qm, steps, progress=None):
     return redact("\n".join(o))
 
 
+class ExportCancelled(Exception):
+    """Levantada pelo callback de progresso para interromper uma exportação."""
+
+
 def export_session(kind, fpath, meta, out_path, progress=None):
-    """Grava o diálogo completo ('full') ou o dossiê de retomada ('dossier') de uma sessão."""
-    with open_ro(fpath) as conn:
-        qm = quick_meta(conn)
-        if kind == 'full':
-            files = collect_file_activity(iter_steps(conn))
-            with open(out_path, 'w', encoding='utf-8', newline='\n') as fh:
-                write_full_export(fh, meta, qm, iter_steps(conn), progress, files)
-        else:
-            text = build_dossier(meta, qm, iter_steps(conn), progress)
-            with open(out_path, 'w', encoding='utf-8', newline='\n') as fh:
-                fh.write(text)
+    """Grava o diálogo completo ('full') ou o dossiê de retomada ('dossier') de uma sessão.
+    Escreve num arquivo .part e só o renomeia no fim: erro ou cancelamento não deixam arquivo pela metade."""
+    tmp = out_path + ".part"
+    try:
+        with open_ro(fpath) as conn:
+            qm = quick_meta(conn)
+            if kind == 'full':
+                files = collect_file_activity(iter_steps(conn))
+                with open(tmp, 'w', encoding='utf-8', newline='\n') as fh:
+                    write_full_export(fh, meta, qm, iter_steps(conn), progress, files)
+            else:
+                text = build_dossier(meta, qm, iter_steps(conn), progress)
+                with open(tmp, 'w', encoding='utf-8', newline='\n') as fh:
+                    fh.write(text)
+        os.replace(tmp, out_path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 # --- estado de aprovação (banco próprio) -----------------------------------------------------
@@ -812,19 +847,26 @@ class StateStore:
     def __init__(self, path):
         self.path = path
         self.persistent = True
+        self._mem_lock = threading.RLock()
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             self._init()
         except (OSError, sqlite3.Error) as e:
             log.warning("Estado não será salvo (%s): %s", path, e)
             self.path, self.persistent = ":memory:", False
-            self._mem = sqlite3.connect(":memory:")
+            # Usado também pelas threads de Auto-Run e exportação: sem check_same_thread, com trava própria.
+            self._mem = sqlite3.connect(":memory:", check_same_thread=False)
             self._init()
 
     def _connect(self):
         if not self.persistent:
-            return closing(_NoClose(self._mem))
+            return self._mem_session()
         return closing(sqlite3.connect(self.path, timeout=5.0))
+
+    @contextmanager
+    def _mem_session(self):
+        with self._mem_lock:
+            yield _NoClose(self._mem)
 
     def _init(self):
         if not self.persistent:
@@ -836,6 +878,17 @@ class StateStore:
             conn.execute("CREATE TABLE IF NOT EXISTS state_log(id INTEGER PRIMARY KEY AUTOINCREMENT, cid TEXT NOT NULL, status TEXT NOT NULL, at TEXT NOT NULL)")
             conn.execute("CREATE TABLE IF NOT EXISTS handoffs(id INTEGER PRIMARY KEY AUTOINCREMENT, src_cid TEXT NOT NULL, new_cid TEXT, "
                          "dossier_path TEXT, status TEXT NOT NULL, detail TEXT, at TEXT NOT NULL)")
+            # Versões até 2026-10-26 aceitavam SUCCESS sem resposta (o agy não conseguia ler o dossiê). Uma retomada real
+            # sempre traz resposta: 'ok' sem detalhe vira erro, e a sessão vazia criada vai para arquivadas se o usuário
+            # não tiver marcado outra coisa. Idempotente.
+            false_ok = [r[0] for r in conn.execute("SELECT new_cid FROM handoffs WHERE status='ok' AND (detail IS NULL OR detail='')")]
+            if false_ok:
+                now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                conn.execute("UPDATE handoffs SET status='erro', detail='sem resposta (sucesso falso de versão anterior, corrigido)' "
+                             "WHERE status='ok' AND (detail IS NULL OR detail='')")
+                for cid in filter(None, false_ok):
+                    conn.execute("INSERT OR IGNORE INTO session_state(cid, status, updated_at) VALUES(?, 'arquivada', ?)", (cid, now))
+                log.info("Corrigidas %d retomadas sem resposta de versões anteriores", len(false_ok))
         if self.persistent:
             conn.close()
 
@@ -888,7 +941,20 @@ class _NoClose:
 # --- Auto-Run (retomada limpa, opção B) -------------------------------------------------------
 
 AGY_TIMEOUT_S = 600
-AGY_PROMPT = ("Você está retomando o trabalho de uma sessão anterior. Leia o dossiê em: {path}\n"
+# Nomes aceitos por `agy --model`, copiados da lista que o próprio agy devolveu em 2026-10-26 (o esforço faz parte do nome).
+# Se o agy mudar a lista, o erro dele traz a nova, e o app passa a oferecê-la (settings: agy_models_known).
+AGY_MODELS = ["Gemini 3.8 Flash (Medium)", "Gemini 3.8 Flash (High)", "Gemini 3.8 Flash (Low)",
+              "Gemini 4 Argon (Medium)", "Gemini 4 Argon (High)", "Gemini 4 Argon (Low)",
+              "Claude Sonnet 5.5 (Medium)", "Claude Sonnet 5.5 (High)", "Claude Sonnet 5.5 (Low)",
+              "Claude Opus 5.5 (Medium)", "Claude Opus 5.5 (High)", "Claude Opus 5.5 (Low)", "GPT-OSS 120B (Medium)"]
+
+
+def parse_agy_models(text):
+    """Lista que o agy imprime depois de 'Available models:' quando recusa um --model."""
+    m = re.search(r"Available models:\s*\n((?:[ \t]+\S.*(?:\n|$))+)", text or "")
+    return [ln.strip() for ln in m.group(1).splitlines() if ln.strip()] if m else []
+# Uma linha só: num shim .cmd/.bat, o cmd.exe encerra a linha de comando na primeira quebra de linha.
+AGY_PROMPT = ("Você está retomando o trabalho de uma sessão anterior. Leia o dossiê em: {path} . "
               "Depois responda, em poucas linhas: (1) o que entendeu do objetivo e do estado atual; (2) o que falta; "
               "(3) os próximos passos que propõe. Não altere nenhum arquivo e não execute comandos; aguarde minha confirmação.")
 
@@ -900,11 +966,24 @@ def find_agy():
     return shutil.which("agy")
 
 
+def uri_to_path(uri, nt=None):
+    """file:///c%3A/Users/... -> c:\\Users\\... (Windows) ou /home/... (outros).
+    O url2pathname do Windows não reconhece a letra da unidade com ':' codificado (%3A, como o Antigravity grava)
+    e devolvia '\\c:\\...', um caminho que não existe."""
+    nt = (os.name == "nt") if nt is None else nt
+    path = urllib.parse.unquote(urllib.parse.urlparse(uri).path)
+    if nt:
+        if re.match(r"^/[A-Za-z]:", path):
+            path = path[1:]
+        path = path.replace("/", "\\")
+    return path
+
+
 def workspace_dirs(uris):
     """Pastas existentes citadas em workspace_uris (file:///...)."""
     out = []
     for uri in re.findall(r"file://[^\s,;\"'\[\]<>]+", uris or ""):  # URIs vêm codificadas (%20), às vezes dentro de uma lista JSON
-        path = urllib.request.url2pathname(urllib.parse.urlparse(uri).path)
+        path = uri_to_path(uri)
         if os.path.isdir(path) and path not in out:
             out.append(path)
     return out[:3]
@@ -914,24 +993,67 @@ def uri_paths(uris):
     """Caminhos citados em workspace_uris (sem exigir que existam), para exibição."""
     out = []
     for uri in re.findall(r"file://[^\s,;\"'\[\]<>]+", uris or ""):
-        path = urllib.request.url2pathname(urllib.parse.urlparse(uri).path)
+        path = uri_to_path(uri)
         if path not in out:
             out.append(path)
     return out
 
 
-def build_agy_args(agy, dossier_path, extra_dirs, mode="plan", timeout_s=AGY_TIMEOUT_S):
-    """Lista de argumentos (sem shell). Nunca inclui --dangerously-skip-permissions."""
-    args = [agy, "--print", AGY_PROMPT.format(path=dossier_path), "--output-format", "json",
-            "--mode", mode, "--print-timeout", f"{timeout_s}s", "--add-dir", os.path.dirname(dossier_path)]
+AGY_PROMPT_MARK = "Você está retomando o trabalho de uma sessão anterior"  # início dos dois prompts do Auto-Run
+DOSSIER_INLINE_MAX = 20000  # caracteres do dossiê dentro do prompt (a linha de comando do Windows aceita ~32 mil)
+AGY_PROMPT_INLINE = ("Você está retomando o trabalho de uma sessão anterior. O dossiê de retomada está abaixo, entre as marcas "
+                     "INÍCIO DO DOSSIÊ e FIM DO DOSSIÊ (cópia em: {path}). Depois de ler, responda em poucas linhas: (1) o que entendeu "
+                     "do objetivo e do estado atual; (2) o que falta; (3) os próximos passos que propõe. Não altere nenhum arquivo e "
+                     "não execute comandos; aguarde minha confirmação.\n\n=== INÍCIO DO DOSSIÊ ===\n{dossier}\n=== FIM DO DOSSIÊ ===")
+
+
+def inline_dossier(text, path, limit=DOSSIER_INLINE_MAX):
+    """Dossiê para ir dentro do prompt; se for grande, corta o meio e aponta o arquivo completo."""
+    if len(text) <= limit:
+        return text
+    head, tail = int(limit * 0.7), int(limit * 0.3)
+    return (text[:head] + f"\n\n[… dossiê cortado: {len(text) - head - tail} caracteres omitidos; arquivo completo em {path} …]\n\n"
+            + text[-tail:])
+
+
+def build_agy_args(agy, dossier_path, extra_dirs, mode="plan", timeout_s=AGY_TIMEOUT_S, model=None, dossier_text=None):
+    """Lista de argumentos (sem shell). Nunca inclui --dangerously-skip-permissions.
+    As flags de segurança vêm antes do prompt: se algo truncar a linha, o prompt se perde, nunca o `--mode`."""
+    args = [agy, "--output-format", "json", "--mode", mode, "--print-timeout", f"{timeout_s}s",
+            "--add-dir", os.path.dirname(dossier_path)]
     for d in extra_dirs:
         args += ["--add-dir", d]
-    return args
+    if model and model.strip():  # vazio = modelo padrão do agy
+        args += ["--model", model.strip()]
+    if dossier_text is not None:
+        # O modo sem janela do agy nega read_file: o dossiê vai no prompt em vez de ser lido do disco.
+        prompt = AGY_PROMPT_INLINE.format(path=dossier_path, dossier=inline_dossier(dossier_text, dossier_path))
+    else:
+        prompt = AGY_PROMPT.format(path=dossier_path)
+    return args + ["--print", prompt]
 
 
-def parse_agy_output(stdout, stderr):
+CMD_UNSAFE = set('"%^&|<>!\r\n')
+
+
+def cmd_shim_problem(args):
+    """Um `agy` .cmd/.bat roda pelo cmd.exe, que reinterpreta a linha de comando (%, &, |, quebras de linha...)
+    e pode descartar ou trocar argumentos. Devolve o motivo para não executar, ou '' se é seguro."""
+    if os.path.splitext(args[0])[1].lower() not in (".cmd", ".bat"):
+        return ""
+    bad = sorted({ch for a in args[1:] for ch in a if ch in CMD_UNSAFE})
+    if not bad:
+        return ""
+    shown = " ".join(repr(ch) for ch in bad)
+    return (f"o agy é um script {os.path.splitext(args[0])[1]} (passa pelo cmd.exe), e o prompt com o dossiê tem caracteres "
+            f"que o cmd.exe reinterpreta ({shown}). Defina AGY_EXE com o caminho de um agy.exe.")
+
+
+def parse_agy_output(stdout, stderr, returncode=None):
     """Interpreta a saída do agy. Formato conhecido: um objeto JSON com conversation_id, status, response, error, usage;
-    em erro, linhas 'error: ...' e 'AGY_ERROR: {json}' vão para stderr. Aceita saída fora do padrão sem quebrar."""
+    em erro, linhas 'error: ...' e 'AGY_ERROR: {json}' vão para stderr. Aceita saída fora do padrão sem quebrar.
+    Sucesso exige tudo: código de saída 0 (quando informado), conversation_id, status diferente de ERROR e erro vazio.
+    Na dúvida é falha: um sucesso falso tiraria a sessão do próximo lote."""
     obj = None
     for chunk in [stdout.strip()] + [ln.strip() for ln in reversed(stdout.strip().splitlines())]:
         if chunk.startswith("{"):
@@ -948,9 +1070,19 @@ def parse_agy_output(stdout, stderr):
         res['conversation_id'] = str(obj.get('conversation_id') or '')
         res['response'] = str(obj.get('response') or '')
         res['error'] = str(obj.get('error') or '')
-        res['ok'] = str(obj.get('status', '')).upper() != 'ERROR' and not res['error']
+        if not res['error'] and str(obj.get('status', '')).upper() == 'ERROR':
+            res['error'] = "agy informou status ERROR sem mensagem"
+        if not res['error'] and not res['conversation_id']:
+            res['error'] = "resposta sem conversation_id"
+        if not res['error'] and not res['response'].strip():
+            # Visto em 26/10: status SUCCESS, resposta vazia e denied_actions=read_file (o modo sem janela não pede permissão).
+            denied = [str(a.get('action') or a.get('display_name')) for a in obj.get('denied_actions') or [] if isinstance(a, dict)]
+            res['error'] = "agy terminou sem resposta" + (f" (ações negadas no modo sem janela: {', '.join(denied)})" if denied else "")
     else:
         res['error'] = "saída sem JSON reconhecível: " + (blob.strip()[:200] or "(vazia)")
+    if returncode not in (None, 0) and not res['error']:
+        res['error'] = f"agy terminou com código {returncode}"
+    res['ok'] = not res['error']
     return res
 
 
@@ -958,8 +1090,9 @@ class AutoRunner:
     """Percorre as sessões aprovadas: gera o dossiê local e, se não for simulação, abre uma sessão nova com `agy --print`.
     Roda em thread de trabalho; fala com a tela só por `log` (callback). Sem Tk aqui."""
 
-    def __init__(self, items, store, log_cb, agy=None, dry_run=True, mode="plan", timeout_s=AGY_TIMEOUT_S, max_failures=3, grace_s=60):
+    def __init__(self, items, store, log_cb, agy=None, dry_run=True, mode="plan", timeout_s=AGY_TIMEOUT_S, max_failures=3, grace_s=60, model=None):
         self.items, self.store, self.log_cb = items, store, log_cb
+        self.model = model
         self.grace_s = grace_s
         self.agy, self.dry_run, self.mode, self.timeout_s, self.max_failures = agy, dry_run, mode, timeout_s, max_failures
         self.cancelled = False
@@ -973,6 +1106,20 @@ class AutoRunner:
             except OSError:
                 pass
 
+    @staticmethod
+    def _session_files():
+        """UUIDs das sessões na pasta ativa (para achar a sessão que o agy cria mesmo quando falha)."""
+        return {os.path.splitext(e.name)[0] for e in scandir_safe(ACTIVE_CONV_DIR) if e.is_file() and UUID_DB_RE.match(e.name)}
+
+    @staticmethod
+    def _started_by_autorun(cid):
+        """True se a primeira fala da sessão é o prompt do Auto-Run (não uma conversa que o usuário abriu no meio)."""
+        try:
+            with open_ro(os.path.join(ACTIVE_CONV_DIR, cid + ".db")) as c:
+                return AGY_PROMPT_MARK in first_user_text(c)
+        except (sqlite3.Error, OSError, ValueError):
+            return False
+
     def _run_agy(self, args):
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         self.proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -981,7 +1128,10 @@ class AutoRunner:
         while True:
             try:
                 out, err = self.proc.communicate(timeout=0.3)
-                return out, err, None
+                # cancel() pode ter encerrado o processo: então a saída é de um agy interrompido, não uma resposta.
+                # Se ele terminou com 0 antes do cancelamento chegar, a resposta vale.
+                code = self.proc.returncode
+                return out, err, "cancelada" if self.cancelled and code != 0 else None, code
             except subprocess.TimeoutExpired:
                 if self.cancelled:
                     self.proc.terminate()
@@ -990,15 +1140,15 @@ class AutoRunner:
                     except subprocess.TimeoutExpired:
                         self.proc.kill()
                         out, err = self.proc.communicate()
-                    return out, err, "cancelada"
+                    return out, err, "cancelada", self.proc.returncode
                 if time.time() > deadline:
                     self.proc.kill()
                     out, err = self.proc.communicate()
-                    return out, err, "tempo esgotado"
+                    return out, err, "tempo esgotado", self.proc.returncode
 
     def run(self):
         os.makedirs(HANDOFF_DIR, exist_ok=True)
-        summary = {'ok': 0, 'dossier': 0, 'failed': 0, 'skipped': 0, 'quota': '', 'junk': [], 'aborted': ''}
+        summary = {'ok': 0, 'dossier': 0, 'failed': 0, 'skipped': 0, 'quota': '', 'junk': [], 'aborted': '', 'models': [], 'bad_model': ''}
         failures = 0
         stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
         n = len(self.items)
@@ -1030,9 +1180,20 @@ class AutoRunner:
                 self.store.add_handoff(cid, '', dossier, 'dossie', 'simulação: agy não foi chamado')
                 summary['dossier'] += 1
                 continue
-            args = build_agy_args(self.agy, dossier, workspace_dirs(it.get('workspace', '')), self.mode, self.timeout_s)
+            with open(dossier, encoding="utf-8") as fh:
+                dossier_text = fh.read()
+            args = build_agy_args(self.agy, dossier, workspace_dirs(it.get('workspace', '')), self.mode, self.timeout_s, self.model, dossier_text)
+            problem = cmd_shim_problem(args)
+            if problem:
+                self.store.add_handoff(cid, '', dossier, 'erro', problem)
+                summary['failed'] += 1
+                summary['skipped'] += n - i - 1
+                summary['aborted'] = 'agy .cmd/.bat inseguro'
+                self.log_cb(f"    ✖ não executado: {problem}")
+                break
+            before = self._session_files()
             try:
-                out, err, why = self._run_agy(args)
+                out, err, why, code = self._run_agy(args)
             except OSError as e:
                 self.store.add_handoff(cid, '', dossier, 'erro', f"não executou o agy: {e}")
                 summary['failed'] += 1
@@ -1050,7 +1211,8 @@ class AutoRunner:
                     break
                 failures += 1
             else:
-                res = parse_agy_output(out, err)
+                log.info("agy %s: código %s; stdout %s; stderr %s", cid[:8], code, redact(out[:4000]), redact(err[:2000]))
+                res = parse_agy_output(out, err, code)
                 new_cid = res['conversation_id']
                 if res['ok']:
                     self.store.add_handoff(cid, new_cid, dossier, 'ok', res['response'][:300])
@@ -1062,9 +1224,18 @@ class AutoRunner:
                     continue
                 self.store.add_handoff(cid, new_cid, dossier, 'erro', res['error'])
                 summary['failed'] += 1
-                if new_cid:
-                    summary['junk'].append(new_cid)
-                self.log_cb(f"    ✖ {res['error'][:300]}")
+                # O agy cria a sessão mesmo quando falha, às vezes sem informar o id: o que surgiu na pasta é dessa tentativa.
+                for junk in ([new_cid] if new_cid else []) + [c for c in sorted(self._session_files() - before - {new_cid})
+                                                              if self._started_by_autorun(c)]:
+                    if junk not in summary['junk']:
+                        summary['junk'].append(junk)
+                self.log_cb(f"    ✖ {(res['error'].strip().splitlines() or [''])[0][:300]}")
+                models = parse_agy_models(res['error']) or parse_agy_models(err)
+                if models:
+                    summary['models'] = models
+                    if self.model and self.model not in models:
+                        summary['bad_model'] = self.model
+                    self.log_cb("    Modelos aceitos pelo agy (escolha um na lista do campo Modelo): " + "; ".join(models))
                 if res['quota']:
                     summary['quota'] = res['reset'] or 'horário não informado'
                     summary['skipped'] += n - i - 1
@@ -1292,9 +1463,26 @@ THEME_ORDER = ["escuro", "claro", "milspec", "cyber", "vidro", "brutal", "obsidi
 # nome -> (Segoe MDL2 Assets, alternativa Unicode). Se os ícones do Windows aparecerem errados, use Tema > Ícones > Símbolos Unicode.
 ICONS = {
     "refresh": ("\uE72C", "↻"), "search": ("\uE721", "⌕"), "clear": ("\uE711", "✕"), "approve": ("\uE73E", "✔"),
-    "archive": ("\uE7B8", "▣"), "pending": ("\uE7A7", "↶"), "export": ("\uE8A5", "▤"), "dossier": ("\uE768", "▶"),
+    "archive": ("\uE7B8", "▣"), "pending": ("\uE7A7", "↶"), "export": ("\uE74E", "↧"), "dossier": ("\uE768", "▶"),
     "autorun": ("\uE945", "⚡"), "theme": ("\uE790", "◐"), "warn": ("\uE7BA", "⚠"), "limits": ("\uE713", "⚙"), "copy": ("\uE8C8", "⧉"), "folder": ("\uE838", "▭"),
+    "about": ("\uE946", "ⓘ"),
 }
+
+
+def about_info():
+    """Versão e ambiente em texto simples, para a janela Sobre e para colar num relato de problema."""
+    import platform
+    import sys
+    run = "executável (.exe)" if getattr(sys, "frozen", False) else "código-fonte"
+    return "\n".join([
+        f"AntigravityGate {__version__} ({run}; montagem {__build__})",
+        f"Python {platform.python_version()} · Tk {tk.TkVersion}",
+        f"Sistema: {platform.platform()}",
+        f"Pasta do Antigravity: {BASE_DIR}",
+        f"agy: {find_agy() or 'não encontrado'}",
+        f"Dados do app: {LOG_DIR}",
+        f"Log: {LOG_FILE}",
+    ])
 
 
 def load_settings():
@@ -1307,12 +1495,19 @@ def load_settings():
 
 
 def save_settings(d):
+    """Grava em settings.json.tmp e troca no fim: queda ou erro no meio não estragam o arquivo anterior."""
+    tmp = SETTINGS_FILE + ".tmp"
     try:
         os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
-        with open(SETTINGS_FILE, "w", encoding="utf-8") as fh:
+        with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(d, fh, ensure_ascii=False, indent=2)
-    except OSError as e:
+        os.replace(tmp, SETTINGS_FILE)
+    except (OSError, TypeError, ValueError) as e:
         log.warning("Não foi possível salvar as preferências: %s", e)
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
 
 
 WIN_DEFAULT = (1240, 820)  # tamanho de projeto, em pixels a 96 dpi
@@ -1371,6 +1566,19 @@ def fit_rect(area, scale, w, h, x=None, y=None, min_size=WIN_MIN):
     return w, h, min(max(x, l), max(l, l + aw - w)), min(max(y, t), max(t, t + ah - h - frame))
 
 
+def parse_geometry(text):
+    """'LxA+X+Y' -> (L, A, X, Y). O Windows escreve coordenada negativa como '+-1928' (monitor à esquerda ou acima
+    do principal). '-N' (distância da borda direita/inferior) não é posição absoluta: devolve None."""
+    m = re.match(r"(\d+)x(\d+)\+(-?\d+)\+(-?\d+)$", text or "")
+    return tuple(int(v) for v in m.groups()) if m else None
+
+
+def saved_zoomed(saved):
+    """True se a janela estava maximizada ao fechar (com o ponto do monitor onde estava)."""
+    return (isinstance(saved, dict) and saved.get("zoomed") is True
+            and all(isinstance(saved.get(k), int) and not isinstance(saved.get(k), bool) for k in ("zx", "zy")))
+
+
 def window_geometry(work_at, scale, saved=None):
     """(largura, altura, x, y) da janela principal. Parte do tamanho de projeto (ou do salvo) e fica dentro da área útil do monitor
     onde estava (ou do principal, se não houver posição salva). `work_at(x, y)` devolve a área útil do monitor desse ponto."""
@@ -1379,6 +1587,13 @@ def window_geometry(work_at, scale, saved=None):
         vals = [saved.get(k) for k in ("w", "h", "x", "y")]
         if all(isinstance(v, int) and not isinstance(v, bool) for v in vals) and 300 <= vals[0] <= 20000 and 300 <= vals[1] <= 20000:
             w, h, x, y = vals
+    if saved_zoomed(saved):
+        # Maximizada: o tamanho normal fica no monitor onde ela estava maximizada (o mesmo em que vai reabrir).
+        area = work_at(saved["zx"], saved["zy"])
+        l, t, aw, ah = area
+        if x is not None and not (l <= x + w // 2 < l + aw and t <= y + h // 2 < t + ah):
+            x = y = None
+        return fit_rect(area, scale, w, h, x, y)
     area = work_at(None, None) if x is None else work_at(x + w // 2, y + h // 2)
     return fit_rect(area, scale, w, h, x, y)
 
@@ -1401,6 +1616,30 @@ def place_over(win, parent, size=None):
         win.wait_visibility()
     except tk.TclError:
         pass
+
+
+def dropdown_pos(area, ax, ay, aw, ah, w, h, gap=2):
+    """Posição (x, y) de uma lista w×h aberta sob o botão (ax, ay, aw, ah), alinhada à direita dele e dentro da área útil
+    `area` do monitor do botão. Aceita coordenadas negativas (monitor à esquerda ou acima do principal). Sem espaço
+    embaixo, abre para cima."""
+    l, t, W, H = area
+    x = min(max(ax + aw - w, l), max(l, l + W - w))
+    y = ay + ah + gap
+    if y + h > t + H:
+        y = max(t, ay - h - gap)
+    return x, y
+
+
+def tooltip_pos(win, area, ax, ay, aw, ah, w, h, gap=6):
+    """Posição (x, y) de uma dica w×h sob o widget (ax, ay, aw, ah): alinhada à esquerda dele, sem passar da borda direita
+    da janela `win` nem da área útil `area` do monitor (ambas (x, y, largura, altura)). Sem espaço embaixo, fica acima."""
+    left, right = max(win[0], area[0]), min(win[0] + win[2], area[0] + area[2])
+    bottom = min(win[1] + win[3], area[1] + area[3])
+    x = max(min(ax, right - w), left)
+    y = ay + ah + gap
+    if y + h > bottom:
+        y = max(area[1], ay - h - gap)
+    return x, y
 
 
 def is_dark_color(h):
@@ -1595,6 +1834,8 @@ class Tooltip:
         widget.bind("<Enter>", self._enter, add="+")
         widget.bind("<Leave>", self._leave, add="+")
         widget.bind("<ButtonPress>", self._leave, add="+")
+        widget.bind("<FocusIn>", self._enter, add="+")   # teclado: a dica (e o motivo de um botão desabilitado) aparece no Tab
+        widget.bind("<FocusOut>", self._leave, add="+")
 
     def _enter(self, _e):
         self._leave()
@@ -1612,23 +1853,100 @@ class Tooltip:
         text = self.fn()
         if not text:
             return
-        t = self.app.t
-        self.tip = tk.Toplevel(self.w)
-        self.tip.wm_overrideredirect(True)
-        self.tip.wm_geometry(f"+{self.w.winfo_rootx()}+{self.w.winfo_rooty() + self.w.winfo_height() + 6}")
-        tk.Label(self.tip, text=text, bg=t['panel2'], fg=t['fg'], font=self.app.f_small, padx=9, pady=5, justify=tk.LEFT,
-                 highlightthickness=1, highlightbackground=t['border'], wraplength=320).pack()
+        w = self.w
+        self.tip = show_tip(w, self.app, text, w.winfo_rootx(), w.winfo_rooty(), w.winfo_width(), w.winfo_height())
+
+
+def show_tip(owner, app, text, ax, ay, aw, ah):
+    """Mostra uma dica sob o retângulo (ax, ay, aw, ah) da tela, dentro da janela de `owner` e do monitor. Devolve o Toplevel."""
+    t = app.t
+    tip = tk.Toplevel(owner)
+    tip.wm_overrideredirect(True)
+    tip.withdraw()  # mede antes de mostrar: perto da borda direita a dica é puxada para dentro da janela
+    tk.Label(tip, text=text, bg=t['panel2'], fg=t['fg'], font=app.f_small, padx=9, pady=5, justify=tk.LEFT,
+             highlightthickness=1, highlightbackground=t['border'], wraplength=app.px(340)).pack()
+    tip.update_idletasks()
+    top = owner.winfo_toplevel()
+    win = (top.winfo_rootx(), top.winfo_rooty(), top.winfo_width(), top.winfo_height())
+    x, y = tooltip_pos(win, work_area_at(owner, ax + aw // 2, ay + ah // 2), ax, ay, aw, ah, tip.winfo_reqwidth(), tip.winfo_reqheight())
+    tip.wm_geometry(f"+{x}+{y}")
+    tip.deiconify()
+    return tip
+
+
+class CellTooltip:
+    """Dica por célula da tabela: ao parar o mouse sobre uma célula com alerta (contexto, falhas, retomada, título longo)."""
+
+    def __init__(self, tree, app, text_fn, delay=450):
+        self.tree, self.app, self.fn, self.delay = tree, app, text_fn, delay
+        self.key = self.tip = self.job = None
+        self.text = ""
+        tree.bind("<Motion>", self.on_motion, add="+")
+        tree.bind("<Leave>", lambda e: self.hide(), add="+")
+        tree.bind("<ButtonPress>", lambda e: self.hide(), add="+")
+
+    def edges(self):
+        """[(coluna, x_esquerda, x_direita)] na tela da tabela, na ordem exibida, já descontada a rolagem horizontal.
+        Calculado pelas larguras: com displaycolumns, o identify_column do Tk 8.6 numera as colunas de outro jeito que o bbox."""
+        disp = list(self.tree["displaycolumns"])
+        if disp == ["#all"]:
+            disp = list(self.tree["columns"])
+        cols = ["#0"] + disp
+        widths = [int(self.tree.column(c, "width")) for c in cols]
+        offset = round(self.tree.xview()[0] * sum(widths))
+        out, x = [], -offset
+        for c, w in zip(cols, widths):
+            out.append((c, x, x + w))
+            x += w
+        return out
+
+    def column_at(self, x):
+        return next((c for c, l, r in self.edges() if l <= x < r), "")
+
+    def on_motion(self, e):
+        iid = self.tree.identify_row(e.y)
+        col = self.column_at(e.x) if iid else ""
+        key = (iid, col) if iid and col else None
+        if key == self.key:
+            return
+        self.hide()
+        self.key = key
+        if key:
+            self.text = self.fn(iid, col)
+            if self.text:
+                self.job = self.tree.after(self.delay, self.show_now)
+
+    def show_now(self):
+        self.job = None
+        if not self.key or not self.text or not self.tree.exists(self.key[0]):
+            return
+        box = self.tree.bbox(*self.key)
+        if not box:
+            return
+        x, y, w, h = box
+        self.tip = show_tip(self.tree, self.app, self.text, self.tree.winfo_rootx() + x, self.tree.winfo_rooty() + y, w, h)
+
+    def hide(self):
+        if self.job:
+            self.tree.after_cancel(self.job)
+            self.job = None
+        if self.tip:
+            self.tip.destroy()
+            self.tip = None
+        self.key = None
 
 
 class IconButton(tk.Canvas):
     """Botão desenhado em Canvas: ícone + texto, cantos do tema, estados (normal, hover, pressionado, foco,
     desabilitado, ocupado com spinner, selo de contagem, confirmação) e modo compacto só com o ícone."""
 
-    def __init__(self, master, app, icon, text, command, kind="normal", tip="", bg_token="bg", icon_token="btn_fg"):
+    def __init__(self, master, app, icon, text, command, kind="normal", tip="", bg_token="bg", icon_token="btn_fg", stretch=False, icon_only=False):
         super().__init__(master, highlightthickness=0, bd=0, takefocus=1, cursor="hand2")
+        self.icon_only = icon_only  # sempre compacto: o texto aparece só sem ícones (Tema > Sem ícones)
+        self.stretch = stretch  # ocupa a largura que o gerenciador de layout der (grid com sticky), conteúdo centralizado
         self.app, self.icon, self.text, self.command = app, icon, text, command
         self.kind, self.tip, self.bg_token, self.icon_token = kind, tip, bg_token, icon_token
-        self.enabled, self.reason, self.busy, self.compact = True, "", False, False
+        self.enabled, self.reason, self.busy, self.compact = True, "", False, icon_only
         self.hover = self.pressed = self.focused = self.ok_flash = False
         self.badge, self._spin, self._spin_job = 0, 0, None
         self.bind("<Enter>", lambda e: self._set(hover=True))
@@ -1639,7 +1957,9 @@ class IconButton(tk.Canvas):
         self.bind("<FocusOut>", lambda e: self._set(focused=False))
         self.bind("<space>", lambda e: self.invoke())
         self.bind("<Return>", lambda e: self.invoke())
-        Tooltip(self, app, self.tooltip_text)
+        self.tooltip = Tooltip(self, app, self.tooltip_text)
+        if stretch:
+            self.bind("<Configure>", lambda e: self.redraw(), add="+")
         self.relayout()
 
     # --- API ---
@@ -1682,6 +2002,7 @@ class IconButton(tk.Canvas):
             self.relayout()
 
     def set_compact(self, flag):
+        flag = flag or self.icon_only
         if flag != self.compact:
             self.compact = flag
             self.relayout()
@@ -1755,6 +2076,8 @@ class IconButton(tk.Canvas):
         self.configure(bg=t[self.bg_token])
         self.delete("all")
         w, h = int(self["width"]), int(self["height"])
+        if self.stretch and self.winfo_width() > 1:
+            w = self.winfo_width()
         bg, border, fg = self.colors()
         r = self.app.px(t['radius'])
         round_rect(self, 1, 1, w - 1, h - 1, r, fill=bg, outline=border, width=2 if self.focused and self.enabled else 1)
@@ -1762,7 +2085,7 @@ class IconButton(tk.Canvas):
         off = 1 if self.pressed and self.enabled else 0
         icon_fg = fg if (self.kind == "primary" or not self.enabled or self.busy) else t.get(self.icon_token, fg)
         pad, gap = self.app.px(12), self.app.px(8)
-        x = pad
+        x = pad + (max(0, (w - self.measure()) // 2) if self.stretch else 0)
         cy = h // 2 + off
         if self.busy:
             iw = max(self.app.f_icon.measure(g or "●"), self.app.px(16))
@@ -1788,16 +2111,26 @@ class IconButton(tk.Canvas):
 
 
 class Chip(tk.Label):
-    """Selo colorido de contagem na barra de status."""
+    """Selo colorido de contagem na barra de status. Clicar (ou Enter/Espaço com foco) filtra a tabela; de novo, mostra tudo."""
 
-    def __init__(self, master, app, token):
-        super().__init__(master, font=app.f_small, padx=8, pady=2, highlightthickness=1)
-        self.app, self.token = app, token
+    def __init__(self, master, app, token, key=None):
+        super().__init__(master, font=app.f_small, padx=8, pady=2, highlightthickness=1, takefocus=1 if key else 0,
+                         cursor="hand2" if key else "")
+        self.app, self.token, self.key = app, token, key
+        if key:
+            for seq in ("<Button-1>", "<Return>", "<space>"):
+                self.bind(seq, lambda e: app.toggle_chip_filter(key))
+            self.bind("<FocusIn>", lambda e: self.repaint(), add="+")
+            self.bind("<FocusOut>", lambda e: self.repaint(), add="+")
+            Tooltip(self, app, lambda: "Mostrar todas as sessões" if app.chip_filter == key else "Mostrar só estas sessões")
         self.repaint()
 
     def repaint(self):
         t = self.app.t
-        self.configure(bg=t['panel'], fg=t[self.token], highlightbackground=blend(t['panel2'], t[self.token], 0.4))
+        on = self.key is not None and getattr(self.app, "chip_filter", None) == self.key
+        focused = self.key is not None and self.focus_displayof() is self
+        self.configure(bg=blend(t['panel'], t[self.token], 0.22) if on else t['panel'], fg=t[self.token],
+                       highlightbackground=t[self.token] if (on or focused) else blend(t['panel2'], t[self.token], 0.4))
 
 
 class Toast(tk.Frame):
@@ -1821,7 +2154,40 @@ class Toast(tk.Frame):
             self.buttons.append(b)
         close = IconButton(self, app, "clear", "", self.dismiss, bg_token="panel2", tip="Fechar")
         close.pack(side=tk.LEFT, padx=(app.px(8), 0))
+        self.resume_ms = 4000  # depois que o mouse/foco sai, ainda fica este tempo
         self.job = self.after(ttl, self.dismiss)
+        # Com o mouse ou o foco em cima (para clicar em Desfazer), o relógio para.
+        self.bind("<Enter>", lambda e: self.pause(), add="+")
+        self.bind("<Leave>", lambda e: self.after_idle(self.resume_if_away), add="+")
+        for b in self.buttons + [close]:
+            b.bind("<FocusIn>", lambda e: self.pause(), add="+")
+            b.bind("<FocusOut>", lambda e: self.after_idle(self.resume_if_away), add="+")
+
+    def pause(self):
+        if self.job:
+            self.after_cancel(self.job)
+            self.job = None
+
+    def resume(self):
+        if not self.job and self.winfo_exists():
+            self.job = self.after(self.resume_ms, self.dismiss)
+
+    def resume_if_away(self):
+        try:
+            x, y = self.winfo_pointerxy()
+            inside = self.winfo_containing(x, y)
+            focus = self.focus_get()
+        except (tk.TclError, KeyError):
+            inside = focus = None
+        if not self._mine(inside) and not self._mine(focus):
+            self.resume()
+
+    def _mine(self, w):
+        """True se `w` é esta notificação ou um widget dentro dela (".!toast" não pode casar com ".!toast2")."""
+        if w is None:
+            return False
+        name, me = str(w), str(self)
+        return name == me or name.startswith(me + ".")
 
     def dismiss(self):
         if self.job:
@@ -1862,8 +2228,8 @@ class ThemePicker(tk.Toplevel):
         self.highlight(self.cur)
         self.update_idletasks()
         w, h = max(self.winfo_reqwidth(), anchor.winfo_width()), self.winfo_reqheight()
-        x = min(max(0, anchor.winfo_rootx() + anchor.winfo_width() - w), max(0, self.winfo_screenwidth() - w))
-        y = min(anchor.winfo_rooty() + anchor.winfo_height() + app.px(2), max(0, self.winfo_screenheight() - h))
+        ax, ay, aw, ah = anchor.winfo_rootx(), anchor.winfo_rooty(), anchor.winfo_width(), anchor.winfo_height()
+        x, y = dropdown_pos(work_area_at(self, ax + aw // 2, ay + ah // 2), ax, ay, aw, ah, w, h, gap=app.px(2))
         self.geometry(f"{w}x{h}+{x}+{y}")
         self.bind("<Escape>", lambda e: self.close())
         self.bind("<Up>", lambda e: self.move(-1))
@@ -1937,6 +2303,75 @@ class ThemePicker(tk.Toplevel):
             self.grab_release()
         except tk.TclError:
             pass
+        self.destroy()
+
+
+class AboutDialog(tk.Toplevel):
+    """Sobre: versão, autor, links e diagnóstico do ambiente, com botão para copiar tudo."""
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.app = app
+        t = app.t
+        self.title("Sobre o AntigravityGate")
+        self.configure(bg=t['panel'], padx=app.px(20), pady=app.px(16))
+        self.transient(app)
+        self.resizable(False, False)
+        self.f_link = tkfont.Font(self, font=app.f_ui)
+        self.f_link.configure(underline=True)
+
+        def lab(parent, text, font=None, fg='fg', **kw):
+            return tk.Label(parent, text=text, bg=t['panel'], fg=t[fg], font=font or app.f_ui, justify=tk.LEFT, anchor="w", **kw)
+
+        head = tk.Frame(self, bg=t['panel'])
+        head.pack(anchor="w", fill=tk.X)
+        lab(head, "◆", app.f_title, 'accent_text').pack(side=tk.LEFT)
+        lab(head, "AntigravityGate", app.f_title).pack(side=tk.LEFT, padx=(app.px(8), app.px(10)))
+        lab(head, f"versão {__version__} · {__build__}", app.f_small, 'muted').pack(side=tk.LEFT, anchor="s", pady=(0, app.px(3)))
+        lab(self, "Gestão de contexto e curadoria de sessões do Antigravity.").pack(anchor="w", pady=(app.px(4), app.px(12)))
+
+        grid = tk.Frame(self, bg=t['panel'])
+        grid.pack(anchor="w", fill=tk.X)
+        rows = (("Autor", APP_AUTHOR, None), ("E-mail", APP_EMAIL, "mailto:" + APP_EMAIL),
+                ("GitHub", APP_GITHUB.replace("https://", ""), APP_GITHUB), ("Projeto", APP_REPO.replace("https://", ""), APP_REPO))
+        for r, (label, text, url) in enumerate(rows):
+            lab(grid, label, app.f_small, 'muted').grid(row=r, column=0, sticky="w", padx=(0, app.px(14)), pady=1)
+            v = lab(grid, text, self.f_link if url else app.f_ui, 'accent_text' if url else 'fg')
+            v.grid(row=r, column=1, sticky="w", pady=1)
+            if url:
+                v.configure(cursor="hand2", takefocus=1, highlightthickness=1, highlightbackground=t['panel'], highlightcolor=t['accent'])
+                v.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
+                v.bind("<Return>", lambda e, u=url: webbrowser.open(u))
+                Tooltip(v, app, lambda u=url: f"Abrir {u}")
+        lab(self, f"© 2026 {APP_AUTHOR}. Ferramenta independente, sem vínculo com o Google ou com o Antigravity.",
+            app.f_small, 'muted', wraplength=app.px(520)).pack(anchor="w", pady=(app.px(10), app.px(12)))
+
+        box = tk.Frame(self, bg=t['panel2'], padx=app.px(12), pady=app.px(10), highlightthickness=1, highlightbackground=t['border'])
+        box.pack(fill=tk.X)
+        tk.Label(box, text="Diagnóstico", bg=t['panel2'], fg=t['fg'], font=app.f_bold, anchor="w").pack(anchor="w")
+        tk.Label(box, text="\n".join(about_info().splitlines()[1:]), bg=t['panel2'], fg=t['fg'], font=app.f_small, justify=tk.LEFT,
+                 anchor="w", wraplength=app.px(520)).pack(anchor="w", pady=(app.px(4), 0))
+
+        buttons = tk.Frame(self, bg=t['panel'])
+        buttons.pack(anchor="e", pady=(app.px(14), 0))
+        IconButton(buttons, app, "copy", "Copiar informações", self.copy_info, bg_token="panel",
+                   tip="Copiar versão e ambiente para colar num relato de problema").pack(side=tk.LEFT, padx=(0, app.px(8)))
+        IconButton(buttons, app, "folder", "Pasta de dados", lambda: app.open_path(LOG_DIR), bg_token="panel",
+                   tip=f"Abrir {LOG_DIR}").pack(side=tk.LEFT, padx=(0, app.px(8)))
+        IconButton(buttons, app, "", "Fechar", self.close, kind="primary", bg_token="panel").pack(side=tk.LEFT)
+        self.bind("<Escape>", lambda e: self.close())
+        self.protocol("WM_DELETE_WINDOW", self.close)
+        place_over(self, app)
+        self.focus_set()
+
+    def copy_info(self):
+        self.app.clipboard_clear()
+        self.app.clipboard_append(about_info())
+        self.app.notify("ok", "Informações do app copiadas.")
+
+    def close(self):
+        if self.app.about_win is self:
+            self.app.about_win = None
         self.destroy()
 
 
@@ -2026,6 +2461,9 @@ class LimitDialog(tk.Toplevel):
 
 class AntigravityGateApp(tk.Tk):
     def __init__(self):
+        # Janelas do app já fechadas (nos testes, várias por processo) são lixo cíclico com objetos Tk. Se o coletor rodar
+        # dentro da thread de leitura, o Tk aborta ("async handler deleted by the wrong thread"): coleta aqui, na principal.
+        gc.collect()
         super().__init__()
         self.title("AntigravityGate")
         self._win_job = None
@@ -2034,11 +2472,14 @@ class AntigravityGateApp(tk.Tk):
         self.icon_cache = {}
         self.toasts, self.toast_log = [], []
         self.theme_picker = None
+        self.about_win = None
         self.queue = queue.Queue()
         self.gen = 0
         self.loading = False
         self.exporting = False
         self.autorunning, self.runner, self.auto_win = False, None, None
+        self.auto_thread = self.export_thread = None
+        self.export_cancel = False
         self.handoffs = {}
         self.warnings = 0
         self.base_status = ""
@@ -2047,12 +2488,17 @@ class AntigravityGateApp(tk.Tk):
         self.states = {}
         self.grouped, self.total, self.sub_count, self.row_by_cid = {}, 0, {}, {}
         self.match, self.sort_col, self.sort_rev = None, "col_date", True
+        self.chip_filter = None
         self.search_note = ""
 
         self.settings = load_settings()
         w, h, x, y = window_geometry(lambda px, py: work_area_at(self, px, py), self.winfo_fpixels('1i') / 96, self.settings.get("window"))
         self.geometry(f"{w}x{h}+{x}+{y}")
         self.minsize(min(WIN_MIN[0], w), min(WIN_MIN[1], h))
+        self.start_zoomed = saved_zoomed(self.settings.get("window"))
+        if self.start_zoomed:
+            # Antes de a janela aparecer o Windows ignora o "zoomed": maximiza no primeiro <Map>.
+            self._zoom_bind = self.bind("<Map>", self._zoom_on_map, add="+")
         self.limit_preset, att, crit = limits_from_settings(self.settings)
         set_context_limits(att, crit)
         c = self.settings.get("context") if isinstance(self.settings.get("context"), dict) else {}
@@ -2320,6 +2766,7 @@ class AntigravityGateApp(tk.Tk):
     def show_critical(self):
         crit = self.critical_rows()
         self.match = {r['cid'] for r in crit}
+        self.chip_filter = None
         self.search_note = f"{len(crit)} sessão(ões) críticas"
         self.populate()
 
@@ -2338,8 +2785,15 @@ class AntigravityGateApp(tk.Tk):
 
     # --- widgets ---
 
-    def make_button(self, parent, name, icon, text, command, tip, kind="normal", bg_token="bg", icon_token="btn_fg"):
-        b = IconButton(parent, self, icon, text, command, kind=kind, tip=tip, bg_token=bg_token, icon_token=icon_token)
+    def open_about(self):
+        if self.about_win is not None and self.about_win.winfo_exists():
+            self.about_win.lift()
+            self.about_win.focus_set()
+            return
+        self.about_win = AboutDialog(self)
+
+    def make_button(self, parent, name, icon, text, command, tip, kind="normal", bg_token="bg", icon_token="btn_fg", stretch=False, icon_only=False):
+        b = IconButton(parent, self, icon, text, command, kind=kind, tip=tip, bg_token=bg_token, icon_token=icon_token, stretch=stretch, icon_only=icon_only)
         self.icon_buttons.append(b)
         self.btn[name] = b
         return b
@@ -2358,6 +2812,7 @@ class AntigravityGateApp(tk.Tk):
         Tooltip(self.title_lbl, self, lambda: f"AntigravityGate v{__version__}")
         self.hdr_right = self.themed_widget(tk.Frame(self.top_frame), bg="header_bg")
         self.hdr_right.pack(side=tk.RIGHT)
+        self.make_button(self.hdr_right, "about", "about", "Sobre", self.open_about, "Sobre: versão, autor e diagnóstico (F1)", bg_token="header_bg", icon_token="accent_text", icon_only=True).pack(side=tk.RIGHT, padx=(self.px(8), 0))
         self.make_button(self.hdr_right, "theme", "theme", self.theme_button_text(), self.show_theme_menu, "Escolher tema e estilo de ícones", bg_token="header_bg", icon_token="accent_text").pack(side=tk.RIGHT, padx=(self.px(8), 0))
         self.make_button(self.hdr_right, "limits", "limits", "Limites", self.open_limits, self.limits_tip(), bg_token="header_bg", icon_token="warning").pack(side=tk.RIGHT, padx=(self.px(8), 0))
         self.make_button(self.hdr_right, "refresh", "refresh", "Atualizar", self.refresh, "Reler as pastas e recarregar as sessões (F5)", bg_token="header_bg").pack(side=tk.RIGHT)
@@ -2403,7 +2858,7 @@ class AntigravityGateApp(tk.Tk):
         self.footer = self.themed_widget(tk.Frame(self, padx=self.px(14), pady=self.px(6)), bg="panel2")
         self.footer.pack(side=tk.BOTTOM, fill=tk.X)
         for token, key in (("danger", "crit"), ("warning", "rot"), ("muted", "arquivada"), ("success", "aprovada"), ("accent_text", "pendente")):
-            chip = Chip(self.footer, self, token)
+            chip = Chip(self.footer, self, token, key)
             chip.pack(side=tk.RIGHT, padx=(self.px(6), 0))
             self.chips[key] = chip
         self.status = self.themed_widget(tk.Label(self.footer, anchor=tk.W, font=self.f_small), bg="panel2", fg="fg")
@@ -2413,8 +2868,12 @@ class AntigravityGateApp(tk.Tk):
         # Painel de detalhes da seleção (recolhível), acima do rodapé
         self.details = self.themed_widget(tk.Frame(self, highlightthickness=1), bg="panel", highlightbackground="border")
         self.details.pack(side=tk.BOTTOM, fill=tk.X, padx=self.px(16), pady=(0, self.px(8)))
-        bar = self.themed_widget(tk.Frame(self.details, padx=self.px(10), pady=self.px(4), cursor="hand2"), bg="panel2")
+        bar = self.details_bar = self.themed_widget(tk.Frame(self.details, padx=self.px(10), pady=self.px(4), cursor="hand2",
+                                                             takefocus=1, highlightthickness=1), bg="panel2", highlightbackground="panel2",
+                                                    highlightcolor="accent")
         bar.pack(fill=tk.X)
+        for seq in ("<Return>", "<space>"):
+            bar.bind(seq, lambda e: self.toggle_details())
         self.details_toggle = self.themed_widget(tk.Label(bar, font=self.f_bold, cursor="hand2"), bg="panel2", fg="fg")
         self.details_toggle.pack(side=tk.LEFT)
         for w in (bar, self.details_toggle):
@@ -2470,10 +2929,22 @@ class AntigravityGateApp(tk.Tk):
         hscroll.pack(side=tk.BOTTOM, fill=tk.X)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
+        # Título logo depois de Projeto / Sessão; os valores das linhas continuam na ordem de `columns` (COL_*).
+        # Larguras fixas (sem stretch): o Tk encolhia as colunas esticáveis sozinho e desfazia o ajuste do usuário.
+        for c in ("#0",) + columns:
+            self.tree.column(c, stretch=False)
+        self.tree["displaycolumns"] = ("col_title", "col_date", "col_ctx", "col_steps", "col_fail", "col_size", "col_agent", "col_uuid")
+        self.cell_tips = CellTooltip(self.tree, self, self.tree_cell_tip)
         self.tree.bind("<Double-1>", self.on_double_click)
         self.tree.bind("<Button-3>", self.show_menu)
+        for seq in ("<Shift-F10>", "<App>"):
+            try:
+                self.tree.bind(seq, self.menu_from_keyboard)
+            except tk.TclError:  # <App> só existe no Windows
+                pass
         self.tree.bind("<<TreeviewSelect>>", lambda e: self.update_actions())
         self.bind("<F5>", lambda e: self.refresh())
+        self.bind("<F1>", lambda e: self.open_about())
         self.update_actions()
 
     # --- responsividade e estados ---
@@ -2494,20 +2965,66 @@ class AntigravityGateApp(tk.Tk):
             self.after_cancel(self._win_job)
         self._win_job = self.after(700, self.save_window)
 
-    def save_window(self):
-        """Grava tamanho e posição (só com a janela em estado normal; maximizada não conta)."""
-        self._win_job = None
-        m = re.match(r"(\d+)x(\d+)([+-]-?\d+)([+-]-?\d+)$", self.geometry())
-        if self.wm_state() != "normal" or not m:
+    def _zoom_on_map(self, e):
+        if e.widget is not self or not getattr(self, "_zoom_bind", None):
             return
-        self.settings["window"] = dict(w=int(m[1]), h=int(m[2]), x=int(m[3]), y=int(m[4]))
+        self.unbind("<Map>", self._zoom_bind)
+        self._zoom_bind = None
+        self.after(50, self.zoom)
+
+    def zoom(self):
+        """Maximiza (Windows: estado 'zoomed'; X11: atributo -zoomed)."""
+        try:
+            self.wm_state("zoomed")  # não self.state(): o atributo self.state é o StateStore e esconde o método do Tk
+        except tk.TclError:
+            try:
+                self.attributes("-zoomed", True)
+            except tk.TclError:
+                pass
+
+    def save_window(self):
+        """Grava tamanho e posição. Maximizada: guarda só que estava maximizada e em que monitor (centro da janela);
+        o tamanho normal anterior é mantido."""
+        self._win_job = None
+        geo = parse_geometry(self.geometry())
+        state = self.wm_state()
+        if not geo or state not in ("normal", "zoomed"):
+            return
+        w, h, x, y = geo
+        if state == "zoomed":
+            win = dict(self.settings.get("window") or {})
+            win.update(zoomed=True, zx=x + w // 2, zy=y + h // 2)
+        else:
+            win = dict(w=w, h=h, x=x, y=y, zoomed=False)
+        self.settings["window"] = win
         save_settings(self.settings)
 
     def on_close(self):
+        busy = [name for name, flag in (("o Auto-Run", self.autorunning), ("uma exportação", self.exporting)) if flag]
+        if busy:
+            if not messagebox.askyesno("Sair do AntigravityGate",
+                                       f"Há {' e '.join(busy)} em andamento. Cancelar e sair?\n\n"
+                                       "O que já terminou fica registrado; o item em curso é interrompido e não é salvo."):
+                return
+            self.status.configure(text="Cancelando antes de sair…")
+            self.update_idletasks()
+            self.stop_background_work()
         if self._win_job:
             self.after_cancel(self._win_job)
             self.save_window()
         self.destroy()
+
+    def stop_background_work(self, timeout=12.0):
+        """Cancela Auto-Run e exportação e espera as threads terminarem (o agy é encerrado e a falha fica registrada)."""
+        self.export_cancel = True
+        if self.runner and self.autorunning:
+            self.runner.cancel()
+        deadline = time.time() + timeout
+        for th in (self.auto_thread, self.export_thread):
+            if th and th.is_alive():
+                th.join(max(0.0, deadline - time.time()))
+                if th.is_alive():
+                    log.warning("Trabalho em segundo plano não terminou em %.0f s; saindo mesmo assim", timeout)
 
     def on_resize(self, _e=None):
         if getattr(self, "_fit_job", None):
@@ -2522,7 +3039,7 @@ class AntigravityGateApp(tk.Tk):
         self.fit_buttons(self.actions_frame, [self.btn[n] for n in names], reserved=self.px(60) + self.px(32))
         hdr_room = self.top_frame.winfo_width() - self.brand.winfo_reqwidth() - self.px(32)
         both = [self.btn["limits"], self.btn["refresh"], self.btn["theme"]]
-        compact = sum(b.measure(False) for b in both) + self.px(24) > hdr_room
+        compact = sum(b.measure(False) for b in both) + self.btn["about"].measure() + self.px(32) > hdr_room
         for b in both:
             b.set_compact(compact)
 
@@ -2542,6 +3059,8 @@ class AntigravityGateApp(tk.Tk):
             reason = "Exportação em andamento."
         elif not first_session:
             reason = "Selecione uma sessão na tabela."
+        elif len(self.selected_session_ids()) > 1:
+            reason = "Selecione uma sessão só: exportação e dossiê são de uma conversa por vez."
         elif not fpath:
             reason = "Esta sessão não tem arquivo de banco nesta fonte."
         else:
@@ -2561,8 +3080,31 @@ class AntigravityGateApp(tk.Tk):
             self.btn["d_folder"].set_enabled(bool(fpath), "" if fpath else "Selecione uma sessão com arquivo nesta fonte.")
         self.update_details()
 
+    CHIP_FILTERS = {"pendente": "pendentes", "aprovada": "aprovadas", "arquivada": "arquivadas", "rot": "em atenção", "crit": "críticas"}
+
+    def chip_match(self, key, r):
+        if key in ("rot", "crit"):
+            return ctx_level(r['ctx']) == (1 if key == "rot" else 2)
+        return self.states.get(r['cid'], "pendente") == key
+
+    def toggle_chip_filter(self, key):
+        """Selo do rodapé como filtro: mostra só as sessões dele; clicar de novo volta a mostrar todas."""
+        if not self.grouped:
+            return
+        if self.chip_filter == key:
+            self.clear_search()
+            return
+        self.search_var.set("")
+        rows = list(self.row_by_cid.values())
+        self.match = {r['cid'] for r in rows if self.chip_match(key, r)}
+        self.chip_filter = key
+        self.search_note = f"Filtro: {len(self.match)} {self.CHIP_FILTERS[key]} (clique no selo de novo para ver todas)"
+        self.populate()
+
     def update_chips(self):
         shown = [self.row_by_cid[self.cid_of(i)] for i in self.iter_sessions() if self.cid_of(i) in self.row_by_cid]
+        if self.chip_filter:  # com filtro de selo, cada selo continua contando todas as sessões
+            shown = list(self.row_by_cid.values())
         st = lambda r: self.states.get(r['cid'], "pendente")
         counts = {k: sum(1 for r in shown if st(r) == k) for k in ("pendente", "aprovada", "arquivada")}
         levels = [ctx_level(r['ctx']) for r in shown]
@@ -2571,6 +3113,8 @@ class AntigravityGateApp(tk.Tk):
         self.chips['arquivada'].configure(text=f"▣ {counts['arquivada']} arquivadas")
         self.chips['rot'].configure(text=f"⚠ {levels.count(1)} em atenção")
         self.chips['crit'].configure(text=f"‼ {levels.count(2)} críticas")
+        for c in self.chips.values():
+            c.repaint()
 
     def is_session(self, iid):
         v = self.tree.item(iid, 'values') if iid else ()
@@ -2586,11 +3130,41 @@ class AntigravityGateApp(tk.Tk):
         return self.tree.item(iid, 'values')[COL_UUID]
 
     def on_double_click(self, event):
+        """Divisor do cabeçalho: ajusta a largura da coluna ao conteúdo. Sessão: abre o painel de detalhes."""
+        x = getattr(event, "x", 0)
+        if self.tree.identify_region(x, event.y) == "separator":
+            # coluna cuja borda direita está mais perto do clique
+            col, _l, right = min(self.cell_tips.edges(), key=lambda e: abs(e[2] - x))
+            if abs(right - x) <= self.px(8):
+                self.autofit_column(col)
+            return "break"
         iid = self.tree.identify_row(event.y)
         if not self.is_session(iid):
             return  # cabeçalho, área vazia ou pasta de projeto: o duplo clique padrão só expande/recolhe
         self.tree.selection_set(iid)
-        self.open_selected()
+        self.open_details()
+
+    def open_details(self):
+        """Abre o painel de detalhes (se estava recolhido) para a sessão selecionada."""
+        if not self.settings.get('details', True):
+            self.toggle_details()
+        self.update_details()
+
+    def autofit_column(self, col):
+        """Largura da coluna = maior texto (cabeçalho ou células) + folga, entre 50 e 900 px escalados."""
+        pad = self.px(24)
+        width = self.f_bold.measure(self.tree.heading(col, "text")) + pad
+        def walk(parent, depth):
+            nonlocal width
+            for iid in self.tree.get_children(parent):
+                if col == "#0":
+                    w = self.f_ui.measure(self.tree.item(iid, "text")) + self.px(20) * (depth + 1) + self.px(16) + pad
+                else:
+                    w = self.f_ui.measure(str(self.tree.set(iid, col))) + pad
+                width = max(width, w)
+                walk(iid, depth + 1)
+        walk("", 0)
+        self.tree.column(col, width=max(self.px(50), min(width, self.px(900))))
 
     def selected_cids(self):
         """UUIDs das sessões selecionadas; selecionar uma pasta de projeto vale para todas as sessões dela."""
@@ -2661,6 +3235,11 @@ class AntigravityGateApp(tk.Tk):
         return "  " + STATUS_NAME[self.states.get(cid, "pendente")] + ret + sub
 
     def refresh_labels(self):
+        if self.chip_filter:  # filtro de selo: refaz a lista (uma sessão marcada pode ter saído do filtro)
+            key = self.chip_filter
+            self.chip_filter = None
+            self.toggle_chip_filter(key)
+            return
         for iid in self.iter_sessions():
             cid = self.cid_of(iid)
             self.tree.item(iid, text=self.leaf_text(cid), tags=self.row_tags(cid), image=self.status_icon(cid))
@@ -2697,14 +3276,20 @@ class AntigravityGateApp(tk.Tk):
             v = self.themed_widget(tk.Label(self.d_facts, font=self.f_ui, anchor="w", justify=tk.LEFT), bg="panel", fg="fg")
             v.grid(row=r, column=c + 1, sticky="w", pady=1)
             self.fact_vals[key] = v
+        self.fact_tips = {}
+        for key, col in (("fails", "col_fail"), ("ws", "ws"), ("handoff", "#0"), ("state", "#0")):
+            self.fact_tips[key] = Tooltip(self.fact_vals[key], self, lambda c=col: (self.cell_tip(self.selected_row(), c) if self.selected_row() else ""))
+        Tooltip(self.gauge, self, lambda: (self.cell_tip(self.selected_row(), "col_ctx") if self.selected_row() else ""))
 
         acts = self.themed_widget(tk.Frame(body), bg="panel")
         acts.pack(side=tk.RIGHT, fill=tk.Y)
-        mkb = lambda name, icon, text, cmd, tip, tok="btn_fg": self.make_button(acts, name, icon, text, cmd, tip, bg_token="panel", icon_token=tok)
-        mkb("d_copy", "copy", "Copiar UUID", self.copy_selected_uuid, "Copiar o UUID da sessão").grid(row=0, column=0, padx=(0, self.px(6)), pady=(0, self.px(6)), sticky="ew")
-        mkb("d_folder", "folder", "Abrir pasta", self.open_selected_folder, "Abrir a pasta do banco da sessão").grid(row=0, column=1, pady=(0, self.px(6)), sticky="ew")
-        mkb("d_export", "export", "Exportar diálogo", self.open_selected, "Salvar a conversa completa em Markdown").grid(row=1, column=0, padx=(0, self.px(6)), sticky="ew")
-        mkb("d_dossier", "dossier", "Dossiê", lambda: self.start_export('dossier'), "Salvar o dossiê de retomada", "accent_text").grid(row=1, column=1, sticky="ew")
+        acts.grid_columnconfigure(0, uniform="dacts")  # duas colunas da mesma largura: botões alinhados
+        acts.grid_columnconfigure(1, uniform="dacts")
+        mkb = lambda name, icon, text, cmd, tip, tok="btn_fg": self.make_button(acts, name, icon, text, cmd, tip, bg_token="panel", icon_token=tok, stretch=True)
+        mkb("d_copy", "copy", "Copiar UUID", self.copy_selected_uuid, "Copiar o UUID da sessão").grid(row=0, column=0, padx=(0, self.px(3)), pady=(0, self.px(6)), sticky="ew")
+        mkb("d_folder", "folder", "Abrir pasta", self.open_selected_folder, "Abrir a pasta do banco da sessão").grid(row=0, column=1, padx=(self.px(3), 0), pady=(0, self.px(6)), sticky="ew")
+        mkb("d_export", "export", "Exportar diálogo", self.open_selected, "Salvar a conversa completa em Markdown").grid(row=1, column=0, padx=(0, self.px(3)), sticky="ew")
+        mkb("d_dossier", "dossier", "Dossiê", lambda: self.start_export('dossier'), "Salvar o dossiê de retomada", "accent_text").grid(row=1, column=1, padx=(self.px(3), 0), sticky="ew")
 
     def toggle_details(self):
         self.settings['details'] = not self.settings.get('details', True)
@@ -2731,6 +3316,59 @@ class AntigravityGateApp(tk.Tk):
         ids = self.selected_session_ids()
         if ids:
             self.open_folder(ids[0])
+
+    def cell_tip(self, r, col):
+        """Dica de uma célula ou de um campo do painel ('ws'): explica o alerta e o que fazer. '' quando não há o que dizer."""
+        if col == "col_ctx":
+            if not r.get('ctx'):
+                return "Sem dado de contexto nesta sessão."
+            level = ctx_level(r['ctx'])
+            text = (f"Contexto: {r['ctx']:,} tokens ({self.level_text(r['ctx'])}).".replace(",", ".")
+                    + f" Atenção a partir de {fmt_tokens(CONTEXT_LIMITS['attention'])}, crítico a partir de "
+                      f"{fmt_tokens(CONTEXT_LIMITS['critical'])} (botão Limites).")
+            if level == 1:
+                text += " Hora de preparar a retomada: gere o Dossiê."
+            elif level == 2:
+                text += " Retome já numa sessão nova (Dossiê ou Auto-Run) para não perder qualidade."
+            return text
+        if col == "col_fail":
+            n = r.get('failures') or 0
+            if not n:
+                return ""
+            return (f"{n} passo(s) de ferramenta terminaram sem sucesso (status diferente de 3). Os detalhes estão no Exportar diálogo "
+                    "(passos marcados com ⚠) e no Dossiê, seção Falhas de ferramenta. O significado exato dos status 6 e 7 não está confirmado.")
+        if col == "#0":
+            bits = []
+            if self.handoffs.get(r['cid']):
+                bits.append(f"Retomada pelo Auto-Run na sessão nova {self.handoffs[r['cid']][:8]}.")
+            if r.get('running'):
+                bits.append("Em execução no Antigravity agora.")
+            if r.get('killed'):
+                bits.append("Encerrada à força no Antigravity.")
+            return " ".join(bits)
+        if col == "col_title":
+            return r['title'] if len(r.get('title') or "") > 40 else ""
+        if col == "ws":
+            paths = [x for x in (r.get('workspace') or "").split(", ") if x]
+            if not paths:
+                return ""
+            missing = [x for x in paths if not os.path.isdir(x)]
+            lines = "\n".join(("✖ " if x in missing else "✔ ") + x for x in paths)
+            if missing:
+                return (f"{len(missing)} de {len(paths)} pasta(s) do workspace não existe(m) mais neste computador; "
+                        f"o Auto-Run anexa ao agy só as que existem.\n{lines}")
+            return "Pastas encontradas neste computador:\n" + lines
+        return ""
+
+    def tree_cell_tip(self, iid, col):
+        if not self.is_session(iid):
+            return ""
+        r = self.row_by_cid.get(self.cid_of(iid))
+        return self.cell_tip(r, col) if r else ""
+
+    def selected_row(self):
+        ids = self.selected_session_ids()
+        return self.row_by_cid.get(self.cid_of(ids[0])) if len(ids) == 1 else None
 
     def level_text(self, ctx):
         return {0: "normal", 1: "atenção", 2: "crítico"}[ctx_level(ctx)]
@@ -2872,12 +3510,14 @@ class AntigravityGateApp(tk.Tk):
         else:
             content_ok = False
         self.match = hits & {r['cid'] for r in rows}
+        self.chip_filter = None
         self.search_note = f"{len(self.match)} resultado(s) para “{q}”" + ("" if content_ok else " (só metadados: sem índice de conteúdo nesta fonte)")
         self.populate()
 
     def clear_search(self):
         self.search_var.set("")
         self.match = None
+        self.chip_filter = None
         self.search_note = ""
         if self.grouped:
             self.populate()
@@ -2888,6 +3528,21 @@ class AntigravityGateApp(tk.Tk):
             return
         if iid not in self.tree.selection():
             self.tree.selection_set(iid)
+        self.build_menu(iid).tk_popup(event.x_root, event.y_root)
+
+    def menu_from_keyboard(self, _e=None):
+        """Shift+F10 ou tecla Menu: abre o menu de contexto na linha com foco (ou na primeira selecionada)."""
+        iid = self.tree.focus() or (self.tree.selection() or ("",))[0]
+        if not iid:
+            return "break"
+        if iid not in self.tree.selection():
+            self.tree.selection_set(iid)
+        self.tree.see(iid)
+        box = self.tree.bbox(iid) or (0, 0, 0, 0)
+        self.build_menu(iid).tk_popup(self.tree.winfo_rootx() + box[0] + self.px(40), self.tree.winfo_rooty() + box[1] + box[3])
+        return "break"
+
+    def build_menu(self, iid):
         m = tk.Menu(self, tearoff=0)
         if self.is_session(iid):
             m.add_command(label="Copiar UUID", command=lambda: self.copy_uuid(iid))
@@ -2895,9 +3550,9 @@ class AntigravityGateApp(tk.Tk):
             m.add_command(label="Exportar diálogo", command=self.open_selected)
             m.add_command(label="Dossiê de retomada", command=lambda: self.start_export('dossier'))
             m.add_separator()
-        for status, text in (("aprovada", "✅ Aprovar"), ("arquivada", "📦 Arquivar"), ("pendente", "↩ Pendente")):
+        for status, text in (("aprovada", "✔ Aprovar"), ("arquivada", "▣ Arquivar"), ("pendente", "↩ Pendente")):
             m.add_command(label=text, command=lambda st=status: self.mark_selected(st))
-        m.tk_popup(event.x_root, event.y_root)
+        return m
 
     def copy_uuid(self, iid):
         self.clipboard_clear()
@@ -2993,7 +3648,7 @@ class AntigravityGateApp(tk.Tk):
         self.warnings = len(res['warnings'])
         self.grouped, self.total = res['grouped'], res['total']
         self.row_by_cid = {r['cid']: r for grp in self.grouped.values() for r in grp}
-        self.match, self.search_note = None, ""
+        self.match, self.search_note, self.chip_filter = None, "", None
         self.search_var.set("")
         try:
             self.states = self.state.load()
@@ -3009,6 +3664,8 @@ class AntigravityGateApp(tk.Tk):
     def populate(self):
         """Monta a árvore a partir dos dados carregados, aplicando ordenação e busca. Não toca no disco."""
         label = self.sources[self.source_idx][0]
+        if hasattr(self, "cell_tips"):
+            self.cell_tips.hide()  # as linhas (e os ids) vão ser recriados
         for item in self.tree.get_children():
             self.tree.delete(item)
         self.sub_count = {}
@@ -3076,6 +3733,9 @@ class AntigravityGateApp(tk.Tk):
         if not self.is_session(sel[0]):
             messagebox.showinfo("Aviso", "Clique numa conversa específica dentro da pasta do projeto.")
             return
+        if len(self.selected_session_ids()) > 1:  # vale para botão, menu e duplo clique
+            messagebox.showinfo("Aviso", "Selecione uma sessão só: exportação e dossiê são de uma conversa por vez.")
+            return
         cid = self.cid_of(sel[0])
         meta = self.meta_for(cid)
         if not meta['fpath']:
@@ -3092,54 +3752,123 @@ class AntigravityGateApp(tk.Tk):
             defaultextension=".md", filetypes=[("Markdown", "*.md"), ("Todos os arquivos", "*.*")])
         if not out:
             return
-        self.exporting = True
+        self.exporting, self.export_cancel = True, False
         self.exporting_btn = self.btn["export" if kind == 'full' else "dossier"]
         self.exporting_btn.set_busy(True, "Exportando…")
         self.update_actions()
         self.set_status(f"{self.base_status}  |  exportando…")
 
+        def progress(n, total):
+            if self.export_cancel:
+                raise ExportCancelled()
+            self.queue.put((0, 'export_progress', (n, total)))
+
         def job():
             try:
-                export_session(kind, meta['fpath'], meta, out, progress=lambda n, t: self.queue.put((0, 'export_progress', (n, t))))
+                export_session(kind, meta['fpath'], meta, out, progress=progress)
                 self.queue.put((0, 'export_done', out))
+            except ExportCancelled:
+                log.info("Exportação de %s cancelada", cid)
+                self.queue.put((0, 'export_error', "cancelada"))
             except Exception as e:
                 log.exception("Falha ao exportar %s", cid)
                 self.queue.put((0, 'export_error', f"{type(e).__name__}: {e}"))
 
-        threading.Thread(target=job, daemon=True).start()
+        self.export_thread = threading.Thread(target=job, daemon=True)
+        self.export_thread.start()
 
     # --- Auto-Run ---
 
     def confirm_autorun(self, items, done):
-        """Janela de confirmação. Devolve {'dry_run', 'redo'} ou None se o usuário cancelar."""
-        win = tk.Toplevel(self)
+        """Confirmação no tema do app: uma caixa por sessão aprovada (já retomadas vêm desmarcadas, salvo Refazer), simulação,
+        modelo. Devolve {'dry_run', 'redo', 'model', 'cids'} ou None se o usuário cancelar."""
+        t = self.t
+        win = self.confirm_win = tk.Toplevel(self)
         win.title("Auto-Run — confirmar")
         win.transient(self)
+        win.configure(bg=t['panel'], padx=self.px(16), pady=self.px(12))
         result = {'v': None}
-        tk.Label(win, text=f"{len(items)} sessão(ões) aprovada(s) nesta fonte. Para cada uma o app gera o dossiê de retomada e, "
-                           "fora do modo simulação, abre uma sessão NOVA com o agy (a original não é alterada).",
-                 wraplength=620, justify=tk.LEFT, padx=12, pady=8).pack(anchor=tk.W)
-        box = tk.Listbox(win, width=90, height=min(12, max(3, len(items))))
+
+        def lab(parent, text, fg='fg', font=None, **kw):
+            return tk.Label(parent, text=text, bg=t['panel'], fg=t[fg], font=font or self.f_ui, justify=tk.LEFT, anchor="w", **kw)
+
+        def check(parent, text, var, command=None, font=None):
+            return tk.Checkbutton(parent, text=text, variable=var, command=command, bg=t['panel'], fg=t['fg'], selectcolor=t['panel2'],
+                                  activebackground=t['panel'], activeforeground=t['fg'], font=font or self.f_ui, anchor="w",
+                                  highlightthickness=1, highlightbackground=t['panel'], highlightcolor=t['accent'])
+
+        lab(win, f"{len(items)} sessão(ões) aprovada(s) nesta fonte. Marque as que vão rodar agora.", font=self.f_bold).pack(anchor="w")
+        lab(win, "Para cada uma o app gera o dossiê de retomada e, fora da simulação, abre uma sessão NOVA com o agy "
+                 "(a original não é alterada). Rodam uma de cada vez.", 'muted', self.f_small, wraplength=self.px(640)).pack(anchor="w", pady=(2, 8))
+
+        # lista com rolagem (até ~8 linhas visíveis)
+        outer = tk.Frame(win, bg=t['border'], padx=1, pady=1)
+        outer.pack(fill=tk.BOTH, expand=True)
+        canvas = tk.Canvas(outer, bg=t['panel2'], highlightthickness=0, height=self.px(30) * min(8, max(2, len(items))))
+        sb = ttk.Scrollbar(outer, orient=tk.VERTICAL, command=canvas.yview)
+        inner = tk.Frame(canvas, bg=t['panel2'])
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=sb.set, width=self.px(640))
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        if len(items) > 8:
+            sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.confirm_checks = {}
         for it in items:
-            marca = "  (já retomada)" if it['cid'] in done else ""
-            box.insert(tk.END, f"{it['title'][:60]}  [{it['cid'][:8]}]  {it.get('workspace_label', '')}{marca}")
-        box.pack(padx=12, fill=tk.BOTH, expand=True)
+            var = tk.BooleanVar(value=it['cid'] not in done)
+            self.confirm_checks[it['cid']] = var
+            ws = f"  ·  {it['workspace_label']}" if it.get('workspace_label') else ""
+            mark = "  (já retomada)" if it['cid'] in done else ""
+            tk.Checkbutton(inner, text=f"{it['title'][:60]}  [{it['cid'][:8]}]{ws}{mark}", variable=var, bg=t['panel2'], fg=t['fg'],
+                           selectcolor=t['panel'], activebackground=t['panel2'], activeforeground=t['fg'], font=self.f_ui,
+                           anchor="w", highlightthickness=1, highlightbackground=t['panel2'],
+                           highlightcolor=t['accent']).pack(fill=tk.X, anchor="w", padx=self.px(6), pady=1)
+
         dry, redo = tk.BooleanVar(value=True), tk.BooleanVar(value=False)
-        tk.Checkbutton(win, text="Só gerar os dossiês (simulação: não chama o agy, não gasta cota)", variable=dry).pack(anchor=tk.W, padx=12, pady=(8, 0))
-        tk.Checkbutton(win, text="Refazer as que já foram retomadas", variable=redo).pack(anchor=tk.W, padx=12)
-        tk.Label(win, text="Modo do agy: plan (somente leitura). Um erro de cota interrompe o lote inteiro.", fg="#555555", padx=12).pack(anchor=tk.W)
+
+        def redo_changed():  # Refazer marca/desmarca as já retomadas
+            for cid in done:
+                if cid in self.confirm_checks:
+                    self.confirm_checks[cid].set(redo.get())
+        self.confirm_redo_changed = redo_changed
+        check(win, "Só gerar os dossiês (simulação: não chama o agy, não gasta cota)", dry).pack(anchor="w", pady=(10, 0))
+        check(win, "Refazer as que já foram retomadas", redo, redo_changed).pack(anchor="w")
+        mrow = tk.Frame(win, bg=t['panel'])
+        mrow.pack(anchor="w", fill=tk.X, pady=(8, 0))
+        lab(mrow, "Modelo do agy:").pack(side=tk.LEFT)
+        self.model_var = tk.StringVar(value=str(self.settings.get("agy_model") or ""))
+        history = [m for m in self.settings.get("agy_models", []) if isinstance(m, str)]
+        self.model_box = ttk.Combobox(mrow, textvariable=self.model_var, values=self.agy_model_choices(), width=32)
+        self.model_box.pack(side=tk.LEFT, padx=(6, 8))
+        lab(mrow, "vazio = padrão do agy", 'muted', self.f_small).pack(side=tk.LEFT)
+        lab(win, "Modo do agy: plan (somente leitura). Um erro de cota interrompe o lote inteiro.", 'muted', self.f_small).pack(anchor="w", pady=(6, 0))
 
         def go():
-            result['v'] = {'dry_run': dry.get(), 'redo': redo.get()}
+            model = self.model_var.get().strip()
+            cids = {cid for cid, v in self.confirm_checks.items() if v.get()}
+            result['v'] = {'dry_run': dry.get(), 'redo': redo.get(), 'model': model, 'cids': cids}
+            self.settings["agy_model"] = model
+            if model:
+                self.settings["agy_models"] = ([model] + [m for m in history if m != model])[:6]
+            save_settings(self.settings)
             win.destroy()
-        row = tk.Frame(win, pady=10)
-        row.pack()
-        tk.Button(row, text="Iniciar", width=12, command=go).pack(side=tk.LEFT, padx=6)
-        tk.Button(row, text="Cancelar", width=12, command=win.destroy).pack(side=tk.LEFT, padx=6)
+        self.confirm_go, self.confirm_dry, self.confirm_redo = go, dry, redo  # usados pelos testes
+        row = tk.Frame(win, bg=t['panel'])
+        row.pack(anchor="e", pady=(self.px(12), 0))
+        IconButton(row, self, "", "Cancelar", win.destroy, bg_token="panel").pack(side=tk.LEFT, padx=(0, self.px(8)))
+        IconButton(row, self, "autorun", "Iniciar", go, kind="primary", bg_token="panel").pack(side=tk.LEFT)
+        win.bind("<Escape>", lambda e: win.destroy())
         place_over(win, self)
         win.grab_set()
         self.wait_window(win)
         return result['v']
+
+    def agy_model_choices(self):
+        """Usados por último, depois a lista conhecida (a mais recente que o agy devolveu, ou a do app), sem repetir."""
+        known = [m for m in self.settings.get("agy_models_known", []) if isinstance(m, str)] or AGY_MODELS
+        recent = [m for m in self.settings.get("agy_models", []) if isinstance(m, str)]
+        # usados por último que o agy conhece vêm primeiro; nomes fora da lista (modelo personalizado) vão para o fim
+        return list(dict.fromkeys([m for m in recent if m in known] + known + recent))
 
     def start_autorun(self):
         if self.autorunning:
@@ -3160,7 +3889,13 @@ class AntigravityGateApp(tk.Tk):
         opts = self.confirm_autorun(cands, set(self.handoffs))
         if not opts:
             return
-        items = [c for c in cands if opts['redo'] or c['cid'] not in self.handoffs]
+        if 'cids' in opts:  # caixas marcadas na confirmação
+            items = [c for c in cands if c['cid'] in opts['cids']]
+            if not items:
+                messagebox.showinfo("Auto-Run", "Nenhuma sessão marcada. Marque ao menos uma na lista para rodar.")
+                return
+        else:
+            items = [c for c in cands if opts['redo'] or c['cid'] not in self.handoffs]
         if not items:
             messagebox.showinfo("Auto-Run", "Todas as sessões aprovadas já foram retomadas. Marque \"Refazer\" para repetir.")
             return
@@ -3174,8 +3909,9 @@ class AntigravityGateApp(tk.Tk):
         self.autorunning = True
         self.btn["autorun"].set_busy(True, "Executando…")
         self.update_actions()
-        self.open_autorun_window(len(items), opts['dry_run'])
-        runner = AutoRunner(items, self.state, lambda line: self.queue.put((0, 'auto_log', line)), agy=agy, dry_run=opts['dry_run'])
+        model = (opts.get('model') or '').strip()
+        self.open_autorun_window(len(items), opts['dry_run'], model)
+        runner = AutoRunner(items, self.state, lambda line: self.queue.put((0, 'auto_log', line)), agy=agy, dry_run=opts['dry_run'], model=model or None)
         self.runner = runner
 
         def job():
@@ -3186,19 +3922,26 @@ class AntigravityGateApp(tk.Tk):
                 summary = {'error': f"{type(e).__name__}: {e}"}
             self.queue.put((0, 'auto_done', summary))
 
-        threading.Thread(target=job, daemon=True).start()
+        self.auto_thread = threading.Thread(target=job, daemon=True)
+        self.auto_thread.start()
 
-    def open_autorun_window(self, n, dry_run):
+    def open_autorun_window(self, n, dry_run, model=""):
+        t = self.t
         win = tk.Toplevel(self)
         win.title("Auto-Run — " + ("simulação" if dry_run else "executando"))
-        txt = tk.Text(win, wrap=tk.WORD, state=tk.DISABLED, font=('Consolas', 9))
-        txt.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-        btn = tk.Button(win, text="Cancelar", width=14, command=self.cancel_autorun)
-        btn.pack(pady=(0, 8))
-        win.protocol("WM_DELETE_WINDOW", lambda: messagebox.showinfo("Auto-Run", "Use o botão Cancelar/Fechar."))
-        place_over(win, self, size=(780, 420))
+        win.configure(bg=t['panel'])
+        mono = next((f for f in ("Consolas", "DejaVu Sans Mono") if f in self.families), "TkFixedFont")
+        txt = tk.Text(win, wrap=tk.WORD, state=tk.DISABLED, font=(mono, 9), bg=t['panel'], fg=t['fg'], insertbackground=t['fg'],
+                      selectbackground=t['sel_bg'], selectforeground=t['sel_fg'], relief=tk.FLAT, highlightthickness=1,
+                      highlightbackground=t['border'], highlightcolor=t['border'], padx=self.px(8), pady=self.px(6))
+        txt.pack(fill=tk.BOTH, expand=True, padx=self.px(10), pady=self.px(10))
+        btn = IconButton(win, self, "", "Cancelar", self.cancel_autorun, bg_token="panel")
+        btn.pack(pady=(0, self.px(10)))
+        win.protocol("WM_DELETE_WINDOW", self.cancel_autorun)  # X = Cancelar (lote rodando) ou Fechar (depois do Fim)
+        place_over(win, self, size=(self.px(780), self.px(420)))
         self.auto_win = (win, txt, btn)
-        self.append_auto(f"{n} sessão(ões) na fila. Modo: {'simulação (só dossiês)' if dry_run else 'agy --mode plan'}.")
+        mode = 'simulação (só dossiês)' if dry_run else 'agy --mode plan, modelo ' + (model or 'padrão do agy')
+        self.append_auto(f"{n} sessão(ões) na fila. Modo: {mode}.")
 
     def append_auto(self, line):
         if not self.auto_win:
@@ -3223,15 +3966,23 @@ class AntigravityGateApp(tk.Tk):
             return
         self.autorunning = False
         self.btn["autorun"].set_busy(False, "Auto-Run")
+        if payload.get('models'):
+            self.settings["agy_models_known"] = payload['models']
+            bad = payload.get('bad_model')
+            if bad:  # nome recusado pelo agy não volta a ser oferecido
+                self.settings["agy_models"] = [m for m in self.settings.get("agy_models", []) if m != bad]
+                if self.settings.get("agy_model") == bad:
+                    self.settings["agy_model"] = ""
+            save_settings(self.settings)
         if 'error' not in payload:
             self.btn["autorun"].flash_ok()
         if 'error' in payload:
             self.append_auto(f"Erro inesperado: {payload['error']}")
         else:
-            self.append_auto(f"Fim. ✔ {payload['ok']} retomadas · 📋 {payload['dossier']} dossiês (simulação) · ✖ {payload['failed']} falhas · "
-                             f"⏭ {payload['skipped']} não executadas" + (f" · motivo: {payload['aborted']}" if payload['aborted'] else ""))
+            self.append_auto(f"Fim. ✔ {payload['ok']} retomadas · ▤ {payload['dossier']} dossiês (simulação) · ✖ {payload['failed']} falhas · "
+                             f"» {payload['skipped']} não executadas" + (f" · motivo: {payload['aborted']}" if payload['aborted'] else ""))
         if self.auto_win:
-            self.auto_win[2].configure(text="Fechar")
+            self.auto_win[2].set_text("Fechar")
         try:
             self.states = self.state.load()
             self.handoffs = self.state.handoffs_ok()

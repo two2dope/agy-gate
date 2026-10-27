@@ -87,7 +87,7 @@ dlg = G.LimitDialog(app); app.update()
 assert dlg.winfo_rootx() >= 0 and dlg.winfo_rooty() >= 0, dlg.geometry(); dlg.destroy()
 # janela de andamento do Auto-Run
 app.open_autorun_window(1, True); app.update()
-aw = app.auto_win[0]; assert aw.winfo_ismapped() and aw.winfo_width() == 780 and aw.winfo_height() == 420 and aw.winfo_rootx() >= 0 and aw.winfo_rooty() >= 0, aw.geometry()
+aw = app.auto_win[0]; assert aw.winfo_ismapped() and aw.winfo_width() == app.px(780) and aw.winfo_height() == app.px(420) and aw.winfo_rootx() >= 0 and aw.winfo_rooty() >= 0, aw.geometry()
 aw.destroy(); app.destroy(); app = None
 
 # app real: abre dentro da tela, sem estourar, e lembra o que o usuário fez
@@ -97,7 +97,7 @@ app.update(); ww, wh = app.winfo_width(), app.winfo_height()
 assert ww <= sw and wh + 40 <= sh and app.winfo_x() >= 0 and app.winfo_y() >= 0, (ww, wh, sw, sh)
 assert app.minsize() == (760, 520)
 app.geometry("900x600+40+30"); app.update(); time.sleep(0.9); app.update()
-assert app.settings['window'] == dict(w=900, h=600, x=40, y=30), app.settings.get('window')
+assert app.settings['window'] == dict(w=900, h=600, x=40, y=30, zoomed=False), app.settings.get('window')
 app.on_close()
 app = G.AntigravityGateApp(); app.update()
 assert app.geometry().startswith("900x600+40+30"), app.geometry()

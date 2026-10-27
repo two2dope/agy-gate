@@ -14,11 +14,11 @@ if [ $# -gt 0 ]; then files=("$@"); else files=(test_*.py); fi
 fail=0
 for f in "${files[@]}"; do
   f="${f%.py}"
-  out="$("${RUN[@]}" "$f.py" 2>&1)"
-  if grep -q "TODOS OS TESTES" <<<"$out"; then
+  out="$("${RUN[@]}" "$f.py" 2>&1)"; code=$?
+  if [ $code -eq 0 ] && grep -q "TODOS OS TESTES" <<<"$out"; then
     echo "ok     $f"
   else
-    echo "FALHOU $f"; grep -v "invalid command name\|while executing\|(\"after\" script)\|^\"" <<<"$out" | tail -12; fail=1
+    echo "FALHOU $f (código $code)"; grep -v "invalid command name\|while executing\|(\"after\" script)\|^\"" <<<"$out" | tail -12; fail=1
   fi
 done
 [ $fail -eq 0 ] && echo "Todos passaram." || { echo "Há falhas."; exit 1; }

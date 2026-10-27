@@ -58,7 +58,7 @@ assert pretty['ok'] and pretty['conversation_id'] == "p", "JSON em várias linha
 # --- workspace_dirs / args
 assert G.workspace_dirs(ws_uri) == [ws] and G.workspace_dirs("file:///nao/existe/xyz") == [] and G.workspace_dirs("") == []
 a = G.build_agy_args("agy", os.path.join(root, "d.md"), [ws])
-assert a[:2] == ["agy", "--print"] and "--dangerously-skip-permissions" not in a and a[a.index("--mode") + 1] == "plan"
+assert a[0] == "agy" and a[-2] == "--print" and "--dangerously-skip-permissions" not in a and a[a.index("--mode") + 1] == "plan"
 assert a[a.index("--output-format") + 1] == "json" and a[a.index("--print-timeout") + 1] == "600s" and a.count("--add-dir") == 2 and ws in a
 
 logs = []
@@ -74,7 +74,7 @@ reset("ok,ok"); st = store(); logs.clear()
 res = G.AutoRunner(items([1, 2]), st, logs.append, agy=FAKE, dry_run=False).run()
 assert res['ok'] == 2 and res['failed'] == 0 and len(calls()) == 2
 argv = calls()[0]
-assert "--dangerously-skip-permissions" not in argv and argv[0] == "--print" and "retomada_00000001_" in argv[1] and argv[argv.index("--mode") + 1] == "plan"
+assert "--dangerously-skip-permissions" not in argv and argv[-2] == "--print" and "retomada_00000001_" in argv[-1] and argv[argv.index("--mode") + 1] == "plan"
 assert ws in argv and G.HANDOFF_DIR in argv
 ok = st.handoffs_ok(); assert ok == {U(1): "aaaaaaaa-0000-0000-0000-000000000001", U(2): "aaaaaaaa-0000-0000-0000-000000000002"}, ok
 assert any("Entendi o objetivo" in l for l in logs)

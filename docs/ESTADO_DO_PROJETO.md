@@ -1,14 +1,14 @@
 # AntigravityGate: estado do projeto
 
-Atualizado em 2026-10-26, versão **0.9.0**. Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
+Atualizado em 2026-10-27, versão **1.0.0**. Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
 
 ## Snapshot
 
 | | |
 |---|---|
-| **Feito** | M1 a M4 (leitura, estado, exportação, dossiê), Auto-Run opção B (testado só com `agy` simulado), `.exe` no GitHub Actions com autoteste, interface visual completa (8 temas, ícones, painel de detalhes, notificações, limites de contexto, janelas dentro da área útil do monitor, barra de título nos temas), repositório próprio com testes, README, CHANGELOG e Release automática por tag |
-| **Faltando** | Teste real do Auto-Run com o `agy` (cota; depois de 27/10); revisão final; conferir no Windows do usuário os itens "Não verificado" abaixo; decisão do limite Rot |
-| **Próximo passo único** | Revisão final (critério da 1.0.0: revisão feita + Auto-Run real testado) |
+| **Feito** | **1.0.0 publicada.** Leitura, curadoria, exportação, dossiê; Auto-Run validado no Windows (dossiê no prompt); auditoria e revisão final (etapas 1 a 3); testes no GitHub barram a montagem; Release em rascunho primeiro |
+| **Faltando** | Uso real: restaurar as sessões no Antigravity e validar o fluxo completo. Não verificado: escala 125–150%, status 6 e 7 |
+| **Próximo passo único** | Usar no dia a dia; problemas novos viram 1.0.x com teste |
 
 O dossiê é extração local (sem modelo). Resumo feito pelo modelo fica como opção futura.
 
@@ -51,11 +51,22 @@ Outros campos:
 ## Contrato do `agy` (CLI)
 
 Usado pelo Auto-Run:
+- Executável: `agy.exe` (aplicativo nativo, não `.cmd`), em `%LOCALAPPDATA%\agy\bin\agy.exe`, no PATH. Verificado no Windows do usuário em 2026-10-26.
 - `agy --print "<prompt>"`: roda sem interação e imprime a resposta.
 - `--output-format json`: devolve um objeto com `conversation_id`, `status` (`ERROR` ou sucesso), `response`, `error`, `duration_seconds`, `num_turns` e `usage` (`input_tokens`, `output_tokens`, `thinking_tokens`, `cache_read_tokens`, `total_tokens`).
 - Em erro, o `agy` também escreve na saída de erro as linhas `error: ...` e `AGY_ERROR: {json}`. O JSON traz `status`, `error_code`, `retryable` e `error_id`.
 - Erro de cota observado: `RESOURCE_EXHAUSTED`, código 429, com o tempo para reset no texto.
 - **Cada chamada cria um `conversation_id`, mesmo quando falha.** Sessões vazias aparecem na lista: arquive-as pelo app.
+- `--model` exige o nome com o esforço, como o agy lista: `Gemini 3.8 Flash (Medium)`. Nome sem esforço dá código 1, `status` `ERROR`, `conversation_id` vazio e a lista `Available models:` no erro. Verificado em 2026-10-26.
+- Primeiro teste real (2026-10-26, 20:03): erro de modelo tratado como falha, sem retomada falsa e sem sessão vazia (C1 validado no caminho de erro). Formato de sucesso ainda não visto.
+- Segundo teste real (2026-10-26, 21:11): nome sem esforço recusado (código 1) e criou uma sessão sem informar o id; `Gemini 4 Argon (Medium)` deu cota esgotada (reset em 26h29m). A cota com saldo é a do Gemini 3.8 Flash.
+- **Primeira retomada real com sucesso:** 2026-10-26 22:11, `74a14497` → `0b49637d`, resposta completa (entendimento, pendências, próximos passos).
+- **Sucessos falsos** (21:17, 21:23, 21:26 e 22:17, todos de `a56f46f0`): `status: SUCCESS`, `response` vazia, `denied_actions: [read_file]`; stderr: "a tool required the read_file permission that headless mode cannot prompt for, so it was auto-denied". Correção: o dossiê vai no prompt; resposta vazia é falha.
+- Formato de sucesso visto: `{"conversation_id", "status": "SUCCESS", "response", "duration_seconds", "num_turns", "usage", "denied_actions"?}`, código de saída 0. Cota esgotada: código 3.
+- **Dossiê no prompt validado** (montagem 4bb7837, 2026-10-26 22:55): `a56f46f0` → `5c583e36`, resposta completa, sem `denied_actions`. A correção automática marcou 5 retomadas falsas antigas. Critério da 1.0 "Auto-Run real testado": **cumprido**.
+- Pendentes menores do teste: janela não reabre maximizada (reabre no monitor certo); `agy models` pode alimentar a lista de modelos; o editor do Antigravity abre sozinho a cada chamada (vem do `agy`, sem opção para evitar no `--help`).
+- Depois de uma chamada do `agy`, o editor do Antigravity abre uma janela vazia. Vem do próprio `agy`, não do app [conferir em `agy --help` se há opção para evitar].
+- O Auto-Run aceita `--model` (campo na confirmação). Hipótese não verificada: o padrão do `agy` usa a cota do Gemini 4 Argon (o reset informado no erro de 26/10 bateu com o dele).
 - Opções úteis: `--mode plan|accept-edits|auto`, `--add-dir`, `--project`, `--print-timeout`, `--effort`, `--model`, `--conversation` (retoma e muda a conversa original).
 - Nunca usar `--dangerously-skip-permissions`.
 
@@ -68,6 +79,9 @@ Usado pelo Auto-Run:
 5. Erro 429 interrompe o lote inteiro e informa o horário de reset. Sem tentativas em laço.
 6. Log por item (iniciado, sucesso, falha) e botão Cancelar.
 7. Trava para não rodar duas vezes sobre a mesma sessão.
+8. Sucesso só com código de saída 0, `conversation_id` e status diferente de `ERROR`; na dúvida, falha.
+9. Prompt numa linha, depois das flags; `agy` `.cmd`/`.bat` com caracteres perigosos para o `cmd.exe` não é executado.
+10. Fechar a janela no meio pergunta, cancela e registra antes de sair.
 
 ## Pendências do usuário
 
@@ -76,13 +90,13 @@ Usado pelo Auto-Run:
 
 ## Como testar
 
-`tests/run_all.sh` (precisa de Python 3.12 com `tkinter` e, sem tela, `xvfb`). São 15 conjuntos com bancos sintéticos e um `agy` simulado (`tests/fake_agy.py`). Os scripts `tools/inspect_*.py` dão a estrutura (sem conteúdo) de qualquer banco de sessão.
+`tests/run_all.sh` (precisa de Python 3.12 com `tkinter` e, sem tela, `xvfb`). São 25 conjuntos com bancos sintéticos e um `agy` simulado (`tests/fake_agy.py`). Os scripts `tools/inspect_*.py` dão a estrutura (sem conteúdo) de qualquer banco de sessão.
 
 ## Versões
 
 - `__version__` em `AntigravityGate.py` é a fonte da versão (aparece na dica do cabeçalho, no log e no autoteste do `.exe`). Histórico em `CHANGELOG.md`.
 - Publicar: subir `__version__`, registrar no CHANGELOG, commit em `main`, tag `vX.Y.Z` igual. O workflow confere a tag contra `__version__`, monta o `.exe`, testa e cria a Release (marcada como pré-lançamento enquanto a versão começar com 0).
-- 0.9.0 = candidato a 1.0.0.
+- 0.9.0 = candidato a 1.0.0. 1.0.0 publicada em 2026-10-27.
 
 ## Auto-Run (implementado)
 
