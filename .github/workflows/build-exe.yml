@@ -1,7 +1,7 @@
 name: Gerar AntigravityGate.exe
 
-# A cada push no main: monta o .exe, testa e guarda como artefato.
-# Ao criar uma tag vX.Y.Z: além disso, publica uma Release com o .exe e as notas do CHANGELOG.
+# A cada push no main: roda os testes, monta o .exe, testa o .exe e guarda como artefato.
+# Teste vermelho barra a montagem. Ao criar uma tag vX.Y.Z: além disso, publica uma Release com o .exe e as notas do CHANGELOG.
 on:
   workflow_dispatch:
   push:
@@ -9,11 +9,29 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read  # só o job de Release recebe escrita
 
 jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tk e tela virtual
+        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb
+      - name: Rodar a suíte (tests/run_all.sh)
+        run: |
+          python -c "import tkinter; print('Tk', tkinter.TkVersion)"
+          tests/run_all.sh
+
   build:
+    needs: tests
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      sha256: ${{ steps.hash.outputs.sha256 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -43,7 +61,7 @@ jobs:
           Write-Host "Montagem: $build"
 
       - name: Instalar PyInstaller
-        run: python -m pip install --upgrade pip pyinstaller
+        run: python -m pip install --upgrade pip "pyinstaller==6.22.3"  # versão fixa: montagem reproduzível
 
       - name: Gerar o .exe
         run: pyinstaller --noconfirm --clean --onefile --windowed --name AntigravityGate AntigravityGate.py
@@ -75,13 +93,25 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publicar a Release (só em tag)
-        if: github.ref_type == 'tag'
+  release:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: AntigravityGate-windows
+          path: dist
+
+      - name: Publicar a Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.ver.outputs.version }}
-          SHA256: ${{ steps.hash.outputs.sha256 }}
+          VERSION: ${{ needs.build.outputs.version }}
+          SHA256: ${{ needs.build.outputs.sha256 }}
         run: |
           $log = Get-Content CHANGELOG.md -Raw -Encoding UTF8
           $m = [regex]::Match($log, "(?ms)^## \[$([regex]::Escape($env:VERSION))\][^\r\n]*\r?\n(.*?)(?=^## \[|\z)")
