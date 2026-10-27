@@ -26,7 +26,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from tkinter import font as tkfont
 
-__version__ = "1.0.0"  # ver CHANGELOG.md
+__version__ = "1.0.2"  # ver CHANGELOG.md
 __build__ = "código-fonte"  # o CI troca pelo commit e pela data da montagem do .exe
 APP_AUTHOR = "Thominha"
 APP_EMAIL = "twoo2dope@gmail.com"
@@ -979,14 +979,52 @@ def uri_to_path(uri, nt=None):
     return path
 
 
+def gate_owned(path):
+    """True para pastas do próprio AntigravityGate (dados em LOCALAPPDATA, handoffs ou a pasta do .exe).
+    Não são workspace de projeto: as retomadas até a 1.0.0 gravaram essas pastas como workspace da sessão nova."""
+    real = os.path.normcase(os.path.realpath(path))
+    for own in (LOG_DIR, HANDOFF_DIR):
+        own = os.path.normcase(os.path.realpath(own))
+        if real == own or real.startswith(own.rstrip(os.sep) + os.sep):
+            return True
+    return os.path.isfile(os.path.join(path, "AntigravityGate.exe"))
+
+
 def workspace_dirs(uris):
-    """Pastas existentes citadas em workspace_uris (file:///...)."""
+    """Pastas existentes citadas em workspace_uris (file:///...), sem as pastas do próprio app."""
     out = []
     for uri in re.findall(r"file://[^\s,;\"'\[\]<>]+", uris or ""):  # URIs vêm codificadas (%20), às vezes dentro de uma lista JSON
         path = uri_to_path(uri)
-        if os.path.isdir(path) and path not in out:
+        if os.path.isdir(path) and path not in out and not gate_owned(path):
             out.append(path)
     return out[:3]
+
+
+NO_PROJECT_IDS = ("outside-of-project", "default-cli-project")
+
+
+def project_target(pid):
+    """(valor para --project, pastas existentes do projeto) a partir de config/projects.
+    Sem --project o agy põe toda sessão do CLI em "CLI Project", qualquer que seja a pasta (CHANGELOG do agy 1.0.12).
+    Só devolve o id de um projeto que existe em config/projects: um id desconhecido faria o agy falhar."""
+    if not pid or pid in NO_PROJECT_IDS:
+        return "", []
+    for p_file in glob.glob(os.path.join(PROJECTS_DIR, "*.json")):
+        try:
+            with open(p_file, encoding="utf-8-sig") as f:
+                d = json.load(f)
+            if not isinstance(d, dict) or d.get("id") != pid:
+                continue
+            dirs = []
+            for res in (d.get("projectResources") or {}).get("resources") or []:
+                u = res.get("folderUri") or (res.get("gitFolder") or {}).get("folderUri")
+                path = uri_to_path(u) if u else ""
+                if path and os.path.isdir(path) and not gate_owned(path) and path not in dirs:
+                    dirs.append(path)
+            return pid, dirs
+        except (OSError, ValueError, AttributeError, TypeError):
+            continue
+    return "", []
 
 
 def uri_paths(uris):
@@ -1016,13 +1054,18 @@ def inline_dossier(text, path, limit=DOSSIER_INLINE_MAX):
             + text[-tail:])
 
 
-def build_agy_args(agy, dossier_path, extra_dirs, mode="plan", timeout_s=AGY_TIMEOUT_S, model=None, dossier_text=None):
+def build_agy_args(agy, dossier_path, extra_dirs, mode="plan", timeout_s=AGY_TIMEOUT_S, model=None, dossier_text=None, project=None):
     """Lista de argumentos (sem shell). Nunca inclui --dangerously-skip-permissions.
     As flags de segurança vêm antes do prompt: se algo truncar a linha, o prompt se perde, nunca o `--mode`."""
-    args = [agy, "--output-format", "json", "--mode", mode, "--print-timeout", f"{timeout_s}s",
-            "--add-dir", os.path.dirname(dossier_path)]
+    args = [agy, "--output-format", "json", "--mode", mode, "--print-timeout", f"{timeout_s}s"]
+    if dossier_text is None:
+        # O prompt manda ler o arquivo: a pasta do dossiê precisa ser acessível. Com o dossiê no prompt ela não serve,
+        # e era a pasta que aparecia como workspace das retomadas, no lugar do projeto.
+        args += ["--add-dir", os.path.dirname(dossier_path)]
     for d in extra_dirs:
         args += ["--add-dir", d]
+    if project:
+        args += ["--project", project]
     if model and model.strip():  # vazio = modelo padrão do agy
         args += ["--model", model.strip()]
     if dossier_text is not None:
@@ -1120,10 +1163,18 @@ class AutoRunner:
         except (sqlite3.Error, OSError, ValueError):
             return False
 
-    def _run_agy(self, args):
+    @staticmethod
+    def _target(it):
+        """(--project, pastas para --add-dir, pasta de trabalho) da retomada: o projeto e as pastas da sessão original.
+        O agy registra a pasta de trabalho como workspace; sem `cwd`, herdava a pasta de onde o app foi aberto."""
+        project, pdirs = project_target(it.get('project_id', ''))
+        dirs = list(dict.fromkeys(pdirs + workspace_dirs(it.get('workspace', ''))))[:3]
+        return project, dirs, (dirs[0] if dirs else HANDOFF_DIR)
+
+    def _run_agy(self, args, cwd=None):
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         self.proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                     encoding="utf-8", errors="replace", creationflags=flags)
+                                     encoding="utf-8", errors="replace", creationflags=flags, cwd=cwd)
         deadline = time.time() + self.timeout_s + self.grace_s
         while True:
             try:
@@ -1176,13 +1227,16 @@ class AutoRunner:
                     break
                 continue
             self.log_cb(f"    dossiê: {dossier}")
+            project, dirs, cwd = self._target(it)
+            self.log_cb(f"    pasta: {cwd} · projeto: " + (f"{it['meta'].get('project') or project} (--project)" if project
+                                                             else "CLI Project (sem --project: a sessão original não tem projeto em config/projects)"))
             if self.dry_run:
                 self.store.add_handoff(cid, '', dossier, 'dossie', 'simulação: agy não foi chamado')
                 summary['dossier'] += 1
                 continue
             with open(dossier, encoding="utf-8") as fh:
                 dossier_text = fh.read()
-            args = build_agy_args(self.agy, dossier, workspace_dirs(it.get('workspace', '')), self.mode, self.timeout_s, self.model, dossier_text)
+            args = build_agy_args(self.agy, dossier, dirs, self.mode, self.timeout_s, self.model, dossier_text, project)
             problem = cmd_shim_problem(args)
             if problem:
                 self.store.add_handoff(cid, '', dossier, 'erro', problem)
@@ -1193,7 +1247,7 @@ class AutoRunner:
                 break
             before = self._session_files()
             try:
-                out, err, why, code = self._run_agy(args)
+                out, err, why, code = self._run_agy(args, cwd)
             except OSError as e:
                 self.store.add_handoff(cid, '', dossier, 'erro', f"não executou o agy: {e}")
                 summary['failed'] += 1
@@ -1293,7 +1347,7 @@ def load_projects(warn):
     if os.path.exists(PROJECTS_DIR):
         for p_file in glob.glob(os.path.join(PROJECTS_DIR, '*.json')):
             try:
-                with open(p_file, 'r', encoding='utf-8') as f:
+                with open(p_file, 'r', encoding='utf-8-sig') as f:  # aceita BOM (JSON regravado pelo PowerShell 5.1)
                     d = json.load(f)
                 if not isinstance(d, dict):
                     raise ValueError("JSON de projeto não é um objeto")
@@ -1711,6 +1765,24 @@ def ink_on(color):
     return "#000000" if contrast("#000000", color) >= contrast("#ffffff", color) else "#ffffff"
 
 
+def strong_bg(color, ink="#ffffff", target=4.6):
+    """`color` escurecida o mínimo para o texto `ink` passar no contraste WCAG AA (4,5:1)."""
+    for i in range(21):
+        bg = blend(color, "#000000", i * 0.05)
+        if contrast(ink, bg) >= target:
+            return bg
+    return "#000000"
+
+
+def banner_colors(t, level):
+    """Cores da faixa de alerta de contexto. 2 = crítico: vermelho do tema, forte, com texto claro.
+    1 = atenção: âmbar suave, texto normal. Chaves: bg, fg, icon, stripe (borda e barra à esquerda)."""
+    if level == 2:
+        bg = strong_bg(t['danger'])
+        return {'bg': bg, 'fg': "#ffffff", 'icon': "#ffffff", 'stripe': t['danger'] if bg != t['danger'] else blend(bg, "#000000", 0.35)}
+    return {'bg': blend(t['panel'], t['warning'], 0.16), 'fg': t['fg'], 'icon': t['warning'], 'stripe': t['warning']}
+
+
 def round_rect(c, x1, y1, x2, y2, r, **kw):
     if r <= 0:
         return c.create_rectangle(x1, y1, x2, y2, **kw)
@@ -1828,9 +1900,10 @@ def icon_layers(name, t, handoff=False):
 
 
 class Tooltip:
-    def __init__(self, widget, app, text_fn, delay=450):
+    def __init__(self, widget, app, text_fn, delay=450, level_fn=None):
         self.w, self.app, self.fn, self.delay = widget, app, text_fn, delay
         self.tip = self.job = None
+        self.level_fn = level_fn  # nível de alerta da dica (0, 1, 2); None = dica comum
         widget.bind("<Enter>", self._enter, add="+")
         widget.bind("<Leave>", self._leave, add="+")
         widget.bind("<ButtonPress>", self._leave, add="+")
@@ -1854,17 +1927,42 @@ class Tooltip:
         if not text:
             return
         w = self.w
-        self.tip = show_tip(w, self.app, text, w.winfo_rootx(), w.winfo_rooty(), w.winfo_width(), w.winfo_height())
+        level = self.level_fn() if self.level_fn else 0
+        self.tip = show_tip(w, self.app, text, w.winfo_rootx(), w.winfo_rooty(), w.winfo_width(), w.winfo_height(), level)
 
 
-def show_tip(owner, app, text, ax, ay, aw, ah):
-    """Mostra uma dica sob o retângulo (ax, ay, aw, ah) da tela, dentro da janela de `owner` e do monitor. Devolve o Toplevel."""
+ALERT_TITLE = {1: "ATENÇÃO", 2: "CRÍTICO"}
+
+
+def alert_glyph(app):
+    """Ícone de alerta no modo de ícones atual: Warning do Segoe MDL2, ⚠ Unicode ou ‼ sem ícones. (texto, fonte)."""
+    if app.icon_mode == "none":
+        return "‼", app.f_title
+    return ICONS["warn"][0 if app.icon_mode == "mdl2" else 1], app.f_banner_icon
+
+
+def show_tip(owner, app, text, ax, ay, aw, ah, level=0):
+    """Mostra uma dica sob o retângulo (ax, ay, aw, ah) da tela, dentro da janela de `owner` e do monitor. Devolve o Toplevel.
+    `level` 1 ou 2 (contexto em atenção ou crítico) vira janela de alerta: cores da faixa, ícone grande e título."""
     t = app.t
     tip = tk.Toplevel(owner)
     tip.wm_overrideredirect(True)
     tip.withdraw()  # mede antes de mostrar: perto da borda direita a dica é puxada para dentro da janela
-    tk.Label(tip, text=text, bg=t['panel2'], fg=t['fg'], font=app.f_small, padx=9, pady=5, justify=tk.LEFT,
-             highlightthickness=1, highlightbackground=t['border'], wraplength=app.px(340)).pack()
+    if level in ALERT_TITLE:
+        c = banner_colors(t, level)
+        box = tk.Frame(tip, bg=c['bg'], highlightthickness=1, highlightbackground=c['stripe'])
+        box.pack()
+        tk.Frame(box, bg=c['stripe'], width=app.px(5)).pack(side=tk.LEFT, fill=tk.Y)
+        glyph, font = alert_glyph(app)
+        tk.Label(box, text=glyph, font=font, bg=c['bg'], fg=c['icon']).pack(side=tk.LEFT, anchor="n", padx=(app.px(10), app.px(8)), pady=app.px(6))
+        body = tk.Frame(box, bg=c['bg'])
+        body.pack(side=tk.LEFT, padx=(0, app.px(12)), pady=app.px(6))
+        tk.Label(body, text=ALERT_TITLE[level], font=app.f_bold, bg=c['bg'], fg=c['fg'], anchor="w").pack(fill=tk.X)
+        tk.Label(body, text=text, font=app.f_small, bg=c['bg'], fg=c['fg'], justify=tk.LEFT, anchor="w",
+                 wraplength=app.px(340)).pack(fill=tk.X)
+    else:
+        tk.Label(tip, text=text, bg=t['panel2'], fg=t['fg'], font=app.f_small, padx=9, pady=5, justify=tk.LEFT,
+                 highlightthickness=1, highlightbackground=t['border'], wraplength=app.px(340)).pack()
     tip.update_idletasks()
     top = owner.winfo_toplevel()
     win = (top.winfo_rootx(), top.winfo_rooty(), top.winfo_width(), top.winfo_height())
@@ -1877,8 +1975,8 @@ def show_tip(owner, app, text, ax, ay, aw, ah):
 class CellTooltip:
     """Dica por célula da tabela: ao parar o mouse sobre uma célula com alerta (contexto, falhas, retomada, título longo)."""
 
-    def __init__(self, tree, app, text_fn, delay=450):
-        self.tree, self.app, self.fn, self.delay = tree, app, text_fn, delay
+    def __init__(self, tree, app, text_fn, delay=450, level_fn=None):
+        self.tree, self.app, self.fn, self.delay, self.level_fn = tree, app, text_fn, delay, level_fn
         self.key = self.tip = self.job = None
         self.text = ""
         tree.bind("<Motion>", self.on_motion, add="+")
@@ -1924,7 +2022,8 @@ class CellTooltip:
         if not box:
             return
         x, y, w, h = box
-        self.tip = show_tip(self.tree, self.app, self.text, self.tree.winfo_rootx() + x, self.tree.winfo_rooty() + y, w, h)
+        level = self.level_fn(*self.key) if self.level_fn else 0
+        self.tip = show_tip(self.tree, self.app, self.text, self.tree.winfo_rootx() + x, self.tree.winfo_rooty() + y, w, h, level)
 
     def hide(self):
         if self.job:
@@ -2516,6 +2615,8 @@ class AntigravityGateApp(tk.Tk):
         self.f_btn = tkfont.Font(self, family=self.base_family, size=9, weight="bold")
         self.f_title = tkfont.Font(self, family=self.base_family, size=15, weight="bold")
         self.f_icon = tkfont.Font(self, family=self.base_family, size=11)
+        self.f_banner_icon = tkfont.Font(self, family=self.base_family, size=20)
+        self.banner_level, self._banner_style = 2, None
         self.update_icon_font()
         self.apply_theme()
 
@@ -2537,10 +2638,11 @@ class AntigravityGateApp(tk.Tk):
 
     def update_icon_font(self):
         if self.icon_mode == "mdl2" and "Segoe MDL2 Assets" in self.families:
-            self.f_icon.configure(family="Segoe MDL2 Assets", size=11)
+            family = "Segoe MDL2 Assets"
         else:
-            sym = next((f for f in ("Segoe UI Symbol", "DejaVu Sans", self.base_family) if f in self.families), self.base_family)
-            self.f_icon.configure(family=sym, size=11)
+            family = next((f for f in ("Segoe UI Symbol", "DejaVu Sans", self.base_family) if f in self.families), self.base_family)
+        self.f_icon.configure(family=family, size=11)
+        self.f_banner_icon.configure(family=family, size=20)  # ícone da faixa de alerta, em destaque
 
     @property
     def bg_color(self):
@@ -2552,7 +2654,7 @@ class AntigravityGateApp(tk.Tk):
         t = self.t = dict(THEMES[self.theme_key])
         t['header_sub'] = blend(t['header_fg'], t['header_bg'], 0.12)
         t['btn_fg'] = t['fg']
-        t['banner_bg'] = blend(t['panel'], t['danger'], 0.16)
+        t['banner_bg'] = banner_colors(t, self.banner_level)['bg']  # muda com o nível da faixa (style_banner)
         self.configure(bg=t['bg'])
         self.f_title.configure(family=next((f for f in t['title_fonts'] if f in self.families), self.base_family))
 
@@ -2587,6 +2689,9 @@ class AntigravityGateApp(tk.Tk):
         # Widgets tk (não-ttk): reaplica as cores sem recarregar dados.
         for widget, opts in self.themed:
             widget.configure(**{opt: t[tok] for opt, tok in opts.items()})
+        if hasattr(self, 'banner'):
+            self._banner_style = None
+            self.style_banner()
         for b in self.icon_buttons:
             b.redraw()
         for c in self.chips.values():
@@ -2647,6 +2752,9 @@ class AntigravityGateApp(tk.Tk):
         self.settings['icons'] = mode
         save_settings(self.settings)
         self.update_icon_font()
+        if hasattr(self, 'banner'):
+            self._banner_style = None
+            self.style_banner()
         for b in self.icon_buttons:
             b.relayout()
         self.on_resize()
@@ -2714,9 +2822,13 @@ class AntigravityGateApp(tk.Tk):
         return (f"Níveis de alerta de contexto: {name} — atenção {fmt_tokens(CONTEXT_LIMITS['attention'])}, "
                 f"crítico {fmt_tokens(CONTEXT_LIMITS['critical'])}. Clique para mudar.")
 
-    def critical_rows(self):
+    def level_rows(self, level):
+        """Sessões visíveis e não arquivadas no nível de contexto `level` (1 atenção, 2 crítico)."""
         shown = [self.row_by_cid[self.cid_of(i)] for i in self.iter_sessions() if self.cid_of(i) in self.row_by_cid]
-        return [r for r in shown if ctx_level(r['ctx']) == 2 and self.states.get(r['cid']) != "arquivada"]
+        return [r for r in shown if ctx_level(r['ctx']) == level and self.states.get(r['cid']) != "arquivada"]
+
+    def critical_rows(self):
+        return self.level_rows(2)
 
     def update_empty(self):
         """Mensagem no centro da tabela quando não há linhas: carregando, busca sem resultado ou fonte vazia."""
@@ -2750,28 +2862,64 @@ class AntigravityGateApp(tk.Tk):
         self.empty.place(in_=self.tree, relx=0.5, rely=0.42, anchor="center")
         self.empty.lift()
 
+    def banner_key(self, level):
+        return (self.sources[self.source_idx][0], CONTEXT_LIMITS['attention'], CONTEXT_LIMITS['critical'], level)
+
+    def style_banner(self):
+        """Cores, ícone e botão da faixa conforme o nível atual. Só repinta quando tema, ícones ou nível mudaram."""
+        key = (self.theme_key, self.icon_mode, self.banner_level)
+        if key == self._banner_style:
+            return
+        self._banner_style = key
+        c = banner_colors(self.t, self.banner_level)
+        self.t['banner_bg'] = c['bg']
+        self.banner.configure(bg=c['bg'], highlightbackground=c['stripe'], highlightcolor=c['stripe'])
+        self.banner_stripe.configure(bg=c['stripe'])
+        self.banner_text.configure(bg=c['bg'])
+        glyph, font = alert_glyph(self)
+        self.banner_icon.configure(text=glyph, bg=c['bg'], fg=c['icon'], font=font)
+        for lab in (self.banner_msg, self.banner_detail):
+            lab.configure(bg=c['bg'], fg=c['fg'])
+        view = self.btn["banner_view"]
+        view.tip = "Listar só as sessões críticas" if self.banner_level == 2 else "Listar só as sessões em atenção"
+        view.icon_token = "danger" if self.banner_level == 2 else "warning"
+        view.set_text("Ver críticas" if self.banner_level == 2 else "Ver em atenção")
+        for name in ("banner_view", "banner_dismiss"):
+            self.btn[name].redraw()
+
     def update_banner(self):
+        """Faixa de alerta: crítico tem prioridade; atenção aparece só quando não há críticas."""
         crit = self.critical_rows()
-        key = (self.sources[self.source_idx][0], CONTEXT_LIMITS['critical'])
-        show = bool(crit) and self.match is None and self.banner_dismissed != key
+        level, rows = (2, crit) if crit else (1, self.level_rows(1))
+        show = bool(rows) and self.match is None and self.banner_dismissed != self.banner_key(level)
         if show:
-            n = len(crit)
-            self.banner_msg.configure(text=f"{n} sessão(ões) acima do nível crítico ({fmt_tokens(CONTEXT_LIMITS['critical'])} tokens). "
-                                           "Gere o dossiê e retome em uma sessão nova para não perder qualidade.")
+            self.banner_level = level
+            self.style_banner()
+            n, att, cri = len(rows), fmt_tokens(CONTEXT_LIMITS['attention']), fmt_tokens(CONTEXT_LIMITS['critical'])
+            if level == 2:
+                self.banner_msg.configure(text=f"CRÍTICO · {n} sessão(ões) acima do nível crítico ({cri} tokens)")
+                self.banner_detail.configure(text="Gere o dossiê e retome em uma sessão nova para não perder qualidade.")
+            else:
+                self.banner_msg.configure(text=f"ATENÇÃO · {n} sessão(ões) acima do nível de atenção ({att} tokens)")
+                self.banner_detail.configure(text=f"Ainda dá para trabalhar, mas planeje a troca: gere o dossiê antes do nível crítico ({cri} tokens).")
             if not self.banner.winfo_manager():
                 self.banner.pack(fill=tk.X, padx=self.px(16), pady=(0, self.px(8)), before=self.holder)
         elif self.banner.winfo_manager():
             self.banner.pack_forget()
 
-    def show_critical(self):
-        crit = self.critical_rows()
-        self.match = {r['cid'] for r in crit}
+    def show_level(self, level):
+        """Lista só as sessões (não arquivadas) do nível: 2 = críticas, 1 = em atenção."""
+        rows = self.level_rows(level)
+        self.match = {r['cid'] for r in rows}
         self.chip_filter = None
-        self.search_note = f"{len(crit)} sessão(ões) críticas"
+        self.search_note = f"{len(rows)} sessão(ões) " + ("críticas" if level == 2 else "em atenção")
         self.populate()
 
+    def show_critical(self):
+        self.show_level(2)
+
     def dismiss_banner(self):
-        self.banner_dismissed = (self.sources[self.source_idx][0], CONTEXT_LIMITS['critical'])
+        self.banner_dismissed = self.banner_key(self.banner_level)
         self.update_banner()
 
     def show_theme_menu(self):
@@ -2882,13 +3030,22 @@ class AntigravityGateApp(tk.Tk):
         self.build_details()
         self.apply_details_visibility()
 
-        # Aviso de sessões acima do nível crítico (aparece só quando há; fica entre as ações e a tabela)
-        self.banner = self.themed_widget(tk.Frame(self, padx=self.px(12), pady=self.px(8), highlightthickness=1), bg="banner_bg", highlightbackground="danger")
-        self.themed_widget(tk.Label(self.banner, text="‼", font=self.f_title), bg="banner_bg", fg="danger").pack(side=tk.LEFT, padx=(0, self.px(10)))
-        self.banner_msg = self.themed_widget(tk.Label(self.banner, anchor="w", justify=tk.LEFT, font=self.f_ui), bg="banner_bg", fg="fg")
-        self.banner_msg.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.make_button(self.banner, "banner_dismiss", "clear", "Dispensar", self.dismiss_banner, "Esconder este aviso até mudar de fonte ou de limite", bg_token="banner_bg").pack(side=tk.RIGHT, padx=(self.px(8), 0))
-        self.make_button(self.banner, "banner_view", "search", "Ver críticas", self.show_critical, "Listar só as sessões críticas", bg_token="banner_bg", icon_token="danger").pack(side=tk.RIGHT)
+        # Faixa de alerta de contexto (aparece só quando há; fica entre as ações e a tabela). Dois níveis:
+        # crítico (vermelho forte, texto claro) e atenção (âmbar suave, só quando não há críticas). Cores: banner_colors.
+        self.banner = tk.Frame(self, highlightthickness=1)
+        self.banner_stripe = tk.Frame(self.banner, width=self.px(6))
+        self.banner_stripe.pack(side=tk.LEFT, fill=tk.Y)
+        self.banner_icon = tk.Label(self.banner, font=self.f_banner_icon)
+        self.banner_icon.pack(side=tk.LEFT, padx=(self.px(12), self.px(10)), pady=self.px(8))
+        self.make_button(self.banner, "banner_dismiss", "clear", "Dispensar", self.dismiss_banner, "Esconder este aviso até mudar de fonte ou de limite", bg_token="banner_bg").pack(side=tk.RIGHT, padx=(self.px(8), self.px(12)))
+        self.make_button(self.banner, "banner_view", "search", "Ver críticas", lambda: self.show_level(self.banner_level), "Listar só as sessões críticas", bg_token="banner_bg", icon_token="danger").pack(side=tk.RIGHT)
+        self.banner_text = tk.Frame(self.banner)
+        self.banner_text.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=self.px(8))
+        self.banner_msg = tk.Label(self.banner_text, anchor="w", justify=tk.LEFT, font=self.f_bold)
+        self.banner_msg.pack(fill=tk.X)
+        self.banner_detail = tk.Label(self.banner_text, anchor="w", justify=tk.LEFT, font=self.f_ui)
+        self.banner_detail.pack(fill=tk.X)
+        self.style_banner()
 
         holder = self.holder = self.themed_widget(tk.Frame(self, padx=self.px(16)), bg="bg")
         holder.pack(fill=tk.BOTH, expand=True, pady=(0, self.px(10)))
@@ -2934,7 +3091,7 @@ class AntigravityGateApp(tk.Tk):
         for c in ("#0",) + columns:
             self.tree.column(c, stretch=False)
         self.tree["displaycolumns"] = ("col_title", "col_date", "col_ctx", "col_steps", "col_fail", "col_size", "col_agent", "col_uuid")
-        self.cell_tips = CellTooltip(self.tree, self, self.tree_cell_tip)
+        self.cell_tips = CellTooltip(self.tree, self, self.tree_cell_tip, level_fn=self.tree_cell_level)
         self.tree.bind("<Double-1>", self.on_double_click)
         self.tree.bind("<Button-3>", self.show_menu)
         for seq in ("<Shift-F10>", "<App>"):
@@ -3279,7 +3436,8 @@ class AntigravityGateApp(tk.Tk):
         self.fact_tips = {}
         for key, col in (("fails", "col_fail"), ("ws", "ws"), ("handoff", "#0"), ("state", "#0")):
             self.fact_tips[key] = Tooltip(self.fact_vals[key], self, lambda c=col: (self.cell_tip(self.selected_row(), c) if self.selected_row() else ""))
-        Tooltip(self.gauge, self, lambda: (self.cell_tip(self.selected_row(), "col_ctx") if self.selected_row() else ""))
+        Tooltip(self.gauge, self, lambda: (self.cell_tip(self.selected_row(), "col_ctx") if self.selected_row() else ""),
+                level_fn=lambda: self.cell_level(self.selected_row(), "col_ctx"))
 
         acts = self.themed_widget(tk.Frame(body), bg="panel")
         acts.pack(side=tk.RIGHT, fill=tk.Y)
@@ -3365,6 +3523,14 @@ class AntigravityGateApp(tk.Tk):
             return ""
         r = self.row_by_cid.get(self.cid_of(iid))
         return self.cell_tip(r, col) if r else ""
+
+    @staticmethod
+    def cell_level(r, col):
+        """Nível de alerta da dica (0 comum, 1 atenção, 2 crítico): só a de contexto vira janela de alerta."""
+        return ctx_level(r['ctx']) if r and col == "col_ctx" and r.get('ctx') else 0
+
+    def tree_cell_level(self, iid, col):
+        return self.cell_level(self.row_by_cid.get(self.cid_of(iid)), col) if self.is_session(iid) else 0
 
     def selected_row(self):
         ids = self.selected_session_ids()
@@ -3879,8 +4045,9 @@ class AntigravityGateApp(tk.Tk):
             for r in grp:
                 if self.states.get(r['cid']) == "aprovada" and r['fpath']:
                     meta = self.meta_for(r['cid'])
+                    s = self.summaries.get(r['cid'], {})
                     cands.append({'cid': r['cid'], 'title': r['title'], 'fpath': r['fpath'], 'meta': meta,
-                                  'workspace': str(val(self.summaries.get(r['cid'], {}), 'workspace_uris')),
+                                  'workspace': str(val(s, 'workspace_uris')), 'project_id': str(val(s, 'project_id')),
                                   'workspace_label': meta['workspace'][-40:]})
         if not cands:
             messagebox.showinfo("Auto-Run", "Nenhuma sessão aprovada com arquivo nesta fonte. Aprove sessões primeiro (botão ✅ Aprovar).")
@@ -3926,20 +4093,29 @@ class AntigravityGateApp(tk.Tk):
         self.auto_thread.start()
 
     def open_autorun_window(self, n, dry_run, model=""):
+        if self.auto_win:  # janela de um lote anterior ainda aberta (já no "Fim."): uma por vez
+            try:
+                self.auto_win[0].destroy()
+            except tk.TclError:
+                pass
+            self.auto_win = None
         t = self.t
         win = tk.Toplevel(self)
         win.title("Auto-Run — " + ("simulação" if dry_run else "executando"))
+        win.transient(self)  # sempre acima da janela principal (abria atrás dela)
         win.configure(bg=t['panel'])
         mono = next((f for f in ("Consolas", "DejaVu Sans Mono") if f in self.families), "TkFixedFont")
         txt = tk.Text(win, wrap=tk.WORD, state=tk.DISABLED, font=(mono, 9), bg=t['panel'], fg=t['fg'], insertbackground=t['fg'],
                       selectbackground=t['sel_bg'], selectforeground=t['sel_fg'], relief=tk.FLAT, highlightthickness=1,
                       highlightbackground=t['border'], highlightcolor=t['border'], padx=self.px(8), pady=self.px(6))
         txt.pack(fill=tk.BOTH, expand=True, padx=self.px(10), pady=self.px(10))
-        btn = IconButton(win, self, "", "Cancelar", self.cancel_autorun, bg_token="panel")
+        btn = IconButton(win, self, "", "Cancelar", lambda: self.close_autorun(win), bg_token="panel")
         btn.pack(pady=(0, self.px(10)))
-        win.protocol("WM_DELETE_WINDOW", self.cancel_autorun)  # X = Cancelar (lote rodando) ou Fechar (depois do Fim)
+        win.protocol("WM_DELETE_WINDOW", lambda: self.close_autorun(win))  # X = Cancelar (lote rodando) ou Fechar (depois do Fim)
         place_over(win, self, size=(self.px(780), self.px(420)))
         self.auto_win = (win, txt, btn)
+        win.lift()
+        win.focus_force()
         mode = 'simulação (só dossiês)' if dry_run else 'agy --mode plan, modelo ' + (model or 'padrão do agy')
         self.append_auto(f"{n} sessão(ões) na fila. Modo: {mode}.")
 
@@ -3959,6 +4135,17 @@ class AntigravityGateApp(tk.Tk):
         elif self.auto_win:
             self.auto_win[0].destroy()
             self.auto_win = None
+
+    def close_autorun(self, win):
+        """Botão e X de uma janela de andamento: agem só sobre ela. A atual cancela o lote (ou fecha depois do Fim);
+        uma antiga que tenha ficado aberta apenas fecha, sem tocar no lote em curso."""
+        if self.auto_win and self.auto_win[0] is win:
+            self.cancel_autorun()
+        else:
+            try:
+                win.destroy()
+            except tk.TclError:
+                pass
 
     def on_auto_event(self, kind, payload):
         if kind == 'auto_log':

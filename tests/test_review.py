@@ -73,7 +73,7 @@ def make_session(cid, first_text):
     c.execute("CREATE TABLE steps (idx integer PRIMARY KEY, step_type integer, status integer, step_payload blob, error_details blob)")
     c.execute("INSERT INTO steps VALUES(0,14,3,?,NULL)", (fv(1, 14) + fl(19, fs(2, first_text)),)); c.commit(); c.close()
 class R(G.AutoRunner):
-    def _run_agy(self, args):
+    def _run_agy(self, args, cwd=None):
         make_session(user_cid, "conversa minha aberta no meio")         # do usuário: não pode ser arquivada
         make_session("eeeeeeee-0000-0000-0000-000000000001", "/plan " + args[-1])  # criada pelo agy com o nosso prompt
         return '{"conversation_id":"","status":"ERROR","error":"falhou"}', "", None, 1

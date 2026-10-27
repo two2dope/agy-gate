@@ -2,6 +2,34 @@
 
 Formato: [Versionamento Semântico](https://semver.org/lang/pt-BR/). Enquanto a versão começar com 0, o app está em candidato a lançamento: funciona, mas faltam itens listados abaixo.
 
+## [1.0.2] - 2026-10-27
+
+Alerta de contexto em destaque. Entra no lugar do item 8 do backlog (divisor de altura entre a tabela e os detalhes).
+
+### Alterado
+- **Dica do contexto como janela de alerta.** Ao parar o mouse sobre o contexto de uma sessão em atenção ou crítica (na tabela ou no medidor do painel), a dica vem com as cores do nível (vermelho forte ou âmbar), ícone grande e título "CRÍTICO" ou "ATENÇÃO". Sessões no nível normal continuam com a dica comum.
+- **Faixa de alerta em dois níveis.** Crítico: fundo vermelho do tema, forte, com texto claro, ícone grande, título "CRÍTICO · N sessão(ões) acima do nível crítico" e o que fazer na linha de baixo. Atenção (novo): faixa âmbar suave, "ATENÇÃO · N sessão(ões) acima do nível de atenção", que só aparece quando não há críticas, com o botão `Ver em atenção`. Barra colorida à esquerda nos dois níveis. Como antes, a faixa some enquanto há busca ou filtro de selo.
+- Dispensar vale para o nível exibido: a faixa volta se mudar a fonte ou os limites.
+- Contraste das duas faixas (e das dicas de alerta) conferido nos 8 temas (texto ≥ 4,5:1; ícone e barra ≥ 3:1). O vermelho escurece o mínimo necessário para o texto claro passar.
+
+### Corrigido
+- **Janelas de andamento do Auto-Run.** Rodar um segundo Auto-Run com a janela do anterior aberta criava outra janela, e o Fechar e o X da antiga passavam a agir sobre a nova (a antiga não fechava, e podia até cancelar o lote novo). Agora fica uma janela por vez (a anterior fecha) e cada uma age só sobre si.
+- A janela de andamento abria atrás da principal. Agora fica sempre acima dela (`transient`) e recebe o foco ao abrir.
+
+## [1.0.1] - 2026-10-27
+
+Correção do crítico C1 da auditoria `reviews/audit-full-v1.0.0.md`: a retomada do Auto-Run nascia fora do projeto da sessão original.
+
+### Corrigido
+- **Retomada no projeto de origem.** Sem `--project`, o `agy` põe toda sessão do CLI em "CLI Project", qualquer que seja a pasta (CHANGELOG oficial do `agy`, versão 1.0.12). As retomadas da 1.0.0 apareciam no remoto em "CLI Project" e, na busca do VS Code, com a pasta `handoffs`. Agora o Auto-Run passa `--project <id>` quando o projeto da sessão original existe em `config/projects` (fora disso, nada muda: o `agy` usa "CLI Project").
+- **Pasta de trabalho do `agy`.** O `agy` registra a pasta de trabalho como workspace da sessão. O app não a definia, e a sessão nova herdava a pasta de onde o `.exe` foi aberto (ex.: `Downloads\AntigravityGate-windows`). Agora o `agy` roda na pasta do projeto (a do `config/projects` primeiro, depois as do workspace original); sem nenhuma, em `handoffs`.
+- **Sem `handoffs` como workspace.** O dossiê já vai no prompt, então a pasta `handoffs` deixou de entrar como `--add-dir` (continua no modo antigo, em que o prompt manda ler o arquivo).
+- Pastas do próprio app (dados em `%LOCALAPPDATA%\AntigravityGate` e qualquer pasta com `AntigravityGate.exe`) não são repassadas ao `agy`, nem quando vêm do workspace de uma retomada antiga.
+- JSON de projeto com BOM (gravado pelo PowerShell 5.1) era "Projeto ilegível". Agora é lido.
+
+### Alterado
+- O andamento do Auto-Run mostra, para cada sessão, a pasta de trabalho e o projeto de destino. Vale também na simulação, que confere o destino sem gastar cota.
+
 ## [1.0.0] - 2026-10-27
 
 Primeira versão estável. Critérios cumpridos: revisão final (auditoria `reviews/audit-full-v0.9.0.md`, críticos C1 a C3 e as recomendações das etapas 1 a 3) e Auto-Run real testado no Windows (retomada `a56f46f0` → `5c583e36` com resposta completa, dossiê no prompt).

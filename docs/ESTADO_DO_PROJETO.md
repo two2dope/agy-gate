@@ -1,29 +1,51 @@
 # AntigravityGate: estado do projeto
 
-Atualizado em 2026-10-27, versão **1.0.0**. Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
+Atualizado em 2026-10-27, versão **1.0.2** (aprovada pelo usuário em 27/10, depois de uma retomada real; publicação por PR para a `main` e tag `v1.0.2`; contém a 1.0.1 e a 1.0.2). Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
 
 ## Snapshot
 
 | | |
 |---|---|
-| **Feito** | **1.0.0 publicada.** Leitura, curadoria, exportação, dossiê; Auto-Run validado no Windows (dossiê no prompt); auditoria e revisão final (etapas 1 a 3); testes no GitHub barram a montagem; Release em rascunho primeiro |
-| **Faltando** | Uso real: restaurar as sessões no Antigravity e validar o fluxo completo. Não verificado: escala 125–150%, status 6 e 7 |
-| **Próximo passo único** | Usar no dia a dia; problemas novos viram 1.0.x com teste |
+| **Feito** | 1.0.0 publicada. Antigravity restaurado no Windows (27/10: conversas de volta no remoto `dev-thomaz` e na busca do VS Code). Auditoria `reviews/audit-full-v1.0.0.md`. **1.0.2 aprovada** (27/10, retomada real `4c326dce` → `3723a6eb`): 1.0.1 (crítico C1: retomada no projeto de origem; simulação conferida no Windows: `d:\Segurança`, `SMT1_WATCHDOG (--project)`) e 1.0.2 (faixa e dica de contexto como alerta em dois níveis; janelas do Auto-Run), com testes. Pacote visual: duas entregas do Stitch avaliadas (8 skins + `DESIGN.md`), caminho A decidido, tokens das 8 skins propostos com contraste conferido, decisões da 1.1 fechadas: `docs/PACOTE_VISUAL_1.1.md` |
+| **Faltando** | Registrar o SHA-256 da Release v1.0.2. Retomada real de uma sessão **com** projeto: o `--project` só foi visto na simulação (a retomada real de 27/10 era de sessão sem projeto). Duas observações de 27/10 sem diagnóstico (editor vazio a cada `agy`; PowerShell piscando no remote control). Não verificado: escala 125–150%, status 6 e 7 |
+| **Próximo passo único** | M1 da 1.1 (fontes e ícones), na branch reiniciada a partir da `main` depois do merge da 1.0.2 |
 
 ## Pendências (backlog pós-1.0)
 
 Em ordem de prioridade. Cada item vira uma 1.0.x com teste; nada entra sem decidir o que sai.
 
-1. **Ícone autoral do app** (`.ico` multi-tamanho 16–256 px para o `.exe`, a barra de tarefas e a barra de título). Hoje o `.exe` usa o ícone padrão do PyInstaller e a janela usa a pena do Tk. Fazer: arte própria → `packaging/app.ico` → `--icon` no PyInstaller → `iconbitmap`/`iconphoto` nas janelas.
-2. Validar no uso real: restaurar as sessões no Antigravity e rodar o fluxo completo (curadoria → dossiê → Auto-Run).
-3. Não verificado no Windows: escala 125% a 150%, glifos Segoe MDL2 em todos os botões, significado dos status 6 e 7 das ferramentas.
-4. Lista de modelos do Auto-Run pelo `agy models` (hoje: lista embutida + a que o `agy` devolve no erro).
-5. Campo "Modelo(s)" vazio no dossiê de algumas sessões (o banco não tinha o nome em `gen_metadata`; não investigado).
-6. Datas `0001-01-01 00:00:00` em sessões sem horário: mostrar "-".
-7. Limpeza opcional de dossiês antigos em `%LOCALAPPDATA%\AntigravityGate\handoffs` (decisão do usuário).
-8. Divisor de altura entre a tabela e os detalhes (pedido e adiado: só se o painel ganhar mais informação).
+0. **Auditoria v1.0.0, crítico C2:** junctions (`antigravity-cli`, `antigravity-ide` → `antigravity`) aparecem como fontes "Backup/outros", com os dados vivos. Corrigir com `realpath` em `discover_sources`. Demais recomendações (R2–R17) na auditoria.
+1. **1.1 — pacote visual** (decidido em 27/10: caminho A, evolução em Tk; aba "Em Revisão" vira "Aprovadas aguardando"; os 3 conjuntos de ícones ficam). Também decidido em 27/10: tema padrão "Dark Alloy" (paleta Obsidian, azul-preto, no lugar do Escuro), tabela padrão compacta, barra lateral aberta ao abrir. Plano e tokens das 8 skins em `docs/PACOTE_VISUAL_1.1.md`. Começa depois do merge da 1.0.2. Já entra:
+   - **Ícone autoral do app** (`.ico` multi-tamanho 16–256 px para o `.exe`, a barra de tarefas e a barra de título). Hoje o `.exe` usa o ícone padrão do PyInstaller e a janela usa a pena do Tk. Fazer: arte própria → `packaging/app.ico` → `--icon` no PyInstaller → `iconbitmap`/`iconphoto` nas janelas.
+   - **Mais 3 conjuntos de ícones, com as fontes reais dentro do `.exe`:** Font Awesome Free (Solid, SIL OFL 1.1), Bootstrap Icons (MIT) e Material Icons (Apache 2.0), além dos atuais (Segoe MDL2, Unicode, sem ícones). Com Inter e JetBrains Mono, cerca de +2,5 MB no `.exe`; créditos de licença no Sobre; registro privado da fonte no Windows (`AddFontResourceExW`, `FR_PRIVATE`) e `--add-data` no PyInstaller. As três fontes podem ser baixadas do GitHub (Bootstrap vem em WOFF: converter para TTF). Conferir cada glifo renderizando antes de entregar.
+   - **Ajustes pequenos vistos na retomada real de 27/10:** a janela de andamento continua com o título "executando" depois do "Fim."; o resumo final diz "1 retomadas" (plural fixo).
+2. **1.2 — lixeira com prazo** (pedido do usuário em 27/10; entra depois da 1.1). Sessão arquivada há N dias (padrão 30, ajustável) vai para a lixeira: o Gate a esconde da lista, apaga os próprios dossiês dela (pasta `handoffs`) e lista os IDs para o usuário apagar pela exclusão oficial do `agy` (`/resume`, tecla F4, desde a 1.1.13), que também limpa subagentes, worktrees e anotações (changelog 1.1.24, 1.1.26, 1.2.2, 1.4.8). **O Gate não apaga nada nos bancos do Antigravity:** o motor guarda índice, subagentes e worktrees fora do `.db`, e já recriou como arquivo vazio conversa apagada por fora (corrigido na 1.2.2). Data do arquivamento: `session_state.updated_at`, já gravada. Exportações salvas pelo usuário ficam. Absorve o antigo item "limpeza de dossiês antigos".
+3. Validar no uso real o fluxo completo (curadoria → dossiê → Auto-Run). Retomada real de sessão sem projeto feita em 27/10; falta uma de sessão com projeto (`--project`).
+4. Não verificado no Windows: escala 125% a 150%, glifos Segoe MDL2 em todos os botões, significado dos status 6 e 7 das ferramentas.
+5. Lista de modelos do Auto-Run pelo `agy models` (hoje: lista embutida + a que o `agy` devolve no erro).
+6. Campo "Modelo(s)" vazio no dossiê de algumas sessões (o banco não tinha o nome em `gen_metadata`; não investigado).
+7. Datas `0001-01-01 00:00:00` em sessões sem horário: mostrar "-".
 
-Fora do alcance do app: o editor do Antigravity abre sozinho a cada chamada do `agy` (comportamento do `agy`; o `--help` não tem opção para evitar).
+Saiu do backlog em 27/10: divisor de altura entre a tabela e os detalhes (a faixa de alerta da 1.0.2 entrou no lugar dele).
+
+Fora do alcance do app: o editor do Antigravity abre vazio a cada chamada do `agy` (comportamento do `agy`; o `--help` não tem opção para evitar). Continua em 27/10; diagnóstico proposto em "Observações do usuário em 27/10".
+
+## Registro da sessão de 2026-10-27 (1.0.0 → 1.0.1)
+
+- **Restauração do Antigravity** (fora do app): a config `~/.gemini/config/projects` tinha sido alterada por scripts do Gemini e o daemon de remote control estava desregistrado. Registro completo: `handoffs/2026-10-27-antigravity-sync.md` no repositório `zuvuya`.
+- **Auditoria full spectrum** do app contra o que a restauração revelou: `reviews/audit-full-v1.0.0.md`. Dois críticos: C1 (retomada fora do projeto, corrigido na 1.0.1) e C2 (junctions como "Backup", no backlog).
+- **Fatos do ambiente real** que os testes não cobriam: junctions para a pasta mestra; JSON de projeto com BOM; a barra lateral do VS Code (extensão 1.9.0 + `agy` 1.4.7) só lista conversas abertas, enquanto a busca 🔍 e o remoto listam tudo; três motores escrevendo na mesma pasta (daemon, VS Code, Auto-Run).
+- Testes da 1.0.1 rodados localmente com Python 3.12 e **Tk 9.0**: 24 de 25 passam. `test_theme` falha igual antes e depois da mudança (largura de fonte do Tk 9; o CI usa Tk 8.6). No CI (Tk 8.6), a 1.0.1 passou nos 25 e o `.exe` foi montado e autotestado (execução 40465486627).
+- **1.0.2** (pedido do usuário, mesma sessão): alerta de contexto em dois níveis no lugar do item 8 do backlog. O pedido era para a **dica** do contexto (a "janela de alerta" ao passar o mouse); a primeira entrega mudou só a faixa, e a correção levou o mesmo estilo à dica. Também corrigidas as janelas do Auto-Run (duas abertas se travavam; abriam atrás da principal). Ícones adicionais (Font Awesome, Bootstrap, Material, com as fontes reais) ficaram para a 1.1 "pacote visual", junto com o ícone autoral.
+- Neste ambiente de teste o Tk só enxerga 8 fontes do X, sem símbolos: os ícones (botões e faixa) não aparecem nas capturas de Linux. Não é defeito do app.
+- **Pacote visual, segunda entrega do Stitch** (8 skins + `DESIGN.md`): 6 das 8 telas usam uma linha por sessão, o que o Treeview faz; células de duas linhas verificadas no Tk 9.0. Nas 8 skins o texto terciário fica abaixo de 4,5:1; os tokens propostos passam em todos os pares do `test_theme`. MCP do Stitch: dispensável agora. Decisões fechadas pelo usuário: "Dark Alloy" (paleta Obsidian) como tema padrão no lugar do Escuro, tabela compacta, barra lateral aberta. Detalhes em `docs/PACOTE_VISUAL_1.1.md`.
+- **1.0.2 aprovada** depois da retomada real com o `.exe` da execução 40471275835: `4c326dce` ("cancele o deep coder") → `3723a6eb`, Gemini 3.8 Flash (Medium), resposta completa. A sessão original não tinha projeto em `config/projects` nem pasta de workspace válida: a nova foi para CLI Project, com a pasta `handoffs` como pasta de trabalho (o caminho previsto para esse caso). O `--project` continua visto só na simulação.
+- **Lixeira com prazo** pedida pelo usuário: decidido fazer pela exclusão oficial do `agy`, sem o Gate apagar nada nos bancos, depois da 1.1 (item 2 das pendências).
+
+### Observações do usuário em 27/10 (sem diagnóstico)
+
+1. **O editor do Antigravity continua abrindo vazio a cada chamada do `agy`.** O Gate só executa o `agy` no Auto-Run: `agy.exe` de `%LOCALAPPDATA%\agy\bin` (verificado em 26/10), com `CREATE_NO_WINDOW`. O Sobre só localiza o arquivo, sem executá-lo. O changelog oficial (até a 1.4.8; o usuário tem a 1.4.7) não cita o efeito. Guias da comunidade relatam conflito entre o `agy` da linha de comando e o do aplicativo de desktop [não verificado; o caminho conferido em 26/10 é o da linha de comando]. Diagnóstico de 2 passos, no PowerShell, com o editor fechado: `Get-Command agy -All | Format-List Source` (todos os `agy` no PATH, na ordem); depois `agy --version`. Se o editor abrir já no `--version`, o problema está no lançador ou na instalação. Se abrir só nas execuções com `--print`, é do modo sem interação: reportar ao Google e conviver. O Gate não fecha o editor (nunca encerrar processo do usuário).
+2. **O remote control faz piscar janelas do PowerShell a cada interação no chat.** Não é do Gate. Registrado no repositório `zuvuya` (`handoffs/2026-10-27-antigravity-sync.md`, pendências), com a hipótese e o teste.
 
 ## Registro da sessão de 2026-10-26/27 (0.9.0 → 1.0.0)
 
@@ -88,10 +110,12 @@ Usado pelo Auto-Run:
 - **Sucessos falsos** (21:17, 21:23, 21:26 e 22:17, todos de `a56f46f0`): `status: SUCCESS`, `response` vazia, `denied_actions: [read_file]`; stderr: "a tool required the read_file permission that headless mode cannot prompt for, so it was auto-denied". Correção: o dossiê vai no prompt; resposta vazia é falha.
 - Formato de sucesso visto: `{"conversation_id", "status": "SUCCESS", "response", "duration_seconds", "num_turns", "usage", "denied_actions"?}`, código de saída 0. Cota esgotada: código 3.
 - **Dossiê no prompt validado** (montagem 4bb7837, 2026-10-26 22:55): `a56f46f0` → `5c583e36`, resposta completa, sem `denied_actions`. A correção automática marcou 5 retomadas falsas antigas. Critério da 1.0 "Auto-Run real testado": **cumprido**.
-- Pendentes menores do teste: janela não reabre maximizada (reabre no monitor certo); `agy models` pode alimentar a lista de modelos; o editor do Antigravity abre sozinho a cada chamada (vem do `agy`, sem opção para evitar no `--help`).
-- Depois de uma chamada do `agy`, o editor do Antigravity abre uma janela vazia. Vem do próprio `agy`, não do app [conferir em `agy --help` se há opção para evitar].
+- Pendentes menores do teste: janela não reabre maximizada (reabre no monitor certo); `agy models` pode alimentar a lista de modelos.
+- Depois de uma chamada do `agy`, o editor do Antigravity abre uma janela vazia. Vem do próprio `agy`, não do app; o `--help` não tem opção para evitar. Continua em 27/10 (ver "Observações do usuário em 27/10").
 - O Auto-Run aceita `--model` (campo na confirmação). Hipótese não verificada: o padrão do `agy` usa a cota do Gemini 4 Argon (o reset informado no erro de 26/10 bateu com o dele).
 - Opções úteis: `--mode plan|accept-edits|auto`, `--add-dir`, `--project`, `--print-timeout`, `--effort`, `--model`, `--conversation` (retoma e muda a conversa original).
+- **Projeto da sessão:** sem `--project`, toda sessão do CLI vai para "CLI Project" (`default-cli-project`), qualquer que seja a pasta. Fonte: CHANGELOG oficial do `agy` (github.com/google-antigravity/antigravity-cli): 1.0.12 "Added support for `--project` [...] updated the project resolution logic to default regardless of the active workspace"; 1.1.18 "Added support for passing a project name to `--project`". Confirmado no banco do usuário em 27/10: as retomadas da 1.0.0 ficaram em `default-cli-project`. A 1.0.1 passa `--project <id>` quando o projeto existe em `config/projects`.
+- **Pasta de trabalho = workspace.** Visto em 27/10: `agy --print` rodado no PowerShell em `C:\Users\Thomáz`, sem `--add-dir`, gravou `workspace_uris = ["file:///C:/Users/Thom%C3%A1z"]`; as retomadas da 1.0.0 levaram a pasta de onde o app foi aberto. A 1.0.1 roda o `agy` com `cwd` na pasta do projeto. O `agy` grava `workspace_uris` em ordem alfabética.
 - Nunca usar `--dangerously-skip-permissions`.
 
 ## Salvaguardas do Auto-Run
@@ -125,6 +149,7 @@ Usado pelo Auto-Run:
 ## Auto-Run (implementado)
 
 - Botão `⚡ Auto-Run`: pega as sessões **aprovadas** da fonte aberta, pede confirmação (simulação marcada por padrão) e, para cada uma, gera o dossiê em `%LOCALAPPDATA%\AntigravityGate\handoffs` e abre uma sessão nova com `agy --print ... --mode plan --output-format json`.
+- Janela de andamento: uma por vez (um novo Auto-Run fecha a do anterior), sempre acima da principal (`transient`), e o Fechar ou o X de cada janela agem só sobre ela (`close_autorun`).
 - Erro 429 interrompe o lote e mostra o reset. Três falhas seguidas interrompem. Sessões vazias criadas por tentativas com erro vão para arquivadas. Retomadas concluídas aparecem como `↪ retomada <id>` e ficam gravadas em `gate_state.db`.
 - **Só foi testado com um `agy` simulado** que imita a saída real do erro de cota. A saída de sucesso real do `agy` ainda não foi vista: o código lê `status`, `conversation_id`, `response` e `error`, e aceita variações, mas isso é **não verificado**.
 - Variável `AGY_EXE` aponta para outro `agy.exe` se ele não estiver no PATH.
@@ -160,7 +185,9 @@ Usado pelo Auto-Run:
 
 - Os valores das faixas são **heurísticas**, não medidas: a degradação real depende do modelo e da tarefa **[Não verificado]** para o seu modelo. Nas suas sessões reais, o contexto chegou a ~201 mil e ~213 mil tokens.
 - A janela mostra, antes de aplicar, quantas sessões carregadas ficariam em atenção e críticas.
-- **Atenção:** linha em âmbar, `⚠`. **Crítico:** linha em vermelho, `‼`, mais um **aviso** acima da tabela com os botões `Ver críticas` (lista só as críticas) e `Dispensar`. O aviso não conta sessões arquivadas. Ele volta se você mudar o limite ou a fonte.
+- **Atenção:** linha em âmbar, `⚠`. **Crítico:** linha em vermelho, `‼`.
+- **Dica do contexto como janela de alerta (1.0.2):** na tabela e no medidor do painel, a dica de uma sessão em atenção ou crítica usa as cores da faixa, ícone grande e o título "ATENÇÃO" ou "CRÍTICO" (`show_tip(..., level)`, `cell_level`). Nível normal: dica comum.
+- **Faixa de alerta acima da tabela (1.0.2), em dois níveis.** Crítico: fundo vermelho forte do tema, texto claro, ícone grande, "CRÍTICO · N sessão(ões)…" e o que fazer; botões `Ver críticas` e `Dispensar`. Atenção: faixa âmbar suave, só quando não há críticas, com `Ver em atenção` e `Dispensar`. A faixa não conta sessões arquivadas. Dispensar vale para o nível exibido; a faixa volta se você mudar o limite ou a fonte. Cores em `banner_colors` (o vermelho escurece o mínimo para o texto claro ter 4,5:1); o `test_theme` confere o contraste nos 8 temas. Ícone: `Warning` do Segoe MDL2 (`E7BA`), `⚠` no modo Unicode e `‼` sem ícones. **Não visto num Windows.**
 - Selos no rodapé: `N em atenção` e `N críticas`. O dossiê indica o nível no cabeçalho (`tokens (atenção)` ou `(crítico)`).
 - Preferência salva em `settings.json`. A variável `AGY_ROT_TOKENS` (antiga) ainda vale: define a atenção, e o crítico fica 1,5 vez maior.
 

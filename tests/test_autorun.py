@@ -75,7 +75,7 @@ res = G.AutoRunner(items([1, 2]), st, logs.append, agy=FAKE, dry_run=False).run(
 assert res['ok'] == 2 and res['failed'] == 0 and len(calls()) == 2
 argv = calls()[0]
 assert "--dangerously-skip-permissions" not in argv and argv[-2] == "--print" and "retomada_00000001_" in argv[-1] and argv[argv.index("--mode") + 1] == "plan"
-assert ws in argv and G.HANDOFF_DIR in argv
+assert ws in argv and G.HANDOFF_DIR not in argv and "--project" not in argv, "pasta do projeto sim; handoffs não (o dossiê vai no prompt)"
 ok = st.handoffs_ok(); assert ok == {U(1): "aaaaaaaa-0000-0000-0000-000000000001", U(2): "aaaaaaaa-0000-0000-0000-000000000002"}, ok
 assert any("Entendi o objetivo" in l for l in logs)
 
@@ -113,6 +113,41 @@ st = store(); res = G.AutoRunner(items([1, 2]), st, logs.append, agy="/nao/exist
 assert res['failed'] == 1 and res['skipped'] == 1 and res['aborted'] == "agy não executou"
 reset("crash"); res = G.AutoRunner(items([1]), store(), logs.append, agy=FAKE, dry_run=False).run(); assert res['failed'] == 1
 
+# --- 8. retomada no projeto de origem (27/10): sem --project o agy põe tudo em "CLI Project"; sem cwd, a pasta
+#        de onde o app foi aberto e a pasta handoffs viravam o workspace da sessão nova
+CWD = os.path.join(root, "agy_cwd.log"); os.environ["AGY_FAKE_CWD"] = CWD
+proj = os.path.join(root, "projeto X"); os.makedirs(proj)
+pj = {"id": "proj-x", "name": "Projeto X", "projectResources": {"resources": [{"gitFolder": {"folderUri": "file://" + urllib.parse.quote(proj)}}]}}
+open(os.path.join(base, "config", "projects", "proj-x.json"), "wb").write(b"\xef\xbb\xbf" + json.dumps(pj).encode())  # BOM do PowerShell 5.1
+exe_dir = os.path.join(root, "Downloads", "AntigravityGate-windows"); os.makedirs(exe_dir); open(os.path.join(exe_dir, "AntigravityGate.exe"), "w").close()
+os.makedirs(G.HANDOFF_DIR, exist_ok=True)
+dirty = json.dumps(["file://" + urllib.parse.quote(p) for p in (G.HANDOFF_DIR, exe_dir, ws)])  # workspace de uma retomada da 1.0.0
+assert G.workspace_dirs(dirty) == [ws], G.workspace_dirs(dirty)
+assert G.project_target("proj-x") == ("proj-x", [proj]), G.project_target("proj-x")
+assert G.project_target("outside-of-project") == G.project_target("default-cli-project") == G.project_target("sumiu") == G.project_target("") == ("", [])
+assert G.load_projects(lambda *a: None)[0].get("proj-x") == "Projeto X", "JSON de projeto com BOM é lido"
+
+def run_one(pid, workspace, dry=False):
+    reset("ok"); open(CWD, "w").close(); out = []
+    res = G.AutoRunner([dict(items([1])[0], project_id=pid, workspace=workspace)], store(), out.append, agy=FAKE, dry_run=dry).run()
+    assert res['ok' if not dry else 'dossier'] == 1, res
+    return (calls() or [[]])[0], open(CWD).read().strip(), out
+
+argv, cwd, out = run_one("proj-x", dirty)
+assert argv[argv.index("--project") + 1] == "proj-x" and argv.index("--project") < argv.index("--print"), argv
+assert os.path.samefile(cwd, proj) and proj in argv and ws in argv, (cwd, argv)
+assert G.HANDOFF_DIR not in argv and exe_dir not in argv, argv
+assert any("pasta:" in l and "proj-x (--project)" in l for l in out), out
+for pid in ("", "outside-of-project", "default-cli-project", "sumiu"):
+    argv, cwd, out = run_one(pid, ws_uri)
+    assert "--project" not in argv and os.path.samefile(cwd, ws), (pid, argv, cwd)
+    assert any("pasta:" in l and "CLI Project" in l for l in out), out
+argv, cwd, out = run_one("", "")
+assert os.path.samefile(cwd, G.HANDOFF_DIR) and "--add-dir" not in argv, (cwd, argv)  # sem pasta: handoffs, nunca a pasta do app
+argv, cwd, out = run_one("proj-x", ws_uri, dry=True)                                       # a simulação já mostra o destino
+assert argv == [] and any("pasta:" in l and "proj-x (--project)" in l for l in out), out
+os.environ.pop("AGY_FAKE_CWD")
+
 # --- UI ---------------------------------------------------------------------------------------
 from tkinter import messagebox
 info = []
@@ -139,6 +174,14 @@ app.confirm_autorun = lambda its, done: {'dry_run': True, 'redo': False}
 reset("ok"); app.start_autorun(); assert app.autorunning; wait(app)
 assert "Fim." in text() and "3 dossiês" in text() and calls() == []
 app.cancel_autorun(); assert app.auto_win is None
+# duas simulações seguidas (1.0.2): a janela anterior fecha; cada janela age só sobre si; janela presa à principal
+reset("ok"); app.start_autorun(); wait(app); w1 = app.auto_win[0]
+assert str(w1.transient()) == str(app), "janela de andamento acima da principal (transient)"
+app.start_autorun(); wait(app); w2 = app.auto_win[0]
+assert w2 is not w1 and not w1.winfo_exists() and w2.winfo_exists(), "uma janela de andamento por vez"
+stray = G.tk.Toplevel(app); app.close_autorun(stray)
+assert not stray.winfo_exists() and app.auto_win and app.auto_win[0] is w2, "fechar outra janela não mexe na atual"
+app.close_autorun(w2); assert app.auto_win is None and not w2.winfo_exists()
 # execução real: cota na segunda -> lote interrompido, rótulos mostram só as retomadas ok
 app.confirm_autorun = lambda its, done: {'dry_run': False, 'redo': False}
 reset("ok,quota,ok"); app.start_autorun()

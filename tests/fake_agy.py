@@ -3,6 +3,8 @@ import os, sys, json, time
 log = os.environ["AGY_FAKE_LOG"]
 n = sum(1 for _ in open(log)) if os.path.exists(log) else 0
 open(log, "a").write(json.dumps(sys.argv[1:]) + "\n")
+if os.environ.get("AGY_FAKE_CWD"):  # pasta de trabalho recebida (o agy real a registra como workspace)
+    open(os.environ["AGY_FAKE_CWD"], "a").write(os.getcwd() + "\n")
 seq = os.environ.get("AGY_FAKE_SEQ", "ok").split(",")
 mode = seq[min(n, len(seq) - 1)]
 cid = "aaaaaaaa-0000-0000-0000-%012d" % (n + 1)
