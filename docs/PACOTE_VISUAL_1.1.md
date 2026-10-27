@@ -12,6 +12,9 @@ Registrado em 2026-10-27. Duas entregas do Google Stitch, enviadas pelo usuário
 | 1 | **Caminho A:** evolução em Tk | A tabela continua no Treeview; sem WebView |
 | 2 | Aba "Em Revisão" vira **"Aprovadas aguardando"** | Sessões aprovadas sem retomada registrada (`gate_state.handoffs`). Mesmo número do selo do Auto-Run, que já desconta as retomadas |
 | 3 | **Font Awesome, Bootstrap Icons e Material Icons ficam** | Três fontes de ícones no M1, além de Windows (MDL2), Unicode e sem ícones |
+| 4 | **Tema padrão: Escuro com a paleta Obsidian (azul-preto)** | Tokens do Escuro na tabela "Tokens propostos". O nome no app continua "Escuro", para não confundir com a Obsidiana |
+| 5 | **Tabela padrão: Compacta** (1 linha por sessão) | O modo Confortável (2 linhas) fica como opção |
+| 6 | **Barra lateral aberta ao abrir o app** | Ctrl+B recolhe durante o uso; o app abre sempre com ela aberta. Trilho automático só em janela estreita |
 
 ## O que vale manter (das duas entregas)
 
@@ -25,7 +28,7 @@ Registrado em 2026-10-27. Duas entregas do Google Stitch, enviadas pelo usuário
 ## Segunda entrega: o que mudou na leitura
 
 - **6 das 8 telas usam uma linha por sessão** (Escuro, Vidro, Cyber, Mecha, Brutalista, Obsidiana). Só o Aero Quartz (claro) usa cartões, e o Mil-Spec usa título com subtítulo. O desenho convergiu para o que o Treeview faz: a fidelidade do caminho A sobe de ~65–70% para ~80% [estimativa].
-- **Células de duas linhas funcionam no Treeview** (data sobre hora; passos sobre falhas; tamanho sobre UUID, como no Escuro): altura de linha maior e `\n` no valor. Verificado no Tk 9.0 deste ambiente; o `.exe` usa Tk 8.6 [conferir no M3]. Custo: a linha de 40 px do `DESIGN.md` mostra metade das sessões de hoje. Proposta: modo **Compacto** (1 linha) e **Confortável** (2 linhas).
+- **Células de duas linhas funcionam no Treeview** (data sobre hora; passos sobre falhas; tamanho sobre UUID, como no Escuro): altura de linha maior e `\n` no valor. Verificado no Tk 9.0 deste ambiente; o `.exe` usa Tk 8.6 [conferir no M3]. Custo: a linha de 40 px do `DESIGN.md` mostra metade das sessões de hoje. Por isso, dois modos: **Compacto** (1 linha, padrão) e **Confortável** (2 linhas).
 - **Limite que continua: cor por linha, não por célula** (Tk 8.6). O medidor colorido, o selo de estado colorido e o chip âmbar "⚠ 1" viram texto com glifo de 5 blocos (`▰▰▱▱▱`, que o `DESIGN.md` já prevê), cor da linha pelo nível e imagem de estado na coluna da árvore (bolinha colorida em PNG gerado, como os ícones atuais). A marca de 2 px à esquerda da linha selecionada não dá; fica a cor de seleção.
 - **Coluna Ações (⋮):** dá, como coluna de texto que abre o menu de contexto no clique.
 - **Fonte:** o Treeview usa uma fonte por estilo ou por linha, não por coluna. Cada skin escolhe a fonte da tabela inteira (Inter ou JetBrains Mono). A Inter tem algarismos proporcionais: colunas numéricas alinhadas à direita.
@@ -79,7 +82,7 @@ O que muda em relação a hoje: **Escuro** (cinza do VS Code → azul-preto Obsi
 
 - **Inter** (interface) e **JetBrains Mono** (métricas e UUID), em arquivos estáticos. Fonte variável no Windows: o GDI usa só a instância padrão [não verificado; usar estáticas evita a dúvida]. A Chakra Petch saiu: estava só na primeira entrega.
 - Tamanhos de 10 a 16 px viram tamanhos negativos (pixels) no Tk, multiplicados pela escala do monitor.
-- **Barra lateral:** o `DESIGN.md` pede 288 px, com trilho de 64 px abaixo de 1280 px de largura. Com a janela padrão de 1240 px, o app abriria sempre no trilho. Proposta: 232 px, recolhível (Ctrl+B), trilho automático abaixo de ~1100 px.
+- **Barra lateral:** o `DESIGN.md` pede 288 px, com trilho de 64 px abaixo de 1280 px de largura. Com a janela padrão de 1240 px, o app abriria sempre no trilho. No app: 232 px, aberta ao iniciar, recolhível (Ctrl+B), trilho automático abaixo de ~1100 px.
 - Barra de título de 44 px: no Windows fica a barra nativa, que já segue o tema. Sub-cabeçalho de 48 px, rodapé de 28 px, botões de 28 px e raios de 0 a 16 px: viáveis (Canvas, como os botões atuais).
 - Brilho, desfoque, vidro e transparência: não dão no Tk. Gradiente só como imagem gerada; fora da 1.1.
 
@@ -100,9 +103,9 @@ O que muda em relação a hoje: **Escuro** (cinza do VS Code → azul-preto Obsi
 ## Marcos da 1.1 (caminho A)
 
 1. **M1 — fontes e ícones:** Inter e JetBrains Mono; Font Awesome Free Solid (SIL OFL 1.1), Bootstrap Icons (MIT; vem em WOFF, converter para TTF) e Material Icons (Apache 2.0); registro privado no Windows (`AddFontResourceExW`, `FR_PRIVATE`) e `--add-data` no PyInstaller; seletor com 6 opções (Windows, Font Awesome, Bootstrap, Material, Unicode, sem ícones); licenças no Sobre e na pasta `licenses/`. Cerca de +2,5 MB no `.exe` [estimativa]. Fecha com o `.exe` do CI conferido no Windows: os glifos não aparecem no Linux deste ambiente.
-2. **M2 — barra lateral e cabeçalho:** categorias com contadores; projetos com sessões e retomadas; abas Todas / Aprovadas aguardando / Arquivadas sobre um filtro único; Ctrl+K na busca; Ctrl+B recolhe a barra.
-3. **M3 — tabela e detalhes:** coluna Consumo; estado com bolinha colorida; modos Compacto e Confortável; coluna Ações; cartão de detalhes com medidor e marcas.
-4. **M4 — skins e acabamento:** tokens da tabela acima, fonte e raio por skin, contraste testado; indicador do `agy` e do daemon; ícone autoral do app.
+2. **M2 — barra lateral e cabeçalho:** categorias com contadores; projetos com sessões e retomadas; abas Todas / Aprovadas aguardando / Arquivadas sobre um filtro único; Ctrl+K na busca; Ctrl+B recolhe a barra; o app abre com a barra aberta.
+3. **M3 — tabela e detalhes:** coluna Consumo; estado com bolinha colorida; modos Compacto (padrão) e Confortável; coluna Ações; cartão de detalhes com medidor e marcas.
+4. **M4 — skins e acabamento:** tokens da tabela acima (Escuro com a paleta Obsidian, tema padrão), fonte e raio por skin, contraste testado; indicador do `agy` e do daemon; ícone autoral do app.
 
 Cada marco fecha com o `.exe` montado no CI e conferência no Windows. O código da 1.1 começa depois do merge da 1.0.2.
 
@@ -117,8 +120,6 @@ Cada marco fecha com o `.exe` montado no CI e conferência no Windows. O código
 
 ## Decisões pendentes do usuário
 
-1. **Escuro passa a ser o Obsidian (azul-preto)?** É o tema padrão, a primeira impressão do app.
-2. **Densidade padrão:** Compacto (1 linha, ~20 sessões por tela) ou Confortável (2 linhas, ~10).
-3. **Barra lateral ao abrir:** aberta ou recolhida.
+Nenhuma. As três que restavam foram fechadas em 27/10 (itens 4 a 6 da tabela de decisões).
 
 Fora da 1.1: o tema **Crimson Matrix**, citado no `DESIGN.md` sem tela. Seria o 9º tema; só entra no lugar de outro.
