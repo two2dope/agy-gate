@@ -3264,16 +3264,16 @@ class AntigravityGateApp(tk.Tk):
             self.tree.heading(col, text=HEADINGS[col], anchor=anchor, command=cmd)
 
         self.tree.heading("col_date", text=HEADINGS["col_date"] + " ▼")  # ordenação inicial: mais recentes primeiro
-        self.tree.column("#0", width=self.px(270), anchor=tk.W)
-        self.tree.column("col_date", width=self.px(150), anchor=tk.W)
-        self.tree.column("col_size", width=self.px(95), anchor=tk.CENTER)
-        self.tree.column("col_ctx", width=self.px(190), anchor=tk.CENTER)
-        self.tree.column("col_steps", width=self.px(75), anchor=tk.CENTER)
-        self.tree.column("col_title", width=self.px(320), anchor=tk.W)
+        self.tree.column("#0", width=self.px(220), anchor=tk.W)
+        self.tree.column("col_date", width=self.px(132), anchor=tk.W)
+        self.tree.column("col_size", width=self.px(66), anchor=tk.CENTER)
+        self.tree.column("col_ctx", width=self.px(170), anchor=tk.CENTER)
+        self.tree.column("col_steps", width=self.px(52), anchor=tk.CENTER)
+        self.tree.column("col_title", width=self.px(220), anchor=tk.W)
         self.tree.column("col_agent", width=self.px(140), anchor=tk.W)
-        self.tree.column("col_fail", width=self.px(75), anchor=tk.CENTER)
-        self.tree.column("col_uuid", width=self.px(150), anchor=tk.W)
-        self.tree.column("col_menu", width=self.px(40), anchor=tk.CENTER)
+        self.tree.column("col_fail", width=self.px(52), anchor=tk.CENTER)
+        self.tree.column("col_uuid", width=self.px(88), anchor=tk.W)
+        self.tree.column("col_menu", width=self.px(36), anchor=tk.CENTER)
 
         scrollbar = ttk.Scrollbar(holder, orient=tk.VERTICAL, command=self.tree.yview)
         hscroll = ttk.Scrollbar(holder, orient=tk.HORIZONTAL, command=self.tree.xview)
@@ -3288,7 +3288,7 @@ class AntigravityGateApp(tk.Tk):
         # Larguras fixas (sem stretch): o Tk encolhia as colunas esticáveis sozinho e desfazia o ajuste do usuário.
         for c in ("#0",) + columns:
             self.tree.column(c, stretch=False)
-        self.tree["displaycolumns"] = ("col_title", "col_date", "col_ctx", "col_steps", "col_fail", "col_size", "col_agent", "col_uuid", "col_menu")
+        self.tree["displaycolumns"] = ("col_title", "col_date", "col_ctx", "col_steps", "col_fail", "col_size", "col_uuid", "col_menu")  # sem Agente: está nos detalhes e na busca; larguras somam ~1040 px (cabem com a barra lateral)
         self.cell_tips = CellTooltip(self.tree, self, self.tree_cell_tip, level_fn=self.tree_cell_level)
         self.tree.bind("<Double-1>", self.on_double_click)
         self.tree.bind("<Button-1>", self.on_tree_click, add="+")  # coluna Ações (⋮)

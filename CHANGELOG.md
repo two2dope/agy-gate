@@ -17,6 +17,7 @@ Pacote visual (plano em `docs/PACOTE_VISUAL_1.1.md`). Marcos M1 (ícones e fonte
 - **Coluna Consumo** (antes Contexto): tokens, % do nível crítico, medidor de 5 células (eram 6) e a marca ⚠ ou ‼.
 - **Densidade da tabela** em Tema > Tabela: **compacta** (1 linha por sessão, padrão) ou **confortável** (2 linhas: data e hora; tokens e %, medidor e faixa). Lembrada entre execuções.
 - **Coluna ⋮ (Ações):** clicar abre o menu da sessão, como o botão direito.
+- A coluna **Agente** deixou de aparecer na tabela (o agente continua nos detalhes e na busca) e as larguras das colunas diminuíram: com a barra lateral aberta, as colunas até ⋮ cabem numa janela de 1300 px.
 
 - **Ícone do app** (um portal em arco com o medidor de três níveis): no `.exe`, na barra de tarefas e nas janelas. Gerado por `tools/make_icon.py`.
 - **Ambiente na barra lateral:** mostra se o `agy` foi encontrado e se o daemon do remote control inicia no login (procura `remote-control` na chave Run do Windows). Só leitura: não executa o `agy`, que abre o editor a cada chamada. Atualiza com F5. Mostra o registro, não se o daemon está online.
