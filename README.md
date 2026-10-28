@@ -19,6 +19,7 @@ A conferência da integridade do download: a Release mostra o SHA-256 do `.exe`.
 
 - Tabela de sessões por projeto, com sub-agentes, contexto em tokens (medidor), passos e falhas de ferramenta.
 - **Limites de contexto** (botão Limites): três faixas prontas e uma personalizada. Alerta acima da tabela em dois níveis: crítico (vermelho, em destaque) e atenção (âmbar).
+- Barra lateral (categorias e projetos, Ctrl+B) e abas no cabeçalho (Todas, Aprovadas aguardando, Arquivadas) sobre um filtro só.
 - Painel de detalhes, busca (inclusive no conteúdo das conversas), ordenação e menu de contexto.
 - **Diálogo completo** e **dossiê de retomada** em Markdown, com lista de arquivos alterados e consultados. O dossiê mascara chaves e senhas por padrões conhecidos (heurística: confira antes de compartilhar).
 - **Auto-Run**: abre uma sessão nova no `agy` com o dossiê das sessões aprovadas, no projeto e na pasta da sessão original (modo simulação disponível). O app não grava nos bancos do Antigravity, mas cada sessão nova que o `agy` cria fica neles.

@@ -11,6 +11,10 @@ Pacote visual (plano em `docs/PACOTE_VISUAL_1.1.md`). Marcos M1a (conjuntos de �
 - **Três conjuntos de ícones novos, com as fontes dentro do `.exe`:** Font Awesome Free 6.7.2 (Solid), Bootstrap Icons 1.11.3 e Material Icons 4.0.0. Escolha em Tema > Ícones. As fontes são registradas só para o app: nada é instalado no Windows. Sem a fonte (fora do Windows), os botões usam os símbolos Unicode.
 - Licenças das fontes em `fonts/` e créditos no Sobre. O autoteste do `.exe` no CI confere que as 7 fontes (ícones, Inter e JetBrains Mono) foram registradas.
 
+- **Barra lateral** (220 px, aberta ao iniciar): categorias (pendentes, em atenção, críticas, aprovadas, arquivadas) com contagem e projetos com contagem. Clicar numa categoria filtra a tabela (é o mesmo filtro dos selos do rodapé); clicar num projeto leva a tabela até ele. Ctrl+B recolhe; abaixo de 900 px de largura ela se esconde sozinha.
+- **Abas no cabeçalho:** Todas as sessões, **Aprovadas aguardando** (aprovadas ainda sem retomada: o que o Auto-Run vai pegar, com a contagem) e Arquivadas. São atalhos para o mesmo filtro: um só filtro vale de cada vez, marcado nas abas, na barra lateral e nos selos. Abaixo de 1000 px as abas somem.
+- **Ctrl+K** vai ao campo de busca (como o Ctrl+F).
+
 ### Alterado
 - **Cores das 8 skins** refeitas a partir do pacote visual (Stitch). O tema padrão **Escuro** passa a se chamar **Dark Alloy** (azul-preto, paleta Obsidian); a preferência salva continua valendo. O **Claro** vira ardósia com azul-céu, o Mil-Spec ganha o verde tático, o Brutalista troca a borda branca por cinza e a seleção amarela por âmbar escuro. O texto secundário, que ficava abaixo de 4,5:1 nas 8 skins dos mockups, foi reajustado: contraste conferido pelo `test_theme`.
 

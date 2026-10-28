@@ -2274,6 +2274,57 @@ class Chip(tk.Label):
                        highlightbackground=t[self.token] if (on or focused) else blend(t['panel2'], t[self.token], 0.4))
 
 
+class SideItem(tk.Frame):
+    """Linha clicável da barra lateral: glifo, nome e contagem. A marcada (`on`) usa as cores de seleção do tema."""
+
+    def __init__(self, master, app, text, glyph, token, command):
+        super().__init__(master, padx=app.px(10), pady=app.px(4), cursor="hand2", takefocus=1, highlightthickness=1)
+        self.app, self.token, self.command, self.on = app, token, command, False
+        self.glyph = tk.Label(self, text=glyph, font=app.f_small, width=2)
+        self.name = tk.Label(self, text=text, font=app.f_ui, anchor="w")
+        self.count = tk.Label(self, font=app.f_small, padx=app.px(6))
+        self.glyph.pack(side=tk.LEFT)
+        self.name.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.count.pack(side=tk.RIGHT)
+        for w in (self, self.glyph, self.name, self.count):
+            w.bind("<Button-1>", lambda e: self.command())
+        for seq in ("<Return>", "<space>"):
+            self.bind(seq, lambda e: self.command())
+        self.repaint()
+
+    def update_item(self, count=None, on=None):
+        if count is not None:
+            self.count.configure(text=str(count))
+        if on is not None:
+            self.on = on
+        self.repaint()
+
+    def repaint(self):
+        t = self.app.t
+        bg, fg = (t['sel_bg'], t['sel_fg']) if self.on else (t['panel'], t['fg'])
+        self.configure(bg=bg, highlightbackground=bg, highlightcolor=t['accent'])
+        self.glyph.configure(bg=bg, fg=fg if self.on else t[self.token])
+        self.name.configure(bg=bg, fg=fg)
+        self.count.configure(bg=t['panel2'], fg=t['muted'])
+
+
+class Tab(tk.Label):
+    """Aba do cabeçalho (controle segmentado). A marcada usa as cores de seleção do tema."""
+
+    def __init__(self, master, app, text, command):
+        super().__init__(master, text=text, font=app.f_btn, padx=app.px(12), pady=app.px(5), cursor="hand2", takefocus=1, highlightthickness=1)
+        self.app, self.command, self.on = app, command, False
+        self.bind("<Button-1>", lambda e: self.command())
+        for seq in ("<Return>", "<space>"):
+            self.bind(seq, lambda e: self.command())
+        self.repaint()
+
+    def repaint(self):
+        t = self.app.t
+        bg, fg = (t['sel_bg'], t['sel_fg']) if self.on else (t['header_bg'], t['header_fg'])
+        self.configure(bg=bg, fg=fg, highlightbackground=t['accent'] if self.on else t['header_bg'], highlightcolor=t['accent'])
+
+
 class Toast(tk.Frame):
     """Notificação discreta no canto da janela: ícone, texto, botões de ação e fechar. Some sozinha."""
 
@@ -2631,6 +2682,7 @@ class AntigravityGateApp(tk.Tk):
         self.grouped, self.total, self.sub_count, self.row_by_cid = {}, 0, {}, {}
         self.match, self.sort_col, self.sort_rev = None, "col_date", True
         self.chip_filter = None
+        self.side_items, self.proj_items, self.tabs, self._proj_key, self.sidebar_wanted = {}, [], {}, None, True
         self.search_note = ""
 
         self.settings = load_settings()
@@ -2742,6 +2794,7 @@ class AntigravityGateApp(tk.Tk):
             b.redraw()
         for c in self.chips.values():
             c.repaint()
+        self.repaint_nav()
         if hasattr(self, 'tree'):
             self.restyle_rows()
             if hasattr(self, 'd_icon'):
@@ -3006,12 +3059,48 @@ class AntigravityGateApp(tk.Tk):
         self.title_lbl = self.themed_widget(tk.Label(self.brand, text="Gestão de contexto e curadoria", font=self.f_title), bg="header_bg", fg="header_fg")
         self.title_lbl.pack(side=tk.LEFT, padx=(self.px(8), self.px(12)))
         Tooltip(self.title_lbl, self, lambda: f"AntigravityGate v{__version__}")
+        # Abas: atalhos para o mesmo filtro dos selos do rodapé e da barra lateral (`chip_filter`).
+        self.tabs_frame = self.themed_widget(tk.Frame(self.top_frame), bg="header_bg")
+        self.tabs_frame.pack(side=tk.LEFT)
+        for key, text in (("todas", "Todas as sessões"), ("aguardando", "Aprovadas aguardando"), ("arquivada", "Arquivadas")):
+            tab = Tab(self.tabs_frame, self, text, lambda k=key: self.set_filter(None if k == "todas" else k))
+            tab.pack(side=tk.LEFT, padx=(0, self.px(4)))
+            self.tabs[key] = tab
         self.hdr_right = self.themed_widget(tk.Frame(self.top_frame), bg="header_bg")
         self.hdr_right.pack(side=tk.RIGHT)
         self.make_button(self.hdr_right, "about", "about", "Sobre", self.open_about, "Sobre: versão, autor e diagnóstico (F1)", bg_token="header_bg", icon_token="accent_text", icon_only=True).pack(side=tk.RIGHT, padx=(self.px(8), 0))
         self.make_button(self.hdr_right, "theme", "theme", self.theme_button_text(), self.show_theme_menu, "Escolher tema e estilo de ícones", bg_token="header_bg", icon_token="accent_text").pack(side=tk.RIGHT, padx=(self.px(8), 0))
         self.make_button(self.hdr_right, "limits", "limits", "Limites", self.open_limits, self.limits_tip(), bg_token="header_bg", icon_token="warning").pack(side=tk.RIGHT, padx=(self.px(8), 0))
         self.make_button(self.hdr_right, "refresh", "refresh", "Atualizar", self.refresh, "Reler as pastas e recarregar as sessões (F5)", bg_token="header_bg").pack(side=tk.RIGHT)
+
+        # Barra de status: fonte, carga, avisos e selos de contagem
+        self.footer = self.themed_widget(tk.Frame(self, padx=self.px(14), pady=self.px(6)), bg="panel2")
+        self.footer.pack(side=tk.BOTTOM, fill=tk.X)
+        for token, key in (("danger", "crit"), ("warning", "rot"), ("muted", "arquivada"), ("success", "aprovada"), ("accent_text", "pendente")):
+            chip = Chip(self.footer, self, token, key)
+            chip.pack(side=tk.RIGHT, padx=(self.px(6), 0))
+            self.chips[key] = chip
+        self.status = self.themed_widget(tk.Label(self.footer, anchor=tk.W, font=self.f_small), bg="panel2", fg="fg")
+        self.status.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # Barra lateral: categorias e projetos. As categorias são atalhos para o filtro dos selos do rodapé; um projeto leva a tabela até ele.
+        # Ctrl+B recolhe; em janela estreita ela se esconde sozinha (apply_nav_layout).
+        self.sidebar = self.themed_widget(tk.Frame(self, width=self.px(220)), bg="panel")
+        self.sidebar.pack(side=tk.LEFT, fill=tk.Y)
+        self.sidebar.pack_propagate(False)
+        self.side_sep = self.themed_widget(tk.Frame(self, width=1), bg="border")
+        self.side_sep.pack(side=tk.LEFT, fill=tk.Y)
+        sec = lambda text: self.themed_widget(tk.Label(self.sidebar, text=text, font=self.f_small, anchor="w", padx=self.px(14)), bg="panel", fg="muted")
+        sec("CATEGORIAS").pack(fill=tk.X, pady=(self.px(14), self.px(4)))
+        for key, text, glyph, token in self.NAV_CATS:
+            item = SideItem(self.sidebar, self, text, glyph, token, lambda k=key: self.toggle_chip_filter(k))
+            item.pack(fill=tk.X, padx=self.px(8), pady=1)
+            self.side_items[key] = item
+        sec("PROJETOS E ESPAÇOS").pack(fill=tk.X, pady=(self.px(16), self.px(4)))
+        self.proj_box = self.themed_widget(tk.Frame(self.sidebar), bg="panel")
+        self.proj_box.pack(fill=tk.X)
+        self.proj_more = self.themed_widget(tk.Label(self.sidebar, font=self.f_small, anchor="w", padx=self.px(14)), bg="panel", fg="muted")
+        self.proj_more.pack(fill=tk.X)
 
         # Filtros: fonte das sessões e busca
         self.filter_frame = self.themed_widget(tk.Frame(self, padx=self.px(16), pady=self.px(10)), bg="bg")
@@ -3021,7 +3110,7 @@ class AntigravityGateApp(tk.Tk):
         self.src_box.bind("<<ComboboxSelected>>", lambda e: self.on_source_change())
         self.src_box.pack(side=tk.LEFT)
         self.make_button(self.filter_frame, "clear", "clear", "Limpar", self.clear_search, "Limpar a busca (Esc)").pack(side=tk.RIGHT, padx=(self.px(6), 0))
-        self.make_button(self.filter_frame, "search", "search", "Buscar", self.run_search, "Buscar em título, pasta, agente, UUID e no conteúdo das conversas (Enter)", icon_token="accent_text").pack(side=tk.RIGHT, padx=(self.px(10), 0))
+        self.make_button(self.filter_frame, "search", "search", "Buscar", self.run_search, "Buscar em título, pasta, agente, UUID e no conteúdo das conversas (Enter; Ctrl+K vai ao campo)", icon_token="accent_text").pack(side=tk.RIGHT, padx=(self.px(10), 0))
         box = self.themed_widget(tk.Frame(self.filter_frame, padx=1, pady=1), bg="border")
         box.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(self.px(12), 0), ipady=self.px(2))
         inner = self.themed_widget(tk.Frame(box), bg="panel")
@@ -3035,6 +3124,11 @@ class AntigravityGateApp(tk.Tk):
         self.search_entry.bind("<Return>", lambda e: self.run_search())
         self.search_entry.bind("<Escape>", lambda e: self.clear_search())
         self.bind("<Control-f>", lambda e: (self.search_entry.focus_set(), "break")[1])
+        # Ctrl+K e Ctrl+B também no campo de busca: a ligação do próprio campo vem antes da do Tk (apagar até o fim da linha; voltar um caractere).
+        self.bind("<Control-k>", lambda e: self.focus_search())
+        self.search_entry.bind("<Control-k>", lambda e: self.focus_search())
+        self.bind("<Control-b>", lambda e: self.toggle_sidebar())
+        self.search_entry.bind("<Control-b>", lambda e: self.toggle_sidebar())
 
         # Ações sobre a seleção
         self.actions_frame = self.themed_widget(tk.Frame(self, padx=self.px(16), pady=0), bg="bg")
@@ -3050,15 +3144,6 @@ class AntigravityGateApp(tk.Tk):
         mk("dossier", "dossier", "Dossiê de retomada", lambda: self.start_export('dossier'), "Salvar um resumo local para retomar a sessão (segredos mascarados)", icon_token="accent_text").pack(side=tk.LEFT, padx=(gap, 0))
         mk("autorun", "autorun", "Auto-Run", self.start_autorun, "Retomar as sessões aprovadas em sessões novas com o agy", kind="primary").pack(side=tk.RIGHT)
 
-        # Barra de status: fonte, carga, avisos e selos de contagem
-        self.footer = self.themed_widget(tk.Frame(self, padx=self.px(14), pady=self.px(6)), bg="panel2")
-        self.footer.pack(side=tk.BOTTOM, fill=tk.X)
-        for token, key in (("danger", "crit"), ("warning", "rot"), ("muted", "arquivada"), ("success", "aprovada"), ("accent_text", "pendente")):
-            chip = Chip(self.footer, self, token, key)
-            chip.pack(side=tk.RIGHT, padx=(self.px(6), 0))
-            self.chips[key] = chip
-        self.status = self.themed_widget(tk.Label(self.footer, anchor=tk.W, font=self.f_small), bg="panel2", fg="fg")
-        self.status.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # Tabela (Treeview) com métricas de contexto
         # Painel de detalhes da seleção (recolhível), acima do rodapé
@@ -3242,7 +3327,10 @@ class AntigravityGateApp(tk.Tk):
             return
         names = ("approve", "archive", "pending", "export", "dossier", "autorun")
         self.fit_buttons(self.actions_frame, [self.btn[n] for n in names], reserved=self.px(60) + self.px(32))
+        self.apply_nav_layout()
         hdr_room = self.top_frame.winfo_width() - self.brand.winfo_reqwidth() - self.px(32)
+        if self.tabs_frame.winfo_manager():
+            hdr_room -= self.tabs_frame.winfo_reqwidth()
         both = [self.btn["limits"], self.btn["refresh"], self.btn["theme"]]
         compact = sum(b.measure(False) for b in both) + self.btn["about"].measure() + self.px(32) > hdr_room
         for b in both:
@@ -3285,12 +3373,107 @@ class AntigravityGateApp(tk.Tk):
             self.btn["d_folder"].set_enabled(bool(fpath), "" if fpath else "Selecione uma sessão com arquivo nesta fonte.")
         self.update_details()
 
-    CHIP_FILTERS = {"pendente": "pendentes", "aprovada": "aprovadas", "arquivada": "arquivadas", "rot": "em atenção", "crit": "críticas"}
+    CHIP_FILTERS = {"pendente": "pendentes", "aprovada": "aprovadas", "arquivada": "arquivadas", "rot": "em atenção", "crit": "críticas",
+                    "aguardando": "aprovadas aguardando o Auto-Run"}
+    NAV_CATS = (("pendente", "Pendentes", "○", "accent_text"), ("rot", "Em atenção", "⚠", "warning"), ("crit", "Críticas", "‼", "danger"),
+                ("aprovada", "Aprovadas", "✔", "success"), ("arquivada", "Arquivadas", "▣", "muted"))
+    NAV_PROJECTS = 14  # projetos listados na barra lateral; os demais ficam só na tabela
 
     def chip_match(self, key, r):
         if key in ("rot", "crit"):
             return ctx_level(r['ctx']) == (1 if key == "rot" else 2)
+        if key == "aguardando":  # aprovada e ainda sem retomada: é o que o Auto-Run vai pegar
+            return self.states.get(r['cid'], "pendente") == "aprovada" and not self.handoffs.get(r['cid'])
         return self.states.get(r['cid'], "pendente") == key
+
+    def set_filter(self, key):
+        """Abas: levam a lista a um filtro (None = todas as sessões). Clicar na aba já ativa não faz nada."""
+        if not self.grouped:
+            return
+        if key is None:
+            if self.chip_filter or self.match is not None:
+                self.clear_search()
+        elif self.chip_filter != key:
+            self.toggle_chip_filter(key)
+
+    def focus_search(self):
+        self.search_entry.focus_set()
+        self.search_entry.select_range(0, tk.END)
+        return "break"
+
+    def toggle_sidebar(self):
+        self.sidebar_wanted = not self.sidebar_wanted
+        self.apply_nav_layout()
+        return "break"
+
+    def apply_nav_layout(self):
+        """Barra lateral e abas só aparecem com espaço: abaixo de 900 px de largura a barra se esconde (o filtro continua nos selos do
+        rodapé e a fonte no seletor do topo), abaixo de 1000 px as abas. Ctrl+B recolhe a barra em qualquer largura."""
+        w = self.winfo_width()
+        if w <= 1:
+            return
+        want = self.sidebar_wanted and w >= self.px(900)
+        if want != bool(self.sidebar.winfo_manager()):
+            if want:
+                self.sidebar.pack(side=tk.LEFT, fill=tk.Y, before=self.filter_frame)
+                self.side_sep.pack(side=tk.LEFT, fill=tk.Y, before=self.filter_frame)
+            else:
+                self.sidebar.pack_forget()
+                self.side_sep.pack_forget()
+        tabs = w >= self.px(1000)
+        if tabs != bool(self.tabs_frame.winfo_manager()):
+            if tabs:
+                self.tabs_frame.pack(side=tk.LEFT)
+            else:
+                self.tabs_frame.pack_forget()
+
+    def goto_project(self, name):
+        """Leva a tabela até o projeto: abre a pasta e rola até ela. Com busca ou filtro ativo, mostra tudo antes."""
+        prefix = f"  {name} ("
+        find = lambda: next((i for i in self.tree.get_children() if self.tree.item(i, "text").startswith(prefix)), None)
+        node = find()
+        if node is None and (self.match is not None or self.chip_filter):
+            self.clear_search()
+            node = find()
+        if node is not None:
+            self.tree.item(node, open=True)
+            self.tree.selection_set(node)
+            self.tree.see(node)
+
+    def update_nav(self):
+        """Barra lateral e abas: contagens (sempre de todas as sessões) e item ativo. O filtro é um só (`chip_filter`)."""
+        if not self.tabs:  # ainda montando a janela
+            return
+        rows = list(self.row_by_cid.values())
+        st = lambda r: self.states.get(r['cid'], "pendente")
+        levels = [ctx_level(r['ctx']) for r in rows]
+        counts = {k: sum(1 for r in rows if st(r) == k) for k in ("pendente", "aprovada", "arquivada")}
+        counts.update(rot=levels.count(1), crit=levels.count(2))
+        for key, item in self.side_items.items():
+            item.update_item(count=counts[key], on=self.chip_filter == key)
+        waiting = sum(1 for r in rows if self.chip_match("aguardando", r))
+        self.tabs["aguardando"].configure(text=f"Aprovadas aguardando · {waiting}" if waiting else "Aprovadas aguardando")
+        on = {"todas": not self.chip_filter and self.match is None, "aguardando": self.chip_filter == "aguardando", "arquivada": self.chip_filter == "arquivada"}
+        for key, tab in self.tabs.items():
+            tab.on = on[key]
+            tab.repaint()
+        names = tuple((n, len(self.grouped[n])) for n in sorted(self.grouped))
+        if names != self._proj_key:
+            self._proj_key = names
+            for it in self.proj_items:
+                it.destroy()
+            self.proj_items = []
+            for name, n in names[:self.NAV_PROJECTS]:
+                it = SideItem(self.proj_box, self, name, "▭", "accent_text", lambda nm=name: self.goto_project(nm))
+                it.update_item(count=n)
+                it.pack(fill=tk.X, padx=self.px(8), pady=1)
+                self.proj_items.append(it)
+            more = len(names) - self.NAV_PROJECTS
+            self.proj_more.configure(text=f"+{more} projeto(s) só na tabela" if more > 0 else "")
+
+    def repaint_nav(self):
+        for w in list(self.side_items.values()) + self.proj_items + list(self.tabs.values()):
+            w.repaint()
 
     def toggle_chip_filter(self, key):
         """Selo do rodapé como filtro: mostra só as sessões dele; clicar de novo volta a mostrar todas."""
@@ -3320,6 +3503,7 @@ class AntigravityGateApp(tk.Tk):
         self.chips['crit'].configure(text=f"‼ {levels.count(2)} críticas")
         for c in self.chips.values():
             c.repaint()
+        self.update_nav()
 
     def is_session(self, iid):
         v = self.tree.item(iid, 'values') if iid else ()
