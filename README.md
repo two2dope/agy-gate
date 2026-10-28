@@ -57,7 +57,7 @@ São 26 conjuntos (leitura, exportação, Auto-Run com `agy` simulado, salvaguar
 |---|---|
 | `AntigravityGate.py` | o app inteiro (arquivo único) |
 | `tests/` | testes e o `agy` simulado |
-| `fonts/` | fontes dos ícones (empacotadas no `.exe`) e suas licenças |
+| `fonts/` | fontes de ícones, Inter e JetBrains Mono (empacotadas no `.exe`) e suas licenças |
 | `tools/` | scripts de inspeção da estrutura dos bancos (sem conteúdo) |
 | `docs/ESTADO_DO_PROJETO.md` | estado do projeto, decisões, formato dos bancos, contrato do `agy` |
 | `docs/PACOTE_VISUAL_1.1.md` | avaliação dos mockups da interface nova e plano da 1.1 |

@@ -4,11 +4,12 @@ Formato: [Versionamento Semântico](https://semver.org/lang/pt-BR/). Enquanto a 
 
 ## [1.1.0] - em desenvolvimento
 
-Pacote visual (plano em `docs/PACOTE_VISUAL_1.1.md`). Marco M1a: conjuntos de ícones.
+Pacote visual (plano em `docs/PACOTE_VISUAL_1.1.md`). Marcos M1a (conjuntos de ícones) e M1b (fontes).
 
 ### Adicionado
+- **Fontes Inter (interface) e JetBrains Mono (texto de código, andamento do Auto-Run e títulos do Mil-Spec, Cyber e Mecha)**, dentro do `.exe` (subconjunto latino, cerca de 190 KB, SIL OFL 1.1). Sem elas (fora do Windows), o app usa Segoe UI e Consolas, como antes.
 - **Três conjuntos de ícones novos, com as fontes dentro do `.exe`:** Font Awesome Free 6.7.2 (Solid), Bootstrap Icons 1.11.3 e Material Icons 4.0.0. Escolha em Tema > Ícones. As fontes são registradas só para o app: nada é instalado no Windows. Sem a fonte (fora do Windows), os botões usam os símbolos Unicode.
-- Licenças das fontes em `fonts/` e créditos no Sobre. O autoteste do `.exe` no CI confere que as 3 fontes foram registradas.
+- Licenças das fontes em `fonts/` e créditos no Sobre. O autoteste do `.exe` no CI confere que as 7 fontes (ícones, Inter e JetBrains Mono) foram registradas.
 
 ### Corrigido
 - A janela de andamento do Auto-Run continuava com o título "executando" depois do "Fim.". Agora mostra "concluído", "concluído com problemas" ou "erro".

@@ -19,7 +19,10 @@ for mode, (family, fname, glyphs) in G.ICON_FONTS.items():
     assert set(glyphs) == set(G.ICONS), (mode, set(G.ICONS) ^ set(glyphs))
     assert all(len(g) == 1 and 0xE000 <= ord(g) <= 0xF8FF for g in glyphs.values()), mode
     assert os.path.getsize(os.path.join(G.font_dir(), fname)) > 100_000, fname
-for lic in ("LICENSE-font-awesome.txt", "LICENSE-bootstrap-icons.txt", "LICENSE-material-icons.txt"):
+for fn in ("Inter-Regular.ttf", "Inter-Bold.ttf", "JetBrainsMono-Regular.ttf", "JetBrainsMono-Bold.ttf"):
+    assert os.path.getsize(os.path.join(G.font_dir(), fn)) > 20_000, fn
+assert len([f for f in os.listdir(G.font_dir()) if f.endswith(".ttf")]) == 7, "o CI espera 7 fontes registradas"
+for lic in ("LICENSE-font-awesome.txt", "LICENSE-bootstrap-icons.txt", "LICENSE-material-icons.txt", "LICENSE-inter.txt", "LICENSE-jetbrains-mono.txt"):
     assert os.path.isfile(os.path.join(G.font_dir(), lic)), lic
 
 # 2. escolha do glifo: com a fonte, o do conjunto; sem ela, o símbolo Unicode; sem ícones, nada
@@ -50,5 +53,5 @@ for mode in ("fa", "bootstrap", "material"):
 app.destroy()
 app = G.AntigravityGateApp(); wait(app)
 assert app.icon_mode == "material", "estilo de ícones lembrado ao reabrir"
-assert "Material Icons (Apache 2.0)" in G.about_info()
+assert "Material Icons (Apache 2.0)" in G.about_info() and "Inter e JetBrains Mono" in G.about_info()
 app.destroy(); print("TODOS OS TESTES DE FONTES DE ICONES OK")
