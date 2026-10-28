@@ -113,8 +113,8 @@ UUID_DB_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a
 
 # Posição das colunas na árvore (valores de cada linha de sessão)
 COL_DATE, COL_SIZE, COL_CTX, COL_STEPS, COL_FAIL, COL_TITLE, COL_AGENT, COL_UUID = range(8)
-HEADINGS = {"col_date": "Modificação", "col_size": "Tamanho", "col_ctx": "Contexto (tokens)", "col_steps": "Passos",
-            "col_title": "Título / Contexto Inicial", "col_agent": "Agente", "col_fail": "Falhas", "col_uuid": "UUID"}
+HEADINGS = {"col_date": "Modificação", "col_size": "Tamanho", "col_ctx": "Consumo (tokens)", "col_steps": "Passos",
+            "col_title": "Título / Contexto Inicial", "col_agent": "Agente", "col_fail": "Falhas", "col_uuid": "UUID", "col_menu": ""}
 SORT_FUNCS = {
     "col_date": lambda r: r["date"], "col_size": lambda r: r["size_kb"], "col_ctx": lambda r: r["ctx"],
     "col_steps": lambda r: r["steps"], "col_title": lambda r: r["title"].lower(), "col_agent": lambda r: r["agent"].lower(),
@@ -226,14 +226,19 @@ def fmt_tokens(n):
     return "-" if not n else (f"{n / 1000:.0f}k" if n >= 1000 else str(n))
 
 
-def ctx_label(ctx):
-    """Contexto em tokens com medidor de 6 células (cheio = nível crítico) e marca de nível: ⚠ atenção, ‼ crítico."""
+def ctx_label(ctx, two_lines=False):
+    """Consumo de contexto: tokens, % do nível crítico, medidor de 5 células (cheio = crítico) e marca de nível (⚠ atenção, ‼ crítico).
+    `two_lines` (tabela confortável): tokens e % em cima; medidor e faixa (segura, atenção, crítica) embaixo."""
     if not ctx:
         return "-"
-    cells = 6
-    filled = min(cells, max(1, math.ceil(ctx / CONTEXT_LIMITS["critical"] * cells)))
-    mark = {0: "", 1: " ⚠", 2: " ‼"}[ctx_level(ctx)]
-    return f"{fmt_tokens(ctx)}  " + "■" * filled + "□" * (cells - filled) + mark
+    cells = 5
+    level = ctx_level(ctx)
+    pct = round(ctx / CONTEXT_LIMITS["critical"] * 100)
+    bar = "■" * min(cells, max(1, math.ceil(ctx / CONTEXT_LIMITS["critical"] * cells)))
+    bar += "□" * (cells - len(bar))
+    if two_lines:
+        return f"{fmt_tokens(ctx)} · {pct}%\n{bar} {('segura', 'atenção', 'crítica')[level]}"
+    return f"{fmt_tokens(ctx)}  {bar}  {pct}%" + {0: "", 1: " ⚠", 2: " ‼"}[level]
 
 
 # --- protobuf mínimo (somente leitura) --------------------------------------------------------
@@ -2397,6 +2402,7 @@ class Toast(tk.Frame):
 class ThemePicker(tk.Toplevel):
     """Lista suspensa no visual do app: temas com amostra de cores e estilo de ícones. Setas, Enter e Esc funcionam; clicar fora fecha."""
 
+    DENSITIES = (("compact", "Compacta (1 linha por sessão)"), ("comfortable", "Confortável (2 linhas por sessão)"))
     ICON_MODES = (("mdl2", "Ícones do Windows (Segoe MDL2)"), ("fa", "Font Awesome"), ("bootstrap", "Bootstrap Icons"),
                   ("material", "Material Icons"), ("symbol", "Símbolos Unicode"), ("none", "Sem ícones"))
 
@@ -2417,6 +2423,10 @@ class ThemePicker(tk.Toplevel):
         self.heading(body, "Ícones")
         for mode, label in self.ICON_MODES:
             self.add_row(body, label, mode == app.icon_mode, lambda m=mode: app.set_icon_mode(m), radio=True)
+        tk.Frame(body, bg=t['border'], height=1).pack(fill=tk.X, pady=app.px(5), padx=app.px(4))
+        self.heading(body, "Tabela")
+        for mode, label in self.DENSITIES:
+            self.add_row(body, label, mode == app.density, lambda m=mode: app.set_density(m), radio=True)
         self.cur = next((i for i, r in enumerate(self.rows) if r[3]), 0)
         self.highlight(self.cur)
         self.update_idletasks()
@@ -2703,6 +2713,7 @@ class AntigravityGateApp(tk.Tk):
         self.base_family = next((f for f in ("Inter", "Segoe UI", "Helvetica", "DejaVu Sans") if f in self.families),
                                 tkfont.nametofont("TkDefaultFont").actual("family"))
         self.theme_key = self.settings.get("theme") if self.settings.get("theme") in THEMES else "escuro"
+        self.density = self.settings.get("density") if self.settings.get("density") in self.ROW_HEIGHT else "compact"
         wanted = (os.environ.get("AGY_ICONS") or self.settings.get("icons") or "auto").lower()
         self.icon_mode = wanted if wanted in ("mdl2", "symbol", "none", *ICON_FONTS) else ("mdl2" if "Segoe MDL2 Assets" in self.families else "symbol")
         self.f_ui = tkfont.Font(self, family=self.base_family, size=10)
@@ -2758,7 +2769,7 @@ class AntigravityGateApp(tk.Tk):
 
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure("Treeview", background=t['panel'], fieldbackground=t['panel'], foreground=t['fg'], rowheight=self.px(30),
+        style.configure("Treeview", background=t['panel'], fieldbackground=t['panel'], foreground=t['fg'], rowheight=self.px(self.ROW_HEIGHT[self.density]),
                         borderwidth=1, bordercolor=t['border'], lightcolor=t['panel'], darkcolor=t['panel'], font=self.f_ui)
         style.configure("Treeview.Heading", background=t['panel2'], foreground=t['fg'], relief="flat", font=self.f_bold,
                         padding=(self.px(8), self.px(6)))
@@ -3190,12 +3201,12 @@ class AntigravityGateApp(tk.Tk):
         self.empty_sub = self.themed_widget(tk.Label(self.empty, font=self.f_ui, wraplength=self.px(420), justify=tk.CENTER), bg="panel", fg="muted")
         self.empty_sub.pack(pady=(self.px(4), self.px(10)))
         self.make_button(self.empty, "empty_action", "refresh", "Atualizar", self.refresh, "", bg_token="panel")
-        columns = ("col_date", "col_size", "col_ctx", "col_steps", "col_fail", "col_title", "col_agent", "col_uuid")
+        columns = ("col_date", "col_size", "col_ctx", "col_steps", "col_fail", "col_title", "col_agent", "col_uuid", "col_menu")
         self.tree = ttk.Treeview(holder, columns=columns, show="tree headings", selectmode="extended")
 
         self.tree.heading("#0", text="Projeto / Sessão", anchor=tk.W)
         for col in columns:
-            anchor = tk.CENTER if col in ("col_size", "col_ctx", "col_steps", "col_fail") else tk.W
+            anchor = tk.CENTER if col in ("col_size", "col_ctx", "col_steps", "col_fail", "col_menu") else tk.W
             cmd = (lambda c=col: self.sort_by(c)) if col in SORT_FUNCS else ""
             self.tree.heading(col, text=HEADINGS[col], anchor=anchor, command=cmd)
 
@@ -3203,12 +3214,13 @@ class AntigravityGateApp(tk.Tk):
         self.tree.column("#0", width=self.px(270), anchor=tk.W)
         self.tree.column("col_date", width=self.px(150), anchor=tk.W)
         self.tree.column("col_size", width=self.px(95), anchor=tk.CENTER)
-        self.tree.column("col_ctx", width=self.px(165), anchor=tk.CENTER)
+        self.tree.column("col_ctx", width=self.px(190), anchor=tk.CENTER)
         self.tree.column("col_steps", width=self.px(75), anchor=tk.CENTER)
         self.tree.column("col_title", width=self.px(320), anchor=tk.W)
         self.tree.column("col_agent", width=self.px(140), anchor=tk.W)
         self.tree.column("col_fail", width=self.px(75), anchor=tk.CENTER)
         self.tree.column("col_uuid", width=self.px(150), anchor=tk.W)
+        self.tree.column("col_menu", width=self.px(40), anchor=tk.CENTER)
 
         scrollbar = ttk.Scrollbar(holder, orient=tk.VERTICAL, command=self.tree.yview)
         hscroll = ttk.Scrollbar(holder, orient=tk.HORIZONTAL, command=self.tree.xview)
@@ -3223,9 +3235,10 @@ class AntigravityGateApp(tk.Tk):
         # Larguras fixas (sem stretch): o Tk encolhia as colunas esticáveis sozinho e desfazia o ajuste do usuário.
         for c in ("#0",) + columns:
             self.tree.column(c, stretch=False)
-        self.tree["displaycolumns"] = ("col_title", "col_date", "col_ctx", "col_steps", "col_fail", "col_size", "col_agent", "col_uuid")
+        self.tree["displaycolumns"] = ("col_title", "col_date", "col_ctx", "col_steps", "col_fail", "col_size", "col_agent", "col_uuid", "col_menu")
         self.cell_tips = CellTooltip(self.tree, self, self.tree_cell_tip, level_fn=self.tree_cell_level)
         self.tree.bind("<Double-1>", self.on_double_click)
+        self.tree.bind("<Button-1>", self.on_tree_click, add="+")  # coluna Ações (⋮)
         self.tree.bind("<Button-3>", self.show_menu)
         for seq in ("<Shift-F10>", "<App>"):
             try:
@@ -3373,6 +3386,7 @@ class AntigravityGateApp(tk.Tk):
             self.btn["d_folder"].set_enabled(bool(fpath), "" if fpath else "Selecione uma sessão com arquivo nesta fonte.")
         self.update_details()
 
+    ROW_HEIGHT = {"compact": 30, "comfortable": 46}  # px a 96 dpi: 1 linha por sessão, ou 2 (data e hora, consumo e faixa)
     CHIP_FILTERS = {"pendente": "pendentes", "aprovada": "aprovadas", "arquivada": "arquivadas", "rot": "em atenção", "crit": "críticas",
                     "aguardando": "aprovadas aguardando o Auto-Run"}
     NAV_CATS = (("pendente", "Pendentes", "○", "accent_text"), ("rot", "Em atenção", "⚠", "warning"), ("crit", "Críticas", "‼", "danger"),
@@ -3385,6 +3399,26 @@ class AntigravityGateApp(tk.Tk):
         if key == "aguardando":  # aprovada e ainda sem retomada: é o que o Auto-Run vai pegar
             return self.states.get(r['cid'], "pendente") == "aprovada" and not self.handoffs.get(r['cid'])
         return self.states.get(r['cid'], "pendente") == key
+
+    def set_density(self, mode):
+        """Tabela compacta (1 linha por sessão) ou confortável (2 linhas). Lembrada entre execuções."""
+        self.density = mode
+        self.settings['density'] = mode
+        save_settings(self.settings)
+        ttk.Style().configure("Treeview", rowheight=self.px(self.ROW_HEIGHT[mode]))
+        if self.grouped:
+            self.populate()
+
+    def menu_col_id(self):
+        return f"#{list(self.tree['displaycolumns']).index('col_menu') + 1}"
+
+    def on_tree_click(self, e):
+        """Clique na coluna Ações (⋮): abre o menu de contexto da sessão, como o botão direito."""
+        if self.tree.identify_region(e.x, e.y) == "cell" and self.tree.identify_column(e.x) == self.menu_col_id():
+            iid = self.tree.identify_row(e.y)
+            if iid and self.is_session(iid):
+                self.show_menu(e)
+                return "break"
 
     def set_filter(self, key):
         """Abas: levam a lista a um filtro (None = todas as sessões). Clicar na aba já ativa não faz nada."""
@@ -3736,6 +3770,8 @@ class AntigravityGateApp(tk.Tk):
             if r.get('killed'):
                 bits.append("Encerrada à força no Antigravity.")
             return " ".join(bits)
+        if col == "col_menu":
+            return "Menu da sessão (também no botão direito ou Shift+F10)."
         if col == "col_title":
             return r['title'] if len(r.get('title') or "") > 40 else ""
         if col == "ws":
@@ -4068,6 +4104,7 @@ class AntigravityGateApp(tk.Tk):
             self.tree.delete(item)
         self.sub_count = {}
         key, rev = SORT_FUNCS[self.sort_col], self.sort_rev
+        two = self.density == "comfortable"
         flat = self.match is not None  # com busca ativa a lista é plana; sem busca, sub-agentes ficam sob o pai
         for pname in sorted(self.grouped):
             rows = [r for r in self.grouped[pname] if not flat or r['cid'] in self.match]
@@ -4082,7 +4119,7 @@ class AntigravityGateApp(tk.Tk):
                     roots.append(r)
             for parent, lst in kids.items():
                 self.sub_count[parent] = len(lst)
-            proj_node = self.tree.insert("", tk.END, text=f"  {pname} ({len(rows)} sessões)", values=("",) * 8, tags=('proj',), image=self.icon("folder"))
+            proj_node = self.tree.insert("", tk.END, text=f"  {pname} ({len(rows)} sessões)", values=("",) * 9, tags=('proj',), image=self.icon("folder"))
             placed = set()
 
             def add(parent_iid, r):
@@ -4090,8 +4127,8 @@ class AntigravityGateApp(tk.Tk):
                     return  # proteção contra ciclos de parentesco
                 placed.add(r['cid'])
                 iid = self.tree.insert(parent_iid, tk.END, text=self.leaf_text(r['cid']), tags=self.row_tags(r['cid']), image=self.status_icon(r['cid']),
-                                       values=(r['date'], r['size'], ctx_label(r['ctx']), r['steps'], f"⚠ {r['failures']}" if r['failures'] else "-",
-                                               r['title'], r['agent'] or "-", r['cid']))
+                                       values=(r['date'].replace(" ", "\n", 1) if two else r['date'], r['size'], ctx_label(r['ctx'], two_lines=two), r['steps'],
+                                               f"⚠ {r['failures']}" if r['failures'] else "-", r['title'], r['agent'] or "-", r['cid'], "⋮"))
                 for ch in sorted(kids.get(r['cid'], []), key=key, reverse=rev):
                     add(iid, ch)
 

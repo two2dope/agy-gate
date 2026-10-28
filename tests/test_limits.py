@@ -26,7 +26,7 @@ assert L(120000, 100000, 150000) == 1 and L(120000, 200000, 300000) == 0, "faixa
 assert G.CONTEXT_LIMITS["attention"] == 150000
 # --- 4. rótulo
 assert G.ctx_label(0) == "-" and "⚠" not in G.ctx_label(1000) and "‼" not in G.ctx_label(1000)
-assert G.ctx_label(150000).endswith("⚠") and G.ctx_label(250000).endswith("‼") and G.ctx_label(250000).count("■") == 6
+assert G.ctx_label(150000).endswith("⚠") and G.ctx_label(250000).endswith("‼") and G.ctx_label(250000).count("■") == 5
 assert G.ctx_label(1000).count("■") == 1 and G.ctx_label(125000).count("■") == 3, "medidor é proporcional ao nível crítico"
 # --- 5. preferências
 os.environ.pop("AGY_ROT_TOKENS", None)
