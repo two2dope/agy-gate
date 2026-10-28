@@ -24,7 +24,7 @@ def iid(a, n): return next(i for i in a.iter_sessions() if a.cid_of(i) == U(n))
 import subprocess, tkinter as tk
 app = G.AntigravityGateApp(); app.geometry("1240x720+0+0"); wait(app)
 btn = app.btn['theme']
-assert app.theme_picker is None and btn.text == "Escuro ▾", btn.text
+assert app.theme_picker is None and btn.text == "Dark Alloy ▾", btn.text
 
 # abre: 8 temas + 3 modos de ícone, atual selecionado
 btn.command(); app.update()

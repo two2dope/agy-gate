@@ -1483,34 +1483,26 @@ def scan_source(conv_dir, sum_db, is_active, progress=None, is_stale=None):
 
 SETTINGS_FILE = os.path.join(LOG_DIR, "settings.json")
 
-# Paletas inspiradas nas 6 skins do Cyber-HUD do navigator-agy (cores sólidas: o Tk não faz gradiente nem transparência).
-# Todas as combinações de texto foram checadas para contraste >= 4,5:1 (WCAG AA).
+# Paletas do pacote visual 1.1 (Stitch: DESIGN.md "Obsidian Telemetry Aero" e as 8 skins), com cores sólidas: o Tk não faz gradiente nem transparência.
+# Todas as combinações de texto foram checadas para contraste >= 4,5:1 (WCAG AA) em tests/test_theme.py.
 _BASE = dict(radius=8, title_fonts=("Inter", "Segoe UI Semibold", "Segoe UI"))
 THEMES = {
-    "escuro": dict(name="Escuro", bg="#1e1e1e", panel="#252526", panel2="#333333", border="#454545", fg="#d4d4d4", muted="#9da0a6",
-                   accent="#007acc", accent_fg="#ffffff", accent_text="#4daafc", success="#3fb950", warning="#e3b341", danger="#f85149",
-                   sel_bg="#094771", sel_fg="#ffffff", header_bg="#252526", header_fg="#d4d4d4", **_BASE),
-    "claro": dict(name="Claro", bg="#f5f5f5", panel="#ffffff", panel2="#e6e6e6", border="#cfcfcf", fg="#222222", muted="#5f6368",
-                  accent="#005a9e", accent_fg="#ffffff", accent_text="#005a9e", success="#1a7f37", warning="#855300", danger="#cf222e",
-                  sel_bg="#cfe4f7", sel_fg="#111111", header_bg="#ffffff", header_fg="#222222", **_BASE),
-    "milspec": dict(name="Mil-Spec", bg="#111216", panel="#17181f", panel2="#232732", border="#3c4250", fg="#e7ecf3", muted="#9aa4b5",
-                    accent="#4ade80", accent_fg="#07140c", accent_text="#4ade80", success="#4ade80", warning="#facc15", danger="#f87171",
-                    sel_bg="#28303e", sel_fg="#4ade80", header_bg="#232732", header_fg="#f1f5f9", radius=6, title_fonts=("JetBrains Mono", "Bahnschrift", "Consolas", "Segoe UI")),
-    "cyber": dict(name="Cyber Synthwave", bg="#04050e", panel="#0d0a1f", panel2="#17082c", border="#0e7f8f", fg="#e6fbff", muted="#8fb5c2",
-                  accent="#00f0ff", accent_fg="#001418", accent_text="#00f0ff", success="#39ff88", warning="#ffd166", danger="#ff4d94",
-                  sel_bg="#2a0a3d", sel_fg="#00f0ff", header_bg="#17082c", header_fg="#00f0ff", radius=4, title_fonts=("JetBrains Mono", "Bahnschrift", "Consolas", "Segoe UI")),
-    "vidro": dict(name="Vidro Aero", bg="#060f1e", panel="#0a1830", panel2="#10294a", border="#2b6a8f", fg="#f8fafc", muted="#9db4cc",
-                  accent="#38bdf8", accent_fg="#04121f", accent_text="#38bdf8", success="#34d399", warning="#fbbf24", danger="#f87171",
-                  sel_bg="#12406a", sel_fg="#ffffff", header_bg="#0d2140", header_fg="#f8fafc", radius=10, title_fonts=("Inter", "Segoe UI Semibold", "Segoe UI")),
-    "brutal": dict(name="Brutalista", bg="#090a0e", panel="#000000", panel2="#1a1a1a", border="#ffffff", fg="#ffffff", muted="#b3b3b3",
-                   accent="#facc15", accent_fg="#000000", accent_text="#facc15", success="#4ade80", warning="#facc15", danger="#ff6b6b",
-                   sel_bg="#facc15", sel_fg="#000000", header_bg="#facc15", header_fg="#000000", radius=0, title_fonts=("Inter", "Bahnschrift", "Arial Black", "Segoe UI")),
-    "obsidiana": dict(name="Obsidiana", bg="#020204", panel="#0b0614", panel2="#14091f", border="#3b2158", fg="#f3ecff", muted="#a99dbd",
-                      accent="#c084fc", accent_fg="#12081f", accent_text="#c084fc", success="#6ee7b7", warning="#fbbf24", danger="#fb7185",
-                      sel_bg="#2b1646", sel_fg="#e9d5ff", header_bg="#0a0312", header_fg="#f3ecff", radius=12, title_fonts=("Inter", "Segoe UI Semibold", "Segoe UI")),
-    "mecha": dict(name="Mecha", bg="#080b12", panel="#0e131d", panel2="#1b1610", border="#7a3a10", fg="#f6ede4", muted="#b5a595",
-                  accent="#f97316", accent_fg="#1a0802", accent_text="#f97316", success="#84cc16", warning="#fbbf24", danger="#f87171",
-                  sel_bg="#3a1d08", sel_fg="#ffb066", header_bg="#140c07", header_fg="#f97316", radius=6, title_fonts=("JetBrains Mono", "Bahnschrift", "Consolas", "Segoe UI")),
+    "escuro": dict(name="Dark Alloy", bg="#07090e", panel="#0c0f17", panel2="#161b2c", border="#1e263d", fg="#e2e8f0", muted="#94a3b8", accent="#38bdf8", accent_fg="#04121f", accent_text="#38bdf8", success="#34d399", warning="#fbbf24", danger="#f43f5e", sel_bg="#0c3a57", sel_fg="#ffffff", header_bg="#0c0f17", header_fg="#e2e8f0",
+        **_BASE),
+    "claro": dict(name="Claro", bg="#f1f5f9", panel="#ffffff", panel2="#e9eef5", border="#cbd5e1", fg="#0f172a", muted="#475569", accent="#0369a1", accent_fg="#ffffff", accent_text="#0369a1", success="#047857", warning="#b45309", danger="#be123c", sel_bg="#e0f2fe", sel_fg="#0f172a", header_bg="#ffffff", header_fg="#0f172a",
+        **_BASE),
+    "milspec": dict(name="Mil-Spec", bg="#070a09", panel="#0d1311", panel2="#111916", border="#2a4536", fg="#e5e7eb", muted="#8aa597", accent="#22c55e", accent_fg="#04140a", accent_text="#4ade80", success="#4ade80", warning="#f59e0b", danger="#f87171", sel_bg="#243b31", sel_fg="#4ade80", header_bg="#0d1311", header_fg="#4ade80",
+        radius=6, title_fonts=("JetBrains Mono", "Bahnschrift", "Consolas", "Segoe UI")),
+    "cyber": dict(name="Cyber Synthwave", bg="#070814", panel="#0d0f22", panel2="#12142d", border="#1e2348", fg="#e6fbff", muted="#8e97b8", accent="#00f3ff", accent_fg="#001418", accent_text="#00f3ff", success="#4ade80", warning="#fbbf24", danger="#ff3d8b", sel_bg="#2a0a3d", sel_fg="#00f3ff", header_bg="#0d0f22", header_fg="#00f3ff",
+        radius=4, title_fonts=("JetBrains Mono", "Bahnschrift", "Consolas", "Segoe UI")),
+    "vidro": dict(name="Vidro Aero", bg="#030b18", panel="#06132a", panel2="#0a1d3d", border="#1d4d6e", fg="#e0f2fe", muted="#8fbfdf", accent="#38bdf8", accent_fg="#04121f", accent_text="#38bdf8", success="#34d399", warning="#fbbf24", danger="#fb7185", sel_bg="#0f3d66", sel_fg="#ffffff", header_bg="#030b18", header_fg="#e0f2fe",
+        radius=10, title_fonts=("Inter", "Segoe UI Semibold", "Segoe UI")),
+    "brutal": dict(name="Brutalista", bg="#000000", panel="#0b0b0b", panel2="#141414", border="#2a2a2a", fg="#ffffff", muted="#999999", accent="#facc15", accent_fg="#000000", accent_text="#facc15", success="#4ade80", warning="#facc15", danger="#f87171", sel_bg="#262208", sel_fg="#facc15", header_bg="#facc15", header_fg="#000000",
+        radius=0, title_fonts=("Inter", "Bahnschrift", "Arial Black", "Segoe UI")),
+    "obsidiana": dict(name="Obsidiana", bg="#07050d", panel="#0b0816", panel2="#151027", border="#34295c", fg="#f3ecff", muted="#a99dbd", accent="#c084fc", accent_fg="#12081f", accent_text="#c084fc", success="#34d399", warning="#fbbf24", danger="#f43f5e", sel_bg="#2b1646", sel_fg="#f3ecff", header_bg="#07050d", header_fg="#f3ecff",
+        radius=12, title_fonts=("Inter", "Segoe UI Semibold", "Segoe UI")),
+    "mecha": dict(name="Mecha", bg="#080a0e", panel="#0d1117", panel2="#121620", border="#323d53", fg="#e2e8f0", muted="#94a3b8", accent="#f97316", accent_fg="#1a0802", accent_text="#ff8c38", success="#10b981", warning="#f59e0b", danger="#ef4444", sel_bg="#33200f", sel_fg="#fdba74", header_bg="#0d1117", header_fg="#f97316",
+        radius=6, title_fonts=("JetBrains Mono", "Bahnschrift", "Consolas", "Segoe UI")),
 }
 THEME_ORDER = ["escuro", "claro", "milspec", "cyber", "vidro", "brutal", "obsidiana", "mecha"]
 

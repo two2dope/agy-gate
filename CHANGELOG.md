@@ -11,6 +11,9 @@ Pacote visual (plano em `docs/PACOTE_VISUAL_1.1.md`). Marcos M1a (conjuntos de �
 - **Três conjuntos de ícones novos, com as fontes dentro do `.exe`:** Font Awesome Free 6.7.2 (Solid), Bootstrap Icons 1.11.3 e Material Icons 4.0.0. Escolha em Tema > Ícones. As fontes são registradas só para o app: nada é instalado no Windows. Sem a fonte (fora do Windows), os botões usam os símbolos Unicode.
 - Licenças das fontes em `fonts/` e créditos no Sobre. O autoteste do `.exe` no CI confere que as 7 fontes (ícones, Inter e JetBrains Mono) foram registradas.
 
+### Alterado
+- **Cores das 8 skins** refeitas a partir do pacote visual (Stitch). O tema padrão **Escuro** passa a se chamar **Dark Alloy** (azul-preto, paleta Obsidian); a preferência salva continua valendo. O **Claro** vira ardósia com azul-céu, o Mil-Spec ganha o verde tático, o Brutalista troca a borda branca por cinza e a seleção amarela por âmbar escuro. O texto secundário, que ficava abaixo de 4,5:1 nas 8 skins dos mockups, foi reajustado: contraste conferido pelo `test_theme`.
+
 ### Corrigido
 - A janela de andamento do Auto-Run continuava com o título "executando" depois do "Fim.". Agora mostra "concluído", "concluído com problemas" ou "erro".
 - Resumo do Auto-Run no singular quando o número é 1 ("1 retomada", "1 falha").

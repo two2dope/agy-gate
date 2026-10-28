@@ -105,7 +105,7 @@ O que muda em relação a hoje: **Escuro → Dark Alloy** (cinza do VS Code → 
 1. **M1 — fontes e ícones** (M1a e M1b feitos em 27 e 28/10: ícones e fontes; subconjunto latino de ~190 KB, não os 2,5 MB estimados): Inter e JetBrains Mono; Font Awesome Free Solid (SIL OFL 1.1), Bootstrap Icons (MIT; vem em WOFF, converter para TTF) e Material Icons (Apache 2.0); registro privado no Windows (`AddFontResourceExW`, `FR_PRIVATE`) e `--add-data` no PyInstaller; seletor com 6 opções (Windows, Font Awesome, Bootstrap, Material, Unicode, sem ícones); licenças no Sobre e na pasta `licenses/`. Cerca de +2,5 MB no `.exe` [estimativa]. Fecha com o `.exe` do CI conferido no Windows: os glifos não aparecem no Linux deste ambiente.
 2. **M2 — barra lateral e cabeçalho:** categorias com contadores; projetos com sessões e retomadas; abas Todas / Aprovadas aguardando / Arquivadas sobre um filtro único; Ctrl+K na busca; Ctrl+B recolhe a barra; o app abre com a barra aberta.
 3. **M3 — tabela e detalhes:** coluna Consumo; estado com bolinha colorida; modos Compacto (padrão) e Confortável; coluna Ações; cartão de detalhes com medidor e marcas.
-4. **M4 — skins e acabamento:** tokens da tabela acima (Dark Alloy como tema padrão, no lugar do Escuro), fonte e raio por skin, contraste testado; indicador do `agy` e do daemon; ícone autoral do app.
+4. **M4 — skins e acabamento** (tokens das 8 skins feitos em 28/10; faltam o indicador do `agy` e do daemon e o ícone autoral): tokens da tabela acima (Dark Alloy como tema padrão, no lugar do Escuro), fonte e raio por skin, contraste testado; indicador do `agy` e do daemon; ícone autoral do app.
 
 Cada marco fecha com o `.exe` montado no CI e conferência no Windows. O código da 1.1 começa depois do merge da 1.0.2.
 
