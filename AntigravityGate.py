@@ -26,7 +26,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from tkinter import font as tkfont
 
-__version__ = "1.0.2"  # ver CHANGELOG.md
+__version__ = "1.1.0"  # ver CHANGELOG.md
 __build__ = "código-fonte"  # o CI troca pelo commit e pela data da montagem do .exe
 APP_AUTHOR = "Thominha"
 APP_EMAIL = "twoo2dope@gmail.com"
@@ -1571,6 +1571,47 @@ def icon_glyph(mode, name, families):
     return ICONS[name][1]
 
 
+def asset_dir():
+    """Pasta assets/: ao lado do código ou, no .exe, na pasta temporária do PyInstaller."""
+    import sys
+    return os.path.join(getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__))), "assets")
+
+
+def set_app_icon(win):
+    """Ícone do app nas janelas e na barra de tarefas (PNG de 256, 64 e 32 px). Sem os arquivos, fica o ícone padrão do Tk."""
+    try:
+        imgs = [tk.PhotoImage(master=win, file=os.path.join(asset_dir(), f"app-{n}.png")) for n in (256, 64, 32)]
+        win.iconphoto(True, *imgs)
+        win._app_icons = imgs  # o Tk não guarda a referência
+    except (tk.TclError, OSError) as e:
+        log.warning("Ícone do app não carregado: %s", e)
+
+
+def run_key_values():
+    """(nome, comando) das entradas da chave Run do usuário (Windows). None fora do Windows; [] se a chave não abre."""
+    if os.name != "nt":
+        return None
+    try:
+        import winreg
+        out = []
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run") as key:
+            for i in range(winreg.QueryInfoKey(key)[1]):
+                name, data, _kind = winreg.EnumValue(key, i)
+                out.append((name, str(data)))
+        return out
+    except OSError:
+        return []
+
+
+def remote_control_registered(values=None):
+    """O daemon do remote control inicia no login? Procura 'remote-control' na chave Run (o `agy remote-control status` não enxerga
+    esse registro). True/False; None fora do Windows. Mostra o registro, não se o daemon está online."""
+    vals = run_key_values() if values is None else values
+    if vals is None:
+        return None
+    return any("remote-control" in f"{n} {d}".lower() for n, d in vals)
+
+
 def about_info():
     """Versão e ambiente em texto simples, para a janela Sobre e para colar num relato de problema."""
     import platform
@@ -2708,6 +2749,7 @@ class AntigravityGateApp(tk.Tk):
         c = self.settings.get("context") if isinstance(self.settings.get("context"), dict) else {}
         self.limits_custom = (c.get("attention") or att, c.get("critical") or crit)
         self.banner_dismissed = None
+        set_app_icon(self)
         self.fonts_loaded = register_fonts()  # ícones Font Awesome, Bootstrap e Material (Windows; só para este processo)
         self.families = set(tkfont.families(self))
         self.base_family = next((f for f in ("Inter", "Segoe UI", "Helvetica", "DejaVu Sans") if f in self.families),
@@ -3112,6 +3154,17 @@ class AntigravityGateApp(tk.Tk):
         self.proj_box.pack(fill=tk.X)
         self.proj_more = self.themed_widget(tk.Label(self.sidebar, font=self.f_small, anchor="w", padx=self.px(14)), bg="panel", fg="muted")
         self.proj_more.pack(fill=tk.X)
+        # Ambiente (só leitura, sem executar o agy: cada execução abre o editor do Antigravity): agy encontrado e daemon no login.
+        self.env_box = self.themed_widget(tk.Frame(self.sidebar), bg="panel")
+        self.env_box.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, self.px(10)))
+        self.env_agy = self.themed_widget(tk.Label(self.env_box, font=self.f_small, anchor="w", padx=self.px(14)), bg="panel")
+        self.env_rc = self.themed_widget(tk.Label(self.env_box, font=self.f_small, anchor="w", padx=self.px(14)), bg="panel")
+        self.env_agy.pack(fill=tk.X)
+        self.env_rc.pack(fill=tk.X)
+        self.env_state, self.env_tips = (False, None), ("", "")
+        Tooltip(self.env_agy, self, lambda: self.env_tips[0])
+        Tooltip(self.env_rc, self, lambda: self.env_tips[1])
+        self.update_env_status()
 
         # Filtros: fonte das sessões e busca
         self.filter_frame = self.themed_widget(tk.Frame(self, padx=self.px(16), pady=self.px(10)), bg="bg")
@@ -3508,6 +3561,28 @@ class AntigravityGateApp(tk.Tk):
     def repaint_nav(self):
         for w in list(self.side_items.values()) + self.proj_items + list(self.tabs.values()):
             w.repaint()
+        self.paint_env()
+
+    def update_env_status(self):
+        """Lê o ambiente: `agy` no PATH (ou AGY_EXE) e o daemon na chave Run. Roda ao abrir e no Atualizar (F5)."""
+        agy, rc = find_agy(), remote_control_registered()
+        self.env_state = (bool(agy), rc)
+        self.env_tips = (agy or "Não achei o agy no PATH nem em AGY_EXE: o Auto-Run precisa dele. Confira `agy --help` no PowerShell.",
+                         "Procurei 'remote-control' na chave Run do Windows (HKCU, Run): mostra se o daemon inicia no login, não se está online. "
+                         "Para ver se está online, abra o site do Antigravity (instância dev-thomaz). Para registrar: agy remote-control start.")
+        self.paint_env()
+
+    def paint_env(self):
+        if not hasattr(self, "env_agy"):
+            return
+        t, (agy_ok, rc) = self.t, self.env_state
+        self.env_agy.configure(text="● agy encontrado" if agy_ok else "○ agy não encontrado", fg=t['success'] if agy_ok else t['warning'])
+        if rc is None:
+            self.env_rc.pack_forget()
+            return
+        self.env_rc.configure(text="● remoto: inicia no login" if rc else "○ remoto: não inicia no login", fg=t['success'] if rc else t['warning'])
+        if not self.env_rc.winfo_manager():
+            self.env_rc.pack(fill=tk.X)
 
     def toggle_chip_filter(self, key):
         """Selo do rodapé como filtro: mostra só as sessões dele; clicar de novo volta a mostrar todas."""
@@ -4006,6 +4081,7 @@ class AntigravityGateApp(tk.Tk):
 
     def refresh(self):
         """Relê as fontes do disco (pode haver novas pastas) e recarrega a fonte selecionada."""
+        self.update_env_status()
         label = self.sources[self.source_idx][0]
         self.sources = discover_sources()
         self.source_idx = next((i for i, s in enumerate(self.sources) if s[0] == label), 0)
@@ -4502,8 +4578,9 @@ def selftest(out_path):
             primary, at = _win_work_area(), _win_work_area(app.winfo_x() + 50, app.winfo_y() + 50)
             area = f"; área útil principal {primary}, no ponto {at}; barra de título {style_titlebar(app, app.t)}"
         fonts = len(app.fonts_loaded)
+        icon = "ok" if os.path.isfile(os.path.join(asset_dir(), "app-256.png")) and getattr(app, "_app_icons", None) else "AUSENTE"
         app.destroy()
-        msg = f"OK (v{__version__}; {fts}; {fonts} fontes registradas{area})" if done else "FALHA: a carga não terminou em 60 s"
+        msg = f"OK (v{__version__}; {fts}; {fonts} fontes registradas; ícone {icon}{area})" if done else "FALHA: a carga não terminou em 60 s"
     except Exception as e:
         msg = f"FALHA: {type(e).__name__}: {e}"
     with open(out_path, "w", encoding="utf-8") as fh:
