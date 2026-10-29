@@ -2,7 +2,7 @@
 
 **Data de Emissão:** 2026-10-29  
 **Origem:** Sessão de Auditoria e Sincronização do Ecossistema Antigravity (`ece4c25f-16fa-47aa-906a-c1a73abbd058`)  
-**Repositório Alvo:** `two2dope/agy-gate` (`C:\Users\Thomáz\agy-gate`)  
+**Repositório Alvo:** `two2dope/agy-gate` (`C:\Users\Thomáz\Projetos\01_dev-systems\04_apps-games\agy-gate`)  
 **Versão Atual:** `1.0.0` (Monólito Tkinter, `AntigravityGate.py`)  
 **Ponto de Retomada:** Decisão arquitetural de escopo (Abordagem 1: Doctor Passivo vs Abordagem 2: Reparo Assistido)  
 
@@ -40,7 +40,7 @@ A investigação de baixo nível revelou regras internas essenciais que o `agy-g
 
 ## 3. Diretrizes Arquiteturais para a Implementação
 
-Ao iniciar o trabalho no chat novo dentro da pasta `C:\Users\Thomáz\agy-gate`:
+Ao iniciar o trabalho no chat novo dentro da pasta `C:\Users\Thomáz\Projetos\01_dev-systems\04_apps-games\agy-gate`:
 
 1. **Preservar o Invariante de Segurança da v1.0.0:**
    - A v1.0.0 é confiável porque **apenas lê** os bancos do Antigravity (`mode=ro`).
