@@ -1,4 +1,4 @@
-# HANDOFF TÉCNICO: EVOLUÇÃO DO AGY-GATE (ECOSYSTEM GUARDIAN)
+# Handoff Técnico: Evolução do `agy-gate` (Ecosystem Guardian)
 
 **Data de Emissão:** 2026-10-29  
 **Origem:** Sessão de Auditoria e Sincronização do Ecossistema Antigravity (`ece4c25f-16fa-47aa-906a-c1a73abbd058`)  
@@ -34,6 +34,7 @@ A investigação de baixo nível revelou regras internas essenciais que o `agy-g
 | **Filtro Redux UI (`main.js`)** | `Fna(source)` descarta se `source != 0, 18, 20`. Se `source = 1` ou `17`, move para `externalSummaries`. | Conversas somem da barra lateral do VS Code e da tela inicial. | Auditar e alertar quando houver sessões com `source != 0`. |
 | **Dualidade de Protobuf Caches** | IDE/VS Code (`--hub`) lê `agyhub_summaries_proto.pb`. Desktop lê `jetbox_summaries_proto.pb`. | Divergência de títulos e sumários entre IDE e Desktop. | Validação de consistência e sincronização espelhada dos dois arquivos. |
 | **Reconciliação do Daemon (`reconcile_summaries.go`)** | O daemon cruza `conversation_summaries.db` com a pasta física `conversations/`. Sessões ausentes no disco são expurgadas da memória. | Remote Control móvel abre vazio ou rejeita sessões (`trajectory not found in any store`). | Verificação de integridade das Junções NTFS (`conversations` e `brain`). |
+| **Manifestos de Projetos (`config/projects/*.json`)** | Armazena array de UUIDs de conversas (`projectConversations.conversations`). Desalinhamento com SQLite causa omissão de pastas no IDE. | Conversas não agrupam em pastas de projetos na UI ou sofrem duplicação de nós. | Auditoria de consistência bidirecional entre `config/projects/*.json` e SQLite `conversation_summaries.db`. |
 | **Separação Multi-Tenant (`app_data_dir`)** | O SQLite `conversation_summaries.db` filtra por `app_data_dir = 'antigravity'` ou `'antigravity-cli'`. | Registros com `app_data_dir` divergente não são retornados nas consultas do Language Server. | Checagem de paridade do campo `app_data_dir` em ambos os bancos. |
 
 ---
@@ -46,7 +47,7 @@ Ao iniciar o trabalho no chat novo dentro da pasta `C:\Users\Thomáz\Projetos\01
    - A v1.0.0 é confiável porque **apenas lê** os bancos do Antigravity (`mode=ro`).
    - Qualquer nova funcionalidade de reparo ativo deve ser estritamente opcional, com confirmação e verificação de que os processos do Antigravity (`Antigravity IDE.exe`, `language_server.exe`, `agy.exe`) estão fechados antes de tocar no disco.
 2. **Modularização contra o Inchaço do Monólito:**
-   - [`AntigravityGate.py`](file:///C:/Users/Thom%C3%A1z/agy-gate/AntigravityGate.py) já possui ~5.000 linhas (206 KB).
+   - [`AntigravityGate.py`](file:///C:/Users/Thom%C3%A1z/Projetos/01_dev-systems/04_apps-games/agy-gate/AntigravityGate.py) já possui ~5.000 linhas (206 KB).
    - Não injetar rotinas de diagnóstico ou reparo no meio do monólito. Criar um módulo limpo e desacoplado: `tools/ecosystem_doctor.py` ou `gate_doctor.py`.
 3. **Compatibilidade com o Linux CI (`tests/run_all.sh`):**
    - O CI roda em Linux com `xvfb` usando bancos sintéticos.
