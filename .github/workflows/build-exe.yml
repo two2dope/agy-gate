@@ -72,7 +72,7 @@ jobs:
         run: python -m pip install --upgrade pip "pyinstaller==6.22.3"  # versão fixa: montagem reproduzível
 
       - name: Gerar o .exe
-        run: pyinstaller --noconfirm --clean --onefile --windowed --name AntigravityGate AntigravityGate.py
+        run: pyinstaller --noconfirm --clean --onefile --windowed --add-data "fonts;fonts" --add-data "assets;assets" --icon assets/app.ico --name AntigravityGate AntigravityGate.py
 
       - name: Teste de fumaça (abre o .exe sem janela e confere a carga)
         shell: pwsh
@@ -84,6 +84,8 @@ jobs:
           $p = Start-Process -FilePath ".\dist\AntigravityGate.exe" -ArgumentList "--selftest", "`"$out`"" -Wait -PassThru
           if (Test-Path $out) { Get-Content $out } else { Write-Host "O .exe não gravou o resultado do autoteste" }
           if ($p.ExitCode -ne 0 -or -not (Test-Path $out) -or -not ((Get-Content $out -Raw) -like "OK*")) { throw "Autoteste do .exe falhou (código $($p.ExitCode))" }
+          if ((Get-Content $out -Raw) -notmatch "ícone ok") { throw "O .exe não achou o ícone do app (assets/ fora do pacote?)" }
+          if ((Get-Content $out -Raw) -notmatch "7 fontes registradas") { throw "O .exe não registrou as 7 fontes (ícones, Inter e JetBrains Mono) (fonts/ fora do pacote?)" }
 
       - name: Impressão digital (SHA-256) e tamanho
         id: hash

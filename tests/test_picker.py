@@ -24,14 +24,14 @@ def iid(a, n): return next(i for i in a.iter_sessions() if a.cid_of(i) == U(n))
 import subprocess, tkinter as tk
 app = G.AntigravityGateApp(); app.geometry("1240x720+0+0"); wait(app)
 btn = app.btn['theme']
-assert app.theme_picker is None and btn.text == "Escuro ▾", btn.text
+assert app.theme_picker is None and btn.text == "Dark Alloy ▾", btn.text
 
 # abre: 8 temas + 3 modos de ícone, atual selecionado
 btn.command(); app.update()
 p = app.theme_picker; assert isinstance(p, G.ThemePicker) and p.winfo_exists()
-assert len(p.rows) == 8 + 3, len(p.rows)
+assert len(p.rows) == 8 + len(p.ICON_MODES) + len(p.DENSITIES) == 16, len(p.rows)  # 8 temas + 6 estilos de ícones + 2 densidades (1.1)
 assert [r[3] for r in p.rows[:8]].count(True) == 1 and p.rows[0][3] and p.cur == 0
-assert sum(1 for r in p.rows[8:] if r[3]) == 1
+assert sum(1 for r in p.rows[8:14] if r[3]) == 1 and [r[3] for r in p.rows[14:]] == [True, False], 'um estilo de ícones e a tabela compacta marcados'
 # dentro da janela e alinhado ao botão
 assert p.winfo_rootx() >= 0 and p.winfo_rooty() >= btn.winfo_rooty() + btn.winfo_height()
 # clicar de novo no botão fecha (alterna)
@@ -54,7 +54,7 @@ p.event_generate("<Escape>"); app.update(); assert app.theme_picker is None
 
 # clique no item de ícone (não troca o tema)
 app.show_theme_menu(); app.update(); p = app.theme_picker
-p.choose(len(p.rows) - 1); app.update(); wait(app)
+p.choose(8 + len(p.ICON_MODES) - 1); app.update(); wait(app)
 assert app.icon_mode == "none" and app.theme_key == "cyber" and app.settings['icons'] == "none"
 app.set_icon_mode("symbol")
 

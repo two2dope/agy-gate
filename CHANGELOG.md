@@ -2,6 +2,34 @@
 
 Formato: [Versionamento Semântico](https://semver.org/lang/pt-BR/). Enquanto a versão começar com 0, o app está em candidato a lançamento: funciona, mas faltam itens listados abaixo.
 
+## [1.1.0] - 2026-10-29
+
+Pacote visual (plano em `docs/PACOTE_VISUAL_1.1.md`). Marcos M1 (ícones e fontes), M2 (barra lateral), M3 (tabela) e M4 (cores, ambiente e ícone do app).
+
+### Adicionado
+- **Fontes Inter (interface) e JetBrains Mono (texto de código, andamento do Auto-Run e títulos do Mil-Spec, Cyber e Mecha)**, dentro do `.exe` (subconjunto latino, cerca de 190 KB, SIL OFL 1.1). Sem elas (fora do Windows), o app usa Segoe UI e Consolas, como antes.
+- **Três conjuntos de ícones novos, com as fontes dentro do `.exe`:** Font Awesome Free 6.7.2 (Solid), Bootstrap Icons 1.11.3 e Material Icons 4.0.0. Escolha em Tema > Ícones. As fontes são registradas só para o app: nada é instalado no Windows. Sem a fonte (fora do Windows), os botões usam os símbolos Unicode.
+- Licenças das fontes em `fonts/` e créditos no Sobre. O autoteste do `.exe` no CI confere que as 7 fontes (ícones, Inter e JetBrains Mono) foram registradas.
+
+- **Barra lateral** (220 px, aberta ao iniciar): categorias (pendentes, em atenção, críticas, aprovadas, arquivadas) com contagem e projetos com contagem. Clicar numa categoria filtra a tabela (é o mesmo filtro dos selos do rodapé); clicar num projeto leva a tabela até ele. Ctrl+B recolhe; abaixo de 900 px de largura ela se esconde sozinha.
+- **Abas no cabeçalho:** Todas as sessões, **Aprovadas aguardando** (aprovadas ainda sem retomada: o que o Auto-Run vai pegar, com a contagem) e Arquivadas. São atalhos para o mesmo filtro: um só filtro vale de cada vez, marcado nas abas, na barra lateral e nos selos. Abaixo de 1000 px as abas somem.
+- **Ctrl+K** vai ao campo de busca (como o Ctrl+F).
+- **Coluna Consumo** (antes Contexto): tokens, % do nível crítico, medidor de 5 células (eram 6) e a marca ⚠ ou ‼.
+- **Densidade da tabela** em Tema > Tabela: **compacta** (1 linha por sessão, padrão) ou **confortável** (2 linhas: data e hora; tokens e %, medidor e faixa). Lembrada entre execuções.
+- **Coluna ⋮ (Ações):** clicar abre o menu da sessão, como o botão direito.
+- A coluna **Agente** deixou de aparecer na tabela (o agente continua nos detalhes e na busca) e as larguras das colunas diminuíram: com a barra lateral aberta, as colunas até ⋮ cabem numa janela de 1300 px.
+
+- **Ícone do app** (um portal em arco com o medidor de três níveis): no `.exe`, na barra de tarefas e nas janelas. Gerado por `tools/make_icon.py`.
+- **Ambiente na barra lateral:** mostra se o `agy` foi encontrado e se o daemon do remote control inicia no login (procura `remote-control` na chave Run do Windows). Só leitura: não executa o `agy`, que abre o editor a cada chamada. Atualiza com F5. Mostra o registro, não se o daemon está online.
+
+### Alterado
+- **Cores das 8 skins** refeitas a partir do pacote visual (Stitch). O tema padrão **Escuro** passa a se chamar **Dark Alloy** (azul-preto, paleta Obsidian); a preferência salva continua valendo. O **Claro** vira ardósia com azul-céu, o Mil-Spec ganha o verde tático, o Brutalista troca a borda branca por cinza e a seleção amarela por âmbar escuro. O texto secundário, que ficava abaixo de 4,5:1 nas 8 skins dos mockups, foi reajustado: contraste conferido pelo `test_theme`.
+
+### Corrigido
+- A janela de andamento do Auto-Run continuava com o título "executando" depois do "Fim.". Agora mostra "concluído", "concluído com problemas" ou "erro".
+- Resumo do Auto-Run no singular quando o número é 1 ("1 retomada", "1 falha").
+- A lupa da busca não acompanhava a troca do estilo de ícones.
+
 ## [1.0.2] - 2026-10-27
 
 Alerta de contexto em destaque. Entra no lugar do item 8 do backlog (divisor de altura entre a tabela e os detalhes).

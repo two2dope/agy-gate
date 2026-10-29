@@ -41,8 +41,8 @@ try:
     t = dict(G.THEMES["milspec"]); res = G.style_titlebar(app, t)
     assert res == {"escuro": 0, "fundo": 0, "texto": 0, "borda": 0}, res
     by = {a: v for (_h, a, v, _s) in calls}
-    assert by[20] == 1 and by[35] == 0x32 << 16 | 0x27 << 8 | 0x23 and by[36] == 0xf1 | 0xf5 << 8 | 0xf9 << 16, by   # header_bg #232732, header_fg #f1f5f9
-    assert by[34] == 0x3c | 0x42 << 8 | 0x50 << 16 and all(h == 4242 and s == 4 for (h, _a, _v, s) in calls)
+    assert by[20] == 1 and by[35] == 0x11 << 16 | 0x13 << 8 | 0x0d and by[36] == 0x4a | 0xde << 8 | 0x80 << 16, by   # header_bg #0d1311, header_fg #4ade80
+    assert by[34] == 0x2a | 0x45 << 8 | 0x36 << 16 and all(h == 4242 and s == 4 for (h, _a, _v, s) in calls)   # border #2a4536
     assert pos and pos[0][-1] == 0x37
     calls.clear(); G.style_titlebar(app, dict(G.THEMES["claro"])); assert {a: v for (_h, a, v, _s) in calls}[20] == 0
     # Windows sem suporte (HRESULT de erro): cai para o atributo antigo e não levanta

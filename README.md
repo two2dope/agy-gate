@@ -4,7 +4,7 @@ Aplicativo de janela (Windows) para **gerir o contexto e curar as conversas do A
 
 O app só **lê** os bancos do Antigravity. O que ele grava (estado, log, exportações) fica em `%LOCALAPPDATA%\AntigravityGate\`.
 
-Versão atual: **1.0.2**. Veja o [CHANGELOG](CHANGELOG.md).
+Versão atual: **1.1.0**. Veja o [CHANGELOG](CHANGELOG.md).
 
 ## Como usar (sem instalar nada)
 
@@ -19,10 +19,12 @@ A conferência da integridade do download: a Release mostra o SHA-256 do `.exe`.
 
 - Tabela de sessões por projeto, com sub-agentes, contexto em tokens (medidor), passos e falhas de ferramenta.
 - **Limites de contexto** (botão Limites): três faixas prontas e uma personalizada. Alerta acima da tabela em dois níveis: crítico (vermelho, em destaque) e atenção (âmbar).
+- Barra lateral (categorias e projetos, Ctrl+B) e abas no cabeçalho (Todas, Aprovadas aguardando, Arquivadas) sobre um filtro só.
+- Coluna Consumo (tokens, % do nível crítico, medidor) e tabela compacta ou confortável; coluna ⋮ com o menu da sessão.
 - Painel de detalhes, busca (inclusive no conteúdo das conversas), ordenação e menu de contexto.
 - **Diálogo completo** e **dossiê de retomada** em Markdown, com lista de arquivos alterados e consultados. O dossiê mascara chaves e senhas por padrões conhecidos (heurística: confira antes de compartilhar).
 - **Auto-Run**: abre uma sessão nova no `agy` com o dossiê das sessões aprovadas, no projeto e na pasta da sessão original (modo simulação disponível). O app não grava nos bancos do Antigravity, mas cada sessão nova que o `agy` cria fica neles.
-- 8 temas, botões com ícones e estados, barra de título que segue o tema.
+- 8 temas; ícones em 6 estilos (Windows, Font Awesome, Bootstrap, Material, Unicode ou nenhum), com as fontes dentro do `.exe`; barra de título que segue o tema.
 
 ## Rodar a partir do código
 
@@ -41,7 +43,7 @@ tests/run_all.sh              # todos
 tests/run_all.sh test_theme   # um só
 ```
 
-São 25 conjuntos (leitura, exportação, Auto-Run com `agy` simulado, salvaguardas do Auto-Run e do fechamento, temas e contraste, janelas e interface). Usam bancos sintéticos; não tocam nos seus dados. Foram escritos e validados em Linux com Xvfb; não foram validados no Windows (o `agy` simulado usa a linha `#!` do arquivo).
+São 29 conjuntos (leitura, exportação, Auto-Run com `agy` simulado, salvaguardas do Auto-Run e do fechamento, temas e contraste, janelas e interface). Usam bancos sintéticos; não tocam nos seus dados. Foram escritos e validados em Linux com Xvfb; não foram validados no Windows (o `agy` simulado usa a linha `#!` do arquivo).
 
 ## Gerar o `.exe` e publicar uma versão
 
@@ -57,6 +59,8 @@ São 25 conjuntos (leitura, exportação, Auto-Run com `agy` simulado, salvaguar
 |---|---|
 | `AntigravityGate.py` | o app inteiro (arquivo único) |
 | `tests/` | testes e o `agy` simulado |
+| `assets/` | ícone do app (`app.ico` e PNGs; `tools/make_icon.py` os gera) |
+| `fonts/` | fontes de ícones, Inter e JetBrains Mono (empacotadas no `.exe`) e suas licenças |
 | `tools/` | scripts de inspeção da estrutura dos bancos (sem conteúdo) |
 | `docs/ESTADO_DO_PROJETO.md` | estado do projeto, decisões, formato dos bancos, contrato do `agy` |
 | `docs/PACOTE_VISUAL_1.1.md` | avaliação dos mockups da interface nova e plano da 1.1 |
