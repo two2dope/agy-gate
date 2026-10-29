@@ -2,7 +2,7 @@
 
 Formato: [Versionamento Semântico](https://semver.org/lang/pt-BR/). Enquanto a versão começar com 0, o app está em candidato a lançamento: funciona, mas faltam itens listados abaixo.
 
-## [1.1.0] - 2026-10-28
+## [1.1.0] - 2026-10-29
 
 Pacote visual (plano em `docs/PACOTE_VISUAL_1.1.md`). Marcos M1 (ícones e fontes), M2 (barra lateral), M3 (tabela) e M4 (cores, ambiente e ícone do app).
 
