@@ -845,6 +845,9 @@ def export_session(kind, fpath, meta, out_path, progress=None):
 
 # --- estado de aprovação (banco próprio) -----------------------------------------------------
 
+HANDOFF_EXTRA = (("model", "TEXT"), ("cwd", "TEXT"), ("project", "TEXT"), ("duration", "REAL"), ("turns", "INTEGER"), ("usage", "TEXT"), ("response", "TEXT"))
+
+
 class StateStore:
     """Status por sessão (pendente/aprovada/arquivada) + histórico, em gate_state.db.
     Se o arquivo não puder ser criado, cai para memória e `persistent` fica False."""
@@ -883,6 +886,10 @@ class StateStore:
             conn.execute("CREATE TABLE IF NOT EXISTS state_log(id INTEGER PRIMARY KEY AUTOINCREMENT, cid TEXT NOT NULL, status TEXT NOT NULL, at TEXT NOT NULL)")
             conn.execute("CREATE TABLE IF NOT EXISTS handoffs(id INTEGER PRIMARY KEY AUTOINCREMENT, src_cid TEXT NOT NULL, new_cid TEXT, "
                          "dossier_path TEXT, status TEXT NOT NULL, detail TEXT, at TEXT NOT NULL)")
+            have = {r[1] for r in conn.execute("PRAGMA table_info(handoffs)")}
+            for col, kind in HANDOFF_EXTRA:  # recibo de retomada (1.2): colunas novas em bancos antigos
+                if col not in have:
+                    conn.execute(f"ALTER TABLE handoffs ADD COLUMN {col} {kind}")
             # Versões até 2026-10-26 aceitavam SUCCESS sem resposta (o agy não conseguia ler o dossiê). Uma retomada real
             # sempre traz resposta: 'ok' sem detalhe vira erro, e a sessão vazia criada vai para arquivadas se o usuário
             # não tiver marcado outra coisa. Idempotente.
@@ -901,11 +908,24 @@ class StateStore:
         with self._connect() as c:
             return dict(c.execute("SELECT cid, status FROM session_state").fetchall())
 
-    def add_handoff(self, src_cid, new_cid, dossier_path, status, detail=''):
+    def add_handoff(self, src_cid, new_cid, dossier_path, status, detail='', **extra):
+        """Registra uma tentativa de retomada. `extra`: campos do recibo (HANDOFF_EXTRA); os None não são gravados."""
+        cols = ["src_cid", "new_cid", "dossier_path", "status", "detail", "at"]
+        vals = [src_cid, new_cid, dossier_path, status, detail[:500], datetime.now().strftime('%Y-%m-%d %H:%M:%S')]
+        for col, _kind in HANDOFF_EXTRA:
+            if extra.get(col) is not None:
+                cols.append(col)
+                vals.append(json.dumps(extra[col]) if col == "usage" and not isinstance(extra[col], str) else extra[col])
         with self._connect() as c:
             with c:
-                c.execute("INSERT INTO handoffs(src_cid, new_cid, dossier_path, status, detail, at) VALUES(?,?,?,?,?,?)",
-                          (src_cid, new_cid, dossier_path, status, detail[:500], datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+                c.execute(f"INSERT INTO handoffs({', '.join(cols)}) VALUES({', '.join('?' * len(cols))})", vals)
+
+    def handoff_record(self, src_cid):
+        """Linha completa da retomada concluída mais recente da sessão (dict), ou None."""
+        with self._connect() as c:
+            cur = c.execute("SELECT * FROM handoffs WHERE src_cid=? AND status='ok' ORDER BY id DESC LIMIT 1", (src_cid,))
+            row = cur.fetchone()
+            return dict(zip([d[0] for d in cur.description], row)) if row else None
 
     def handoffs_ok(self):
         """src_cid -> new_cid da retomada concluída mais recente."""
@@ -1113,10 +1133,14 @@ def parse_agy_output(stdout, stderr, returncode=None):
     blob = f"{stdout}\n{stderr}"
     quota = "RESOURCE_EXHAUSTED" in blob or "quota reached" in blob.lower() or '"error_code":429' in blob.replace(" ", "")
     m = re.search(r"Resets in ([0-9hms ]+?)(?:\.|\"|$|\n)", blob)
-    res = {'ok': False, 'conversation_id': '', 'response': '', 'error': '', 'quota': quota, 'reset': m.group(1).strip() if m else ''}
+    res = {'ok': False, 'conversation_id': '', 'response': '', 'error': '', 'quota': quota, 'reset': m.group(1).strip() if m else '',
+           'duration': None, 'turns': None, 'usage': None}
     if isinstance(obj, dict):
         res['conversation_id'] = str(obj.get('conversation_id') or '')
         res['response'] = str(obj.get('response') or '')
+        res['duration'] = obj['duration_seconds'] if isinstance(obj.get('duration_seconds'), (int, float)) else None
+        res['turns'] = obj['num_turns'] if isinstance(obj.get('num_turns'), int) else None
+        res['usage'] = obj['usage'] if isinstance(obj.get('usage'), dict) else None
         res['error'] = str(obj.get('error') or '')
         if not res['error'] and str(obj.get('status', '')).upper() == 'ERROR':
             res['error'] = "agy informou status ERROR sem mensagem"
@@ -1233,8 +1257,8 @@ class AutoRunner:
                 continue
             self.log_cb(f"    dossiê: {dossier}")
             project, dirs, cwd = self._target(it)
-            self.log_cb(f"    pasta: {cwd} · projeto: " + (f"{it['meta'].get('project') or project} (--project)" if project
-                                                             else "CLI Project (sem --project: a sessão original não tem projeto em config/projects)"))
+            proj_label = f"{it['meta'].get('project') or project} (--project)" if project else "CLI Project (sem --project)"
+            self.log_cb(f"    pasta: {cwd} · projeto: " + (proj_label if project else "CLI Project (sem --project: a sessão original não tem projeto em config/projects)"))
             if self.dry_run:
                 self.store.add_handoff(cid, '', dossier, 'dossie', 'simulação: agy não foi chamado')
                 summary['dossier'] += 1
@@ -1274,7 +1298,8 @@ class AutoRunner:
                 res = parse_agy_output(out, err, code)
                 new_cid = res['conversation_id']
                 if res['ok']:
-                    self.store.add_handoff(cid, new_cid, dossier, 'ok', res['response'][:300])
+                    self.store.add_handoff(cid, new_cid, dossier, 'ok', res['response'][:300], model=self.model or '', cwd=cwd, project=proj_label,
+                                           duration=res['duration'], turns=res['turns'], usage=res['usage'], response=res['response'])
                     summary['ok'] += 1
                     failures = 0
                     self.log_cb(f"    ✔ sessão nova: {new_cid or '(sem id)'}")
@@ -2550,6 +2575,121 @@ class ThemePicker(tk.Toplevel):
         self.destroy()
 
 
+def receipt_fields(rec, src=None):
+    """(campos, resposta, nota) do recibo de uma retomada. Campos que a versão da época não gravava aparecem como 'não registrado'."""
+    missing = "não registrado (retomada de versão anterior à 1.2)"
+    try:
+        usage = json.loads(rec.get('usage') or "{}")
+    except (TypeError, ValueError):
+        usage = {}
+    names = (("input_tokens", "entrada"), ("output_tokens", "saída"), ("thinking_tokens", "raciocínio"), ("cache_read_tokens", "cache"), ("total_tokens", "total"))
+    toks = ", ".join(f"{label} {usage[k]:,}".replace(",", ".") for k, label in names if isinstance(usage.get(k), int))
+    dossier = rec.get('dossier_path') or ""
+    new_format = rec.get('model') is not None
+    d = rec.get('duration')
+    fields = [
+        ("Retomada em", rec.get('at') or "-"),
+        ("Estado", "concluída" if rec.get('status') == 'ok' else str(rec.get('status'))),
+        ("Sessão original", f"{src['title']} ({rec['src_cid']})" if src else rec['src_cid']),
+        ("Projeto original", (src or {}).get('project') or "-"),
+        ("Sessão nova", rec.get('new_cid') or "-"),
+        ("Modelo", (rec['model'] or "padrão do agy") if new_format else missing),
+        ("Modo do agy", "plan (somente leitura)" if new_format else missing),
+        ("Pasta de trabalho", rec.get('cwd') or missing),
+        ("Projeto na retomada", rec.get('project') or missing),
+        ("Duração", f"{d:.1f} s".replace(".", ",") if isinstance(d, (int, float)) else missing),
+        ("Turnos", str(rec['turns']) if rec.get('turns') is not None else missing),
+        ("Tokens", toks or missing),
+        ("Dossiê", (dossier + ("" if os.path.isfile(dossier) else "  (arquivo não encontrado)")) if dossier else "-"),
+    ]
+    response, note = rec.get('response') or "", ""
+    if not response:
+        response = rec.get('detail') or ""
+        note = "Trecho de até 300 caracteres: as retomadas de versões anteriores à 1.2 guardam só o início da resposta." if response else ""
+    return fields, redact(response), note
+
+
+def receipt_markdown(rec, src=None):
+    """Recibo de retomada em Markdown (o texto da janela e do arquivo salvo). A resposta passa pela máscara de segredos."""
+    fields, response, note = receipt_fields(rec, src)
+    out = ["# Recibo de retomada", ""] + [f"- **{k}:** {v}" for k, v in fields] + ["", "## Resposta do agy", ""]
+    if note:
+        out += [f"_{note}_", ""]
+    out.append(response or "(sem resposta registrada)")
+    return "\n".join(out) + "\n"
+
+
+class ReceiptDialog(tk.Toplevel):
+    """Recibo de retomada: o que o Auto-Run fez com uma sessão (sessão nova, modelo, pasta, projeto, dossiê, tempo, tokens, resposta).
+    Dá para selecionar e copiar qualquer trecho, copiar tudo e salvar em Markdown."""
+
+    def __init__(self, app, rec, src=None):
+        super().__init__(app)
+        self.app, self.rec, self.md = app, rec, receipt_markdown(rec, src)
+        t = app.t
+        self.title("Recibo de retomada")
+        self.transient(app)
+        self.configure(bg=t['panel'], padx=app.px(14), pady=app.px(12))
+        tk.Label(self, text="Recibo de retomada", font=app.f_title, bg=t['panel'], fg=t['fg'], anchor="w").pack(fill=tk.X)
+        tk.Label(self, text="O que o Auto-Run fez com esta sessão. Selecione e copie qualquer trecho, ou salve o recibo em arquivo.",
+                 font=app.f_small, bg=t['panel'], fg=t['muted'], anchor="w", justify=tk.LEFT, wraplength=app.px(680)).pack(fill=tk.X, pady=(2, 8))
+        indent = app.px(150)
+        self.text = tk.Text(self, wrap=tk.WORD, font=app.f_ui, bg=t['panel2'], fg=t['fg'], relief=tk.FLAT, highlightthickness=1,
+                            highlightbackground=t['border'], highlightcolor=t['accent'], padx=app.px(10), pady=app.px(8), width=84, height=20,
+                            tabs=(indent,), selectbackground=t['sel_bg'], selectforeground=t['sel_fg'], insertbackground=t['fg'])
+        self.text.tag_configure("k", font=app.f_bold, foreground=t['muted'])
+        self.text.tag_configure("row", lmargin2=indent)  # linha quebrada alinha com o valor
+        self.text.tag_configure("h", font=app.f_bold, foreground=t['accent_text'], spacing1=app.px(10), spacing3=app.px(2))
+        fields, response, note = receipt_fields(rec, src)
+        for label, value in fields:
+            self.text.insert(tk.END, label, ("k", "row"))
+            self.text.insert(tk.END, f"\t{value}\n", ("row",))
+        self.text.insert(tk.END, "Resposta do agy\n", "h")
+        if note:
+            self.text.insert(tk.END, note + "\n", "k")
+        self.text.insert(tk.END, (response or "(sem resposta registrada)") + "\n")
+        self.text.configure(state=tk.NORMAL)
+        self.text.bind("<Key>", lambda e: None if (e.state & 0x4 and e.keysym.lower() in ("c", "a")) else "break")  # só leitura, mas copia
+        self.text.pack(fill=tk.BOTH, expand=True)
+        row = tk.Frame(self, bg=t['panel'])
+        row.pack(fill=tk.X, pady=(app.px(10), 0))
+        IconButton(row, app, "copy", "Copiar", self.copy, bg_token="panel").pack(side=tk.LEFT)
+        IconButton(row, app, "export", "Salvar recibo…", self.save, bg_token="panel", kind="primary").pack(side=tk.LEFT, padx=(app.px(8), 0))
+        IconButton(row, app, "folder", "Abrir pasta do dossiê", self.open_dossier, bg_token="panel").pack(side=tk.LEFT, padx=(app.px(8), 0))
+        IconButton(row, app, "", "Fechar", self.destroy, bg_token="panel").pack(side=tk.RIGHT)
+        self.bind("<Escape>", lambda e: self.destroy())
+        place_over(self, app)
+        self.lift()
+        self.focus_force()
+
+    def copy(self):
+        self.app.clipboard_clear()
+        self.app.clipboard_append(self.md)
+        self.app.notify("ok", "Recibo copiado.")
+
+    def save(self):
+        os.makedirs(EXPORT_DIR, exist_ok=True)
+        name = f"AntigravityGate_recibo_{self.rec['src_cid'][:8]}_{(self.rec.get('new_cid') or 'sem-id')[:8]}.md"
+        out = filedialog.asksaveasfilename(parent=self, title="Salvar recibo de retomada", initialdir=EXPORT_DIR, initialfile=name,
+                                           defaultextension=".md", filetypes=[("Markdown", "*.md"), ("Texto", "*.txt"), ("Todos os arquivos", "*.*")])
+        if not out:
+            return
+        try:
+            with open(out, "w", encoding="utf-8") as fh:
+                fh.write(self.md)
+        except OSError as e:
+            messagebox.showerror("Recibo", f"Não foi possível salvar o recibo: {e}", parent=self)
+            return
+        self.app.notify("ok", f"Recibo salvo: {out}")
+
+    def open_dossier(self):
+        d = self.rec.get('dossier_path') or ""
+        if d and os.path.isdir(os.path.dirname(d)):
+            self.app.open_path(os.path.dirname(d))
+        else:
+            messagebox.showinfo("Recibo", "A pasta do dossiê não existe mais neste computador.", parent=self)
+
+
 class AboutDialog(tk.Toplevel):
     """Sobre: versão, autor, links e diagnóstico do ambiente, com botão para copiar tudo."""
 
@@ -3774,6 +3914,8 @@ class AntigravityGateApp(tk.Tk):
             v = self.themed_widget(tk.Label(self.d_facts, font=self.f_ui, anchor="w", justify=tk.LEFT), bg="panel", fg="fg")
             v.grid(row=r, column=c + 1, sticky="w", pady=1)
             self.fact_vals[key] = v
+        self.fact_vals['handoff'].configure(cursor="hand2")  # clicar abre o recibo da retomada
+        self.fact_vals['handoff'].bind("<Button-1>", lambda e: self.show_receipt())
         self.fact_tips = {}
         for key, col in (("fails", "col_fail"), ("ws", "ws"), ("handoff", "#0"), ("state", "#0")):
             self.fact_tips[key] = Tooltip(self.fact_vals[key], self, lambda c=col: (self.cell_tip(self.selected_row(), c) if self.selected_row() else ""))
@@ -3978,7 +4120,8 @@ class AntigravityGateApp(tk.Tk):
         F['date'].configure(text=f"{r['date']}  ·  {rel_time(r['date'])}".rstrip(" ·"))
         F['size'].configure(text=r['size'])
         F['fails'].configure(text=(f"⚠ {r['failures']} ferramenta(s)" if r['failures'] else "nenhuma"), fg=t['warning'] if r['failures'] else t['fg'])
-        F['handoff'].configure(text=(f"↪ {self.handoffs[cid][:8]}" if self.handoffs.get(cid) else "-"))
+        F['handoff'].configure(text=(f"↪ {self.handoffs[cid][:8]}  ·  ver recibo" if self.handoffs.get(cid) else "-"),
+                               fg=t['accent_text'] if self.handoffs.get(cid) else t['fg'])
         F['origin'].configure(text=r['origin'] or "-")
 
     # --- ordenação, busca, menu de contexto ---
@@ -4058,10 +4201,23 @@ class AntigravityGateApp(tk.Tk):
             m.add_command(label="Abrir pasta do banco", command=lambda: self.open_folder(iid))
             m.add_command(label="Exportar diálogo", command=self.open_selected)
             m.add_command(label="Dossiê de retomada", command=lambda: self.start_export('dossier'))
+            if self.handoffs.get(self.cid_of(iid)):
+                m.add_command(label="Ver recibo da retomada", command=lambda: self.show_receipt(self.cid_of(iid)))
             m.add_separator()
         for status, text in (("aprovada", "✔ Aprovar"), ("arquivada", "▣ Arquivar"), ("pendente", "↩ Pendente")):
             m.add_command(label=text, command=lambda st=status: self.mark_selected(st))
         return m
+
+    def show_receipt(self, cid=None):
+        """Recibo da retomada da sessão (a selecionada, se não vier `cid`): janela com os detalhes, copiar e salvar."""
+        if not cid:
+            ids = self.selected_session_ids()
+            cid = self.cid_of(ids[0]) if ids else ""
+        rec = self.state.handoff_record(cid) if cid else None
+        if not rec:
+            messagebox.showinfo("Recibo de retomada", "Esta sessão ainda não foi retomada pelo Auto-Run.")
+            return None
+        return ReceiptDialog(self, rec, self.row_by_cid.get(cid))
 
     def copy_uuid(self, iid):
         self.clipboard_clear()

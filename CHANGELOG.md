@@ -2,6 +2,13 @@
 
 Formato: [Versionamento Semântico](https://semver.org/lang/pt-BR/). Enquanto a versão começar com 0, o app está em candidato a lançamento: funciona, mas faltam itens listados abaixo.
 
+## [1.2.0] - em desenvolvimento
+
+Ajustes pedidos depois de usar a 1.1.0. Marco M1: recibo de retomada.
+
+### Adicionado
+- **Recibo de retomada.** Na sessão retomada, clicar em "↪ … ver recibo" nos detalhes (ou "Ver recibo da retomada" no menu da sessão) abre o recibo: sessão original e nova, projeto, modelo, pasta de trabalho, duração, turnos, tokens, dossiê e a resposta completa do agy. Dá para copiar e **salvar em arquivo** (Markdown ou texto). A resposta passa pela máscara de segredos. O Auto-Run passa a gravar esses campos; retomadas de versões anteriores mostram o que existe e "não registrado" no resto (a resposta, nelas, é só o começo).
+
 ## [1.1.0] - 2026-10-29
 
 Pacote visual (plano em `docs/PACOTE_VISUAL_1.1.md`). Marcos M1 (ícones e fontes), M2 (barra lateral), M3 (tabela) e M4 (cores, ambiente e ícone do app).
