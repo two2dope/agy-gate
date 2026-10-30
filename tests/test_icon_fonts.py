@@ -47,7 +47,7 @@ for mode in ("fa", "bootstrap", "material"):
     fam = G.ICON_FONTS[mode][0]
     expect = G.ICON_FONTS[mode][2]["approve"] if fam in app.families else G.ICONS["approve"][1]
     assert app.btn["approve"].glyph() == expect, mode
-    assert app.search_icon.cget("text") == (G.icon_glyph(mode, "search", app.families) or G.ICONS["search"][1]), mode
+    assert app.btn["search"].glyph() == (G.icon_glyph(mode, "search", app.families) or G.ICONS["search"][1]), mode
     assert G.alert_glyph(app)[0] == G.icon_glyph(mode, "warn", app.families), mode
     assert json.load(open(G.SETTINGS_FILE))["icons"] == mode
 app.destroy()

@@ -38,7 +38,9 @@ for key, th in G.THEMES.items():
     # selos de contagem: texto na cor do token sobre o fundo misturado; e a cor das linhas marcadas sobre a seleção
     for tok in ("danger", "warning", "muted", "success", "accent_text"):
         pairs.append((f"chip {tok}", t[tok], t['panel']))
-    large = []
+    tc = G.tab_colors(t)  # abas do cabeçalho (1.2): texto das inativas, selo de contagem; barra da marcada como elemento grande
+    pairs += [("aba inativa", tc['dim'], t['header_bg']), ("selo da aba", t['header_fg'], tc['badge'])]
+    large = [("barra da aba (mínimo 3:1)", tc['bar'], t['header_bg'])]
     for lvl, nome in ((2, "crítica"), (1, "atenção")):  # faixa de alerta de contexto (1.0.2)
         c = G.banner_colors(t, lvl)
         pairs.append((f"faixa {nome}: texto", c['fg'], c['bg']))

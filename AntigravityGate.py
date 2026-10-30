@@ -1922,6 +1922,17 @@ def banner_colors(t, level):
     return {'bg': blend(t['panel'], t['warning'], 0.16), 'fg': t['fg'], 'icon': t['warning'], 'stripe': t['warning']}
 
 
+def tab_colors(t):
+    """Cores das abas do cabeçalho: texto das inativas (mais fraco que o da marcada), barra da marcada e fundo do selo de contagem."""
+    bar = t['accent_text'] if contrast(t['accent_text'], t['header_bg']) >= 3 else t['header_fg']
+    dim = t['header_fg']
+    for i in range(12, -1, -1):  # o texto mais fraco que ainda passa em 4,6:1 (no Mecha, laranja sobre quase preto, fica mais forte)
+        dim = blend(t['header_fg'], t['header_bg'], i * 0.03)
+        if contrast(dim, t['header_bg']) >= 4.6:
+            break
+    return {'dim': dim, 'bar': bar, 'badge': blend(t['header_bg'], t['header_fg'], 0.18)}
+
+
 def round_rect(c, x1, y1, x2, y2, r, **kw):
     if r <= 0:
         return c.create_rectangle(x1, y1, x2, y2, **kw)
@@ -2402,21 +2413,54 @@ class SideItem(tk.Frame):
         self.count.configure(bg=t['panel2'], fg=t['muted'])
 
 
-class Tab(tk.Label):
-    """Aba do cabeçalho (controle segmentado). A marcada usa as cores de seleção do tema."""
+class Tab(tk.Frame):
+    """Aba do cabeçalho: texto, selo de contagem opcional e uma barra embaixo da marcada. Clicar (ou Enter ou Espaço) aplica o filtro."""
 
     def __init__(self, master, app, text, command):
-        super().__init__(master, text=text, font=app.f_btn, padx=app.px(12), pady=app.px(5), cursor="hand2", takefocus=1, highlightthickness=1)
-        self.app, self.command, self.on = app, command, False
-        self.bind("<Button-1>", lambda e: self.command())
+        super().__init__(master, takefocus=1, cursor="hand2", highlightthickness=1)
+        self.app, self.command, self.on, self.hover, self.count = app, command, False, False, 0
+        self.bar = tk.Frame(self, height=app.px(2))
+        self.bar.pack(side=tk.BOTTOM, fill=tk.X)
+        self.label = tk.Label(self, text=text, font=app.f_ui, padx=app.px(10), pady=app.px(6))
+        self.label.pack(side=tk.LEFT)
+        self.badge = tk.Label(self, font=app.f_small, padx=app.px(6))
+        for w in (self, self.label, self.badge):
+            w.bind("<Button-1>", lambda e: self.command())
+            w.bind("<Enter>", lambda e: self._hover(True), add="+")
+            w.bind("<Leave>", lambda e: self._hover(False), add="+")
         for seq in ("<Return>", "<space>"):
             self.bind(seq, lambda e: self.command())
         self.repaint()
 
+    def configure(self, cnf=None, **kw):  # `text` vai para o rótulo
+        if "text" in kw:
+            self.label.configure(text=kw.pop("text"))
+        return super().configure(cnf, **kw) if (cnf or kw) else None
+    config = configure
+
+    def cget(self, key):
+        return self.label.cget("text") if key == "text" else super().cget(key)
+
+    def _hover(self, flag):
+        self.hover = flag
+        self.repaint()
+
+    def set_count(self, n):
+        self.count = n
+        if n:
+            self.badge.configure(text=str(n))
+            if not self.badge.winfo_manager():
+                self.badge.pack(side=tk.LEFT, padx=(0, self.app.px(8)))
+        else:
+            self.badge.pack_forget()
+
     def repaint(self):
         t = self.app.t
-        bg, fg = (t['sel_bg'], t['sel_fg']) if self.on else (t['header_bg'], t['header_fg'])
-        self.configure(bg=bg, fg=fg, highlightbackground=t['accent'] if self.on else t['header_bg'], highlightcolor=t['accent'])
+        c = tab_colors(t)
+        self.configure(bg=t['header_bg'], highlightbackground=t['header_bg'], highlightcolor=t['accent'])
+        self.label.configure(bg=t['header_bg'], fg=t['header_fg'] if (self.on or self.hover) else c['dim'])
+        self.badge.configure(bg=c['badge'], fg=t['header_fg'])
+        self.bar.configure(bg=c['bar'] if self.on else t['header_bg'])
 
 
 class Toast(tk.Frame):
@@ -3418,6 +3462,7 @@ class AntigravityGateApp(tk.Tk):
         self.f_title = tkfont.Font(self, family=self.base_family, size=15, weight="bold")
         self.f_icon = tkfont.Font(self, family=self.base_family, size=11)
         self.f_banner_icon = tkfont.Font(self, family=self.base_family, size=20)
+        self.f_brand = tkfont.Font(self, family=self.base_family, size=12, weight="bold")
         self.banner_level, self._banner_style = 2, None
         self.update_icon_font()
         self.apply_theme()
@@ -3461,6 +3506,7 @@ class AntigravityGateApp(tk.Tk):
         t['banner_bg'] = banner_colors(t, self.banner_level)['bg']  # muda com o nível da faixa (style_banner)
         self.configure(bg=t['bg'])
         self.f_title.configure(family=next((f for f in t['title_fonts'] if f in self.families), self.base_family))
+        self.f_brand.configure(family=self.f_title.cget("family"))
 
         style = ttk.Style()
         style.theme_use("clam")
@@ -3557,8 +3603,6 @@ class AntigravityGateApp(tk.Tk):
         self.settings['icons'] = mode
         save_settings(self.settings)
         self.update_icon_font()
-        if hasattr(self, 'search_icon'):  # a lupa da busca acompanha o conjunto escolhido
-            self.search_icon.configure(text=icon_glyph(mode, "search", self.families) or ICONS["search"][1])
         if hasattr(self, 'banner'):
             self._banner_style = None
             self.style_banner()
@@ -3760,17 +3804,24 @@ class AntigravityGateApp(tk.Tk):
         self.top_frame.pack(fill=tk.X)
         self.brand = self.themed_widget(tk.Frame(self.top_frame), bg="header_bg")
         self.brand.pack(side=tk.LEFT)
-        self.themed_widget(tk.Label(self.brand, text="◆", font=self.f_title), bg="header_bg", fg="header_fg").pack(side=tk.LEFT)
-        # O nome do app já está na barra de título da janela; o cabeçalho diz para que serve.
-        self.title_lbl = self.themed_widget(tk.Label(self.brand, text="Gestão de contexto e curadoria", font=self.f_title), bg="header_bg", fg="header_fg")
-        self.title_lbl.pack(side=tk.LEFT, padx=(self.px(8), self.px(12)))
-        Tooltip(self.title_lbl, self, lambda: f"AntigravityGate v{__version__}")
+        # Marca compacta: ícone e nome. A descrição ("Gestão de contexto e curadoria") ficou na dica, para o cabeçalho ter menos texto.
+        self.logo = self.themed_widget(tk.Label(self.brand, font=self.f_title), bg="header_bg", fg="header_fg")
+        icons = getattr(self, "_app_icons", None)
+        if icons:
+            self.logo.configure(image=icons[2] if self.px(32) < 48 else icons[1])  # 32 px, ou 64 px em tela de alta densidade
+        else:
+            self.logo.configure(text="◆")
+        self.logo.pack(side=tk.LEFT)
+        self.title_lbl = self.themed_widget(tk.Label(self.brand, text="AntigravityGate", font=self.f_brand), bg="header_bg", fg="header_fg")
+        self.title_lbl.pack(side=tk.LEFT, padx=(self.px(8), self.px(18)))
+        for w in (self.logo, self.title_lbl):
+            Tooltip(w, self, lambda: f"Gestão de contexto e curadoria · v{__version__}")
         # Abas: atalhos para o mesmo filtro dos selos do rodapé e da barra lateral (`chip_filter`).
         self.tabs_frame = self.themed_widget(tk.Frame(self.top_frame), bg="header_bg")
         self.tabs_frame.pack(side=tk.LEFT)
-        for key, text in (("todas", "Todas as sessões"), ("aguardando", "Aprovadas aguardando"), ("arquivada", "Arquivadas")):
+        for key, text in (("todas", "Todas"), ("aguardando", "Aprovadas aguardando"), ("arquivada", "Arquivadas")):
             tab = Tab(self.tabs_frame, self, text, lambda k=key: self.set_filter(None if k == "todas" else k))
-            tab.pack(side=tk.LEFT, padx=(0, self.px(4)))
+            tab.pack(side=tk.LEFT, padx=(0, self.px(2)))
             self.tabs[key] = tab
         self.hdr_right = self.themed_widget(tk.Frame(self.top_frame), bg="header_bg")
         self.hdr_right.pack(side=tk.RIGHT)
@@ -3791,13 +3842,18 @@ class AntigravityGateApp(tk.Tk):
 
         # Barra lateral: categorias e projetos. As categorias são atalhos para o filtro dos selos do rodapé; um projeto leva a tabela até ele.
         # Ctrl+B recolhe; em janela estreita ela se esconde sozinha (apply_nav_layout).
-        self.sidebar = self.themed_widget(tk.Frame(self, width=self.px(220)), bg="panel")
+        self.sidebar = self.themed_widget(tk.Frame(self, width=self.px(232)), bg="panel")
         self.sidebar.pack(side=tk.LEFT, fill=tk.Y)
         self.sidebar.pack_propagate(False)
         self.side_sep = self.themed_widget(tk.Frame(self, width=1), bg="border")
         self.side_sep.pack(side=tk.LEFT, fill=tk.Y)
         sec = lambda text: self.themed_widget(tk.Label(self.sidebar, text=text, font=self.f_small, anchor="w", padx=self.px(14)), bg="panel", fg="muted")
-        sec("CATEGORIAS").pack(fill=tk.X, pady=(self.px(14), self.px(4)))
+        sec("FONTE DE DADOS").pack(fill=tk.X, pady=(self.px(14), self.px(4)))
+        self.src_box = ttk.Combobox(self.sidebar, state="readonly", values=[x[0] for x in self.sources])
+        self.src_box.bind("<<ComboboxSelected>>", self.on_source_change)
+        self.src_box.pack(fill=tk.X, padx=self.px(14))
+        Tooltip(self.src_box, self, lambda: self.sources[self.source_idx][0])
+        sec("CATEGORIAS").pack(fill=tk.X, pady=(self.px(16), self.px(4)))
         for key, text, glyph, token in self.NAV_CATS:
             item = SideItem(self.sidebar, self, text, glyph, token, lambda k=key: self.toggle_chip_filter(k))
             item.pack(fill=tk.X, padx=self.px(8), pady=1)
@@ -3819,25 +3875,28 @@ class AntigravityGateApp(tk.Tk):
         Tooltip(self.env_rc, self, lambda: self.env_tips[1])
         self.update_env_status()
 
-        # Filtros: fonte das sessões e busca
+        # Busca: campo largo com a dica dentro; Buscar e Limpar só com ícone. A fonte das sessões fica no topo da barra lateral
+        # (sem a barra, aparece aqui: src_box_top).
         self.filter_frame = self.themed_widget(tk.Frame(self, padx=self.px(16), pady=self.px(10)), bg="bg")
         self.filter_frame.pack(fill=tk.X)
-        self.src_box = ttk.Combobox(self.filter_frame, state="readonly", width=44, values=[s[0] for s in self.sources])
-        self.src_box.current(self.source_idx)
-        self.src_box.bind("<<ComboboxSelected>>", lambda e: self.on_source_change())
-        self.src_box.pack(side=tk.LEFT)
-        self.make_button(self.filter_frame, "clear", "clear", "Limpar", self.clear_search, "Limpar a busca (Esc)").pack(side=tk.RIGHT, padx=(self.px(6), 0))
-        self.make_button(self.filter_frame, "search", "search", "Buscar", self.run_search, "Buscar em título, pasta, agente, UUID e no conteúdo das conversas (Enter; Ctrl+K vai ao campo)", icon_token="accent_text").pack(side=tk.RIGHT, padx=(self.px(10), 0))
-        box = self.themed_widget(tk.Frame(self.filter_frame, padx=1, pady=1), bg="border")
-        box.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(self.px(12), 0), ipady=self.px(2))
-        inner = self.themed_widget(tk.Frame(box), bg="panel")
+        self.src_box_top = ttk.Combobox(self.filter_frame, state="readonly", width=26)
+        self.src_box_top.bind("<<ComboboxSelected>>", self.on_source_change)
+        self.sync_source_boxes()
+        self.make_button(self.filter_frame, "clear", "clear", "Limpar", self.clear_search, "Limpar a busca (Esc)", icon_only=True).pack(side=tk.RIGHT, padx=(self.px(6), 0))
+        self.make_button(self.filter_frame, "search", "search", "Buscar", self.run_search, "Buscar em título, pasta, agente, UUID e no conteúdo das conversas (Enter; Ctrl+K vai ao campo)", icon_token="accent_text", icon_only=True).pack(side=tk.RIGHT, padx=(self.px(10), 0))
+        self.search_box = self.themed_widget(tk.Frame(self.filter_frame, padx=1, pady=1), bg="border")
+        self.search_box.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=self.px(2))
+        inner = self.themed_widget(tk.Frame(self.search_box), bg="panel")
         inner.pack(fill=tk.BOTH, expand=True)
-        self.search_icon = self.themed_widget(tk.Label(inner, font=self.f_icon, text=icon_glyph(self.icon_mode, "search", self.families) or ICONS["search"][1]), bg="panel", fg="muted")
-        self.search_icon.pack(side=tk.LEFT, padx=(self.px(8), self.px(4)))
         self.search_var = tk.StringVar()
         self.search_entry = self.themed_widget(tk.Entry(inner, textvariable=self.search_var, relief=tk.FLAT, font=self.f_ui, highlightthickness=0),
                                                bg="panel", fg="fg", insertbackground="fg")
-        self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=self.px(4))
+        self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(self.px(10), 0), ipady=self.px(4))
+        # dica dentro do campo (some ao digitar); o texto digitado nunca a inclui
+        self.search_hint = self.themed_widget(tk.Label(inner, text="Buscar em título, pasta, agente, UUID e conteúdo das conversas", font=self.f_ui, anchor="w"), bg="panel", fg="muted")
+        self.search_hint.bind("<Button-1>", lambda e: self.search_entry.focus_set())
+        self.search_var.trace_add("write", lambda *a: self.update_search_hint())
+        self.update_search_hint()
         self.search_entry.bind("<Return>", lambda e: self.run_search())
         self.search_entry.bind("<Escape>", lambda e: self.clear_search())
         self.bind("<Control-f>", lambda e: (self.search_entry.focus_set(), "break")[1])
@@ -4160,6 +4219,12 @@ class AntigravityGateApp(tk.Tk):
             else:
                 self.sidebar.pack_forget()
                 self.side_sep.pack_forget()
+        top = not self.sidebar.winfo_manager()  # sem a barra lateral, a fonte das sessões volta para a linha da busca
+        if top != bool(self.src_box_top.winfo_manager()):
+            if top:
+                self.src_box_top.pack(side=tk.LEFT, padx=(0, self.px(10)), before=self.search_box)
+            else:
+                self.src_box_top.pack_forget()
         tabs = w >= self.px(1000)
         if tabs != bool(self.tabs_frame.winfo_manager()):
             if tabs:
@@ -4192,7 +4257,7 @@ class AntigravityGateApp(tk.Tk):
         for key, item in self.side_items.items():
             item.update_item(count=counts[key], on=self.chip_filter == key)
         waiting = sum(1 for r in rows if self.chip_match("aguardando", r))
-        self.tabs["aguardando"].configure(text=f"Aprovadas aguardando · {waiting}" if waiting else "Aprovadas aguardando")
+        self.tabs["aguardando"].set_count(waiting)
         on = {"todas": not self.chip_filter and self.match is None, "aguardando": self.chip_filter == "aguardando", "arquivada": self.chip_filter == "arquivada"}
         for key, tab in self.tabs.items():
             tab.on = on[key]
@@ -4744,9 +4809,24 @@ class AntigravityGateApp(tk.Tk):
             return
         self.open_path(os.path.dirname(fpath))
 
-    def on_source_change(self):
-        self.source_idx = self.src_box.current()
+    def on_source_change(self, event=None):
+        self.source_idx = (event.widget if event is not None else self.src_box).current()
+        self.sync_source_boxes()
         self.load_data()
+
+    def sync_source_boxes(self):
+        """O seletor de fonte existe na barra lateral e (só sem a barra) na linha da busca: os dois mostram sempre o mesmo."""
+        values = [x[0] for x in self.sources]
+        for box in (getattr(self, "src_box", None), getattr(self, "src_box_top", None)):
+            if box is not None:
+                box.configure(values=values)
+                box.current(self.source_idx)
+
+    def update_search_hint(self):
+        if self.search_var.get():
+            self.search_hint.place_forget()
+        else:
+            self.search_hint.place(in_=self.search_entry, x=self.px(2), rely=0.5, anchor="w")
 
     def refresh(self):
         """Relê as fontes do disco (pode haver novas pastas) e recarrega a fonte selecionada."""
@@ -4754,8 +4834,7 @@ class AntigravityGateApp(tk.Tk):
         label = self.sources[self.source_idx][0]
         self.sources = discover_sources()
         self.source_idx = next((i for i, s in enumerate(self.sources) if s[0] == label), 0)
-        self.src_box.configure(values=[s[0] for s in self.sources])
-        self.src_box.current(self.source_idx)
+        self.sync_source_boxes()
         self.load_data()
 
     def set_status(self, text):

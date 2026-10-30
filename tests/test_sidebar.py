@@ -40,9 +40,9 @@ assert app.tabs["todas"].on and not app.tabs["aguardando"].on
 for ids, st in (((1, 2), "aprovada"), ((3,), "arquivada")):
     app.tree.selection_set([iid(app, n) for n in ids]); app.mark_selected(st); app.update()
 assert counts(app) == dict(pendente=1, rot=0, crit=0, aprovada=2, arquivada=1), counts(app)
-assert app.tabs["aguardando"].cget("text") == "Aprovadas aguardando · 2"
+assert app.tabs["aguardando"].cget("text") == "Aprovadas aguardando" and app.tabs["aguardando"].count == 2 and app.tabs["aguardando"].badge.cget("text") == "2"
 app.handoffs[U(1)] = "aaaaaaaa-0000"; app.update_chips()
-assert app.tabs["aguardando"].cget("text") == "Aprovadas aguardando · 1" and app.chip_match("aguardando", app.row_by_cid[U(2)]) and not app.chip_match("aguardando", app.row_by_cid[U(1)])
+assert app.tabs["aguardando"].count == 1 and app.tabs["aguardando"].badge.cget("text") == "1" and app.chip_match("aguardando", app.row_by_cid[U(2)]) and not app.chip_match("aguardando", app.row_by_cid[U(1)])
 
 # 3. um filtro só: categoria e abas marcam o mesmo estado, e clicar de novo tira o filtro
 app.side_items["aprovada"].command(); app.update()
@@ -78,7 +78,7 @@ app.toggle_sidebar(); app.update(); assert app.sidebar.winfo_manager() == "pack"
 app.geometry("940x700+0+0"); settle(app); assert app.sidebar.winfo_manager() == "pack" and not app.tabs_frame.winfo_manager(), "abas somem abaixo de 1000 px"
 app.geometry("820x700+0+0"); settle(app); assert not app.sidebar.winfo_manager(), "barra se esconde abaixo de 900 px"
 app.geometry("1240x720+0+0"); settle(app); assert app.sidebar.winfo_manager() == "pack" and app.tabs_frame.winfo_manager() == "pack"
-assert app.sidebar.winfo_width() == app.px(220) and app.sidebar.winfo_x() < app.holder.winfo_x() and app.footer.winfo_width() >= app.winfo_width() - 2, "rodapé com a largura toda"
+assert app.sidebar.winfo_width() == app.px(232) and app.sidebar.winfo_x() < app.holder.winfo_x() and app.footer.winfo_width() >= app.winfo_width() - 2, "rodapé com a largura toda"
 
 # 7. todos os temas: item marcado usa a cor de seleção; texto do item e da aba legíveis
 app.side_items["aprovada"].command(); app.update()
