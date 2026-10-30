@@ -87,7 +87,7 @@ dlg = G.LimitDialog(app); app.update()
 assert dlg.winfo_rootx() >= 0 and dlg.winfo_rooty() >= 0, dlg.geometry(); dlg.destroy()
 # janela de andamento do Auto-Run
 app.open_autorun_window(1, True); app.update()
-aw = app.auto_win[0]; assert aw.winfo_ismapped() and aw.winfo_width() == app.px(780) and aw.winfo_height() == app.px(420) and aw.winfo_rootx() >= 0 and aw.winfo_rooty() >= 0, aw.geometry()
+aw = app.auto_win[0]; assert aw.winfo_ismapped() and aw.winfo_width() == app.px(980) and aw.winfo_height() == app.px(680) and aw.winfo_rootx() >= 0 and aw.winfo_rooty() >= 0, aw.geometry()
 aw.destroy(); app.destroy(); app = None
 
 # app real: abre dentro da tela, sem estourar, e lembra o que o usuário fez

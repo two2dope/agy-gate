@@ -2,12 +2,18 @@
 
 Formato: [Versionamento Semântico](https://semver.org/lang/pt-BR/). Enquanto a versão começar com 0, o app está em candidato a lançamento: funciona, mas faltam itens listados abaixo.
 
-## [1.2.0] - em desenvolvimento
+## [1.2.0] - 2026-10-30
 
-Ajustes pedidos depois de usar a 1.1.0. Marco M1: recibo de retomada.
+Ajustes pedidos depois de usar a 1.1.0. Marcos: M1 recibo de retomada; M2 janela única do Auto-Run.
 
 ### Adicionado
 - **Recibo de retomada.** Na sessão retomada, clicar em "↪ … ver recibo" nos detalhes (ou "Ver recibo da retomada" no menu da sessão) abre o recibo: sessão original e nova, projeto, modelo, pasta de trabalho, duração, turnos, tokens, dossiê e a resposta completa do agy. Dá para copiar e **salvar em arquivo** (Markdown ou texto). A resposta passa pela máscara de segredos. O Auto-Run passa a gravar esses campos; retomadas de versões anteriores mostram o que existe e "não registrado" no resto (a resposta, nelas, é só o começo).
+
+- **Janela do Auto-Run reescrita: uma só, em três etapas.** 1 Preparar (marcar as sessões, simulação ou retomada real, modelo, **pasta dos dossiês**), 2 Executando (lista com o estado de cada sessão: aguardando, rodando, retomada, dossiê gerado, falhou, não executada) e 3 Resumo. Clicar numa sessão mostra o detalhe: onde a nova será criada, sessão nova, pasta, projeto, modelo, duração, tokens, motivo da falha, o que aconteceu e a resposta; duplo clique (ou "Ver recibo") abre o recibo. **Salvar relatório…** grava o resumo do lote em Markdown. O registro completo continua na janela, recolhido.
+- **Pasta dos dossiês escolhível** (Escolher… e Padrão), lembrada entre execuções. É também a pasta de trabalho das sessões sem projeto.
+
+### Corrigido
+- As janelas de confirmação e de andamento do Auto-Run se sobrepunham e fechar uma delas podia travar. Agora é uma janela só: iniciar outro lote a reaproveita. Esc fecha nas etapas 1 e 3; na 2 não, para não cancelar o lote sem querer.
 
 ## [1.1.0] - 2026-10-29
 

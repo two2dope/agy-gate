@@ -26,7 +26,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from tkinter import font as tkfont
 
-__version__ = "1.1.0"  # ver CHANGELOG.md
+__version__ = "1.2.0"  # ver CHANGELOG.md
 __build__ = "código-fonte"  # o CI troca pelo commit e pela data da montagem do .exe
 APP_AUTHOR = "Thominha"
 APP_EMAIL = "twoo2dope@gmail.com"
@@ -42,6 +42,7 @@ LOG_DIR = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
 LOG_FILE = os.path.join(LOG_DIR, "gate.log")
 EXPORT_DIR = os.path.join(LOG_DIR, "exports")
 HANDOFF_DIR = os.path.join(LOG_DIR, "handoffs")
+EXTRA_OWN_DIRS = []  # pastas de dossiê escolhidas pelo usuário (Auto-Run): também são do app
 STATE_DB = os.path.join(LOG_DIR, "gate_state.db")  # estado do AntigravityGate; nunca grava nos bancos do Antigravity
 
 STATUS_NAME = {"pendente": "Pendente", "aprovada": "Aprovada", "arquivada": "Arquivada"}
@@ -1008,7 +1009,7 @@ def gate_owned(path):
     """True para pastas do próprio AntigravityGate (dados em LOCALAPPDATA, handoffs ou a pasta do .exe).
     Não são workspace de projeto: as retomadas até a 1.0.0 gravaram essas pastas como workspace da sessão nova."""
     real = os.path.normcase(os.path.realpath(path))
-    for own in (LOG_DIR, HANDOFF_DIR):
+    for own in (LOG_DIR, HANDOFF_DIR, *EXTRA_OWN_DIRS):
         own = os.path.normcase(os.path.realpath(own))
         if real == own or real.startswith(own.rstrip(os.sep) + os.sep):
             return True
@@ -1162,9 +1163,11 @@ class AutoRunner:
     """Percorre as sessões aprovadas: gera o dossiê local e, se não for simulação, abre uma sessão nova com `agy --print`.
     Roda em thread de trabalho; fala com a tela só por `log` (callback). Sem Tk aqui."""
 
-    def __init__(self, items, store, log_cb, agy=None, dry_run=True, mode="plan", timeout_s=AGY_TIMEOUT_S, max_failures=3, grace_s=60, model=None):
+    def __init__(self, items, store, log_cb, agy=None, dry_run=True, mode="plan", timeout_s=AGY_TIMEOUT_S, max_failures=3, grace_s=60, model=None, dossier_dir=None, item_cb=None):
         self.items, self.store, self.log_cb = items, store, log_cb
         self.model = model
+        self.dossier_dir = dossier_dir or HANDOFF_DIR  # onde os dossiês são gravados (o usuário escolhe na janela do Auto-Run)
+        self.item_cb, self._finished, self._ctx = item_cb, set(), {}  # item_cb(kind, cid, info): 'start', 'done', 'skipped' por sessão
         self.grace_s = grace_s
         self.agy, self.dry_run, self.mode, self.timeout_s, self.max_failures = agy, dry_run, mode, timeout_s, max_failures
         self.cancelled = False
@@ -1177,6 +1180,20 @@ class AutoRunner:
                 self.proc.terminate()
             except OSError:
                 pass
+
+    def _item(self, kind, cid, **info):
+        if self.item_cb:
+            try:
+                self.item_cb(kind, cid, info)
+            except Exception:
+                log.exception("item_cb falhou")
+
+    def _record(self, cid, new_cid, dossier, status, detail='', **extra):
+        """Grava a tentativa em `handoffs` e avisa a tela: um evento 'done' por sessão, com o que se sabe dela."""
+        extra = {**self._ctx, **extra}
+        self.store.add_handoff(cid, new_cid, dossier, status, detail, **extra)
+        self._finished.add(cid)
+        self._item('done', cid, state=status, new_cid=new_cid, dossier=dossier, error=detail if status == 'erro' else '', **extra)
 
     @staticmethod
     def _session_files():
@@ -1193,12 +1210,12 @@ class AutoRunner:
             return False
 
     @staticmethod
-    def _target(it):
+    def _target(it, fallback=None):
         """(--project, pastas para --add-dir, pasta de trabalho) da retomada: o projeto e as pastas da sessão original.
         O agy registra a pasta de trabalho como workspace; sem `cwd`, herdava a pasta de onde o app foi aberto."""
         project, pdirs = project_target(it.get('project_id', ''))
         dirs = list(dict.fromkeys(pdirs + workspace_dirs(it.get('workspace', ''))))[:3]
-        return project, dirs, (dirs[0] if dirs else HANDOFF_DIR)
+        return project, dirs, (dirs[0] if dirs else (fallback or HANDOFF_DIR))
 
     def _run_agy(self, args, cwd=None):
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -1227,7 +1244,7 @@ class AutoRunner:
                     return out, err, "tempo esgotado", self.proc.returncode
 
     def run(self):
-        os.makedirs(HANDOFF_DIR, exist_ok=True)
+        os.makedirs(self.dossier_dir, exist_ok=True)
         summary = {'ok': 0, 'dossier': 0, 'failed': 0, 'skipped': 0, 'quota': '', 'junk': [], 'aborted': '', 'models': [], 'bad_model': ''}
         failures = 0
         stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
@@ -1239,13 +1256,15 @@ class AutoRunner:
                 self.log_cb(f"Cancelado. {n - i} sessão(ões) não executadas.")
                 break
             cid, title = it['cid'], it['title']
+            self._ctx = {}
+            self._item('start', cid)
             self.log_cb(f"[{i + 1}/{n}] {title}  ({cid[:8]})")
-            dossier = os.path.join(HANDOFF_DIR, f"retomada_{cid[:8]}_{stamp}.md")
+            dossier = os.path.join(self.dossier_dir, f"retomada_{cid[:8]}_{stamp}.md")
             try:
                 export_session('dossier', it['fpath'], it['meta'], dossier)
             except Exception as e:
                 log.exception("Dossiê falhou para %s", cid)
-                self.store.add_handoff(cid, '', dossier, 'erro', f"dossiê: {e}")
+                self._record(cid, '', dossier, 'erro', f"dossiê: {e}")
                 summary['failed'] += 1
                 failures += 1
                 self.log_cb(f"    ✖ não foi possível gerar o dossiê: {e}")
@@ -1256,11 +1275,12 @@ class AutoRunner:
                     break
                 continue
             self.log_cb(f"    dossiê: {dossier}")
-            project, dirs, cwd = self._target(it)
+            project, dirs, cwd = self._target(it, self.dossier_dir)
             proj_label = f"{it['meta'].get('project') or project} (--project)" if project else "CLI Project (sem --project)"
             self.log_cb(f"    pasta: {cwd} · projeto: " + (proj_label if project else "CLI Project (sem --project: a sessão original não tem projeto em config/projects)"))
+            self._ctx = {'cwd': cwd, 'project': proj_label}
             if self.dry_run:
-                self.store.add_handoff(cid, '', dossier, 'dossie', 'simulação: agy não foi chamado')
+                self._record(cid, '', dossier, 'dossie', 'simulação: agy não foi chamado')
                 summary['dossier'] += 1
                 continue
             with open(dossier, encoding="utf-8") as fh:
@@ -1268,7 +1288,7 @@ class AutoRunner:
             args = build_agy_args(self.agy, dossier, dirs, self.mode, self.timeout_s, self.model, dossier_text, project)
             problem = cmd_shim_problem(args)
             if problem:
-                self.store.add_handoff(cid, '', dossier, 'erro', problem)
+                self._record(cid, '', dossier, 'erro', problem)
                 summary['failed'] += 1
                 summary['skipped'] += n - i - 1
                 summary['aborted'] = 'agy .cmd/.bat inseguro'
@@ -1278,14 +1298,14 @@ class AutoRunner:
             try:
                 out, err, why, code = self._run_agy(args, cwd)
             except OSError as e:
-                self.store.add_handoff(cid, '', dossier, 'erro', f"não executou o agy: {e}")
+                self._record(cid, '', dossier, 'erro', f"não executou o agy: {e}")
                 summary['failed'] += 1
                 self.log_cb(f"    ✖ não foi possível executar o agy: {e}")
                 summary['skipped'] += n - i - 1
                 summary['aborted'] = 'agy não executou'
                 break
             if why:
-                self.store.add_handoff(cid, '', dossier, 'erro', why)
+                self._record(cid, '', dossier, 'erro', why)
                 summary['failed'] += 1
                 self.log_cb(f"    ✖ {why}")
                 if why == "cancelada":
@@ -1298,7 +1318,7 @@ class AutoRunner:
                 res = parse_agy_output(out, err, code)
                 new_cid = res['conversation_id']
                 if res['ok']:
-                    self.store.add_handoff(cid, new_cid, dossier, 'ok', res['response'][:300], model=self.model or '', cwd=cwd, project=proj_label,
+                    self._record(cid, new_cid, dossier, 'ok', res['response'][:300], model=self.model or '', cwd=cwd, project=proj_label,
                                            duration=res['duration'], turns=res['turns'], usage=res['usage'], response=res['response'])
                     summary['ok'] += 1
                     failures = 0
@@ -1306,7 +1326,7 @@ class AutoRunner:
                     if res['response']:
                         self.log_cb("    resposta: " + " ".join(res['response'].split())[:300])
                     continue
-                self.store.add_handoff(cid, new_cid, dossier, 'erro', res['error'])
+                self._record(cid, new_cid, dossier, 'erro', res['error'])
                 summary['failed'] += 1
                 # O agy cria a sessão mesmo quando falha, às vezes sem informar o id: o que surgiu na pasta é dessa tentativa.
                 for junk in ([new_cid] if new_cid else []) + [c for c in sorted(self._session_files() - before - {new_cid})
@@ -1333,6 +1353,9 @@ class AutoRunner:
                 summary['aborted'] = f"{failures} falhas seguidas"
                 self.log_cb(f"Interrompido após {failures} falhas seguidas.")
                 break
+        for it in self.items:  # o que sobrou depois de uma interrupção
+            if it['cid'] not in self._finished:
+                self._item('skipped', it['cid'])
         if summary['junk']:
             try:
                 self.store.set_many(summary['junk'], 'arquivada')
@@ -2582,8 +2605,7 @@ def receipt_fields(rec, src=None):
         usage = json.loads(rec.get('usage') or "{}")
     except (TypeError, ValueError):
         usage = {}
-    names = (("input_tokens", "entrada"), ("output_tokens", "saída"), ("thinking_tokens", "raciocínio"), ("cache_read_tokens", "cache"), ("total_tokens", "total"))
-    toks = ", ".join(f"{label} {usage[k]:,}".replace(",", ".") for k, label in names if isinstance(usage.get(k), int))
+    toks = usage_text(usage)
     dossier = rec.get('dossier_path') or ""
     new_format = rec.get('model') is not None
     d = rec.get('duration')
@@ -2688,6 +2710,496 @@ class ReceiptDialog(tk.Toplevel):
             self.app.open_path(os.path.dirname(d))
         else:
             messagebox.showinfo("Recibo", "A pasta do dossiê não existe mais neste computador.", parent=self)
+
+
+def usage_text(usage):
+    """Tokens do agy em texto: 'entrada 1.500, saída 20, total 1.520' (só o que veio)."""
+    usage = usage if isinstance(usage, dict) else {}
+    names = (("input_tokens", "entrada"), ("output_tokens", "saída"), ("thinking_tokens", "raciocínio"), ("cache_read_tokens", "cache"), ("total_tokens", "total"))
+    return ", ".join(f"{label} {usage[k]:,}".replace(",", ".") for k, label in names if isinstance(usage.get(k), int))
+
+
+class AutoRunWindow(tk.Toplevel):
+    """Janela única do Auto-Run, em três etapas: 1 Preparar (escolher as sessões e as opções), 2 Executando (cada sessão com o seu estado;
+    clicar numa linha mostra o detalhe) e 3 Resumo (contagens, detalhe, recibo e relatório). Só existe uma: iniciar outro lote a reaproveita."""
+
+    STEPS = (("prepare", "1  Preparar"), ("run", "2  Executando"), ("done", "3  Resumo"))
+    INTRO = {
+        "prepare": "Para cada sessão marcada, o app gera um dossiê de retomada e abre uma sessão NOVA no agy; a original não é alterada. "
+                   "Rodam uma de cada vez. Clique numa sessão para ver onde a nova será criada.",
+        "run": "Em andamento. Clique numa sessão para acompanhar o que ela está fazendo. \"Cancelar lote\" encerra o agy em curso e pula as demais.",
+        "done": "Lote concluído. Clique numa sessão para ver o detalhe; duplo clique abre o recibo. Salve o relatório do lote em arquivo se quiser guardá-lo.",
+    }
+    STATE_TEXT = {"ready": "pronta", "redo": "refazer", "done_off": "já retomada", "off": "não marcada", "wait": "aguardando", "run": "rodando…",
+                  "ok": "✔ retomada", "dossie": "▤ dossiê gerado", "erro": "✖ falhou", "skipped": "» não executada"}
+    STATE_TAG = {"ready": "wait", "redo": "wait", "done_off": "muted", "off": "muted", "wait": "wait", "run": "run", "ok": "ok", "dossie": "ok",
+                 "erro": "erro", "skipped": "muted"}
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.app = app
+        t = self.t = app.t
+        self.title("Auto-Run — preparar")
+        self.transient(app)
+        self.configure(bg=t['panel'], padx=app.px(14), pady=app.px(10))
+        self.step, self.items, self.by_cid, self.checks, self.states, self.info, self.lines = "prepare", [], {}, {}, {}, {}, {}
+        self.done_ids, self.current, self.summary, self.result = set(), None, None, None
+        self.dry_run, self.model_used, self.dossier_used = True, "", HANDOFF_DIR
+        self.decision = tk.StringVar(master=self, value="")
+        self.dry, self.redo = tk.BooleanVar(master=self, value=True), tk.BooleanVar(master=self, value=False)
+        self.model_var = tk.StringVar(master=self, value=str(app.settings.get("agy_model") or ""))
+        self.dir_var = tk.StringVar(master=self, value=str(app.settings.get("dossier_dir") or HANDOFF_DIR))
+        self.build()
+        self.protocol("WM_DELETE_WINDOW", lambda: app.close_autorun(self))
+        self.bind("<Escape>", lambda e: app.close_autorun(self) if self.step != "run" else None)
+        place_over(self, app, size=(app.px(980), app.px(680)))
+        self.minsize(app.px(760), app.px(520))
+        self.lift()
+        self.focus_force()
+
+    def build(self):
+        app, t = self.app, self.t
+        lab = lambda parent, text, fg='fg', font=None, **kw: tk.Label(parent, text=text, bg=t['panel'], fg=t[fg], font=font or app.f_ui, justify=tk.LEFT, anchor="w", **kw)
+        bar = tk.Frame(self, bg=t['panel'])
+        bar.pack(fill=tk.X)
+        self.step_labels = {}
+        for i, (key, text) in enumerate(self.STEPS):
+            if i:
+                lab(bar, "›", 'muted').pack(side=tk.LEFT, padx=app.px(6))
+            self.step_labels[key] = tk.Label(bar, text=text, font=app.f_btn, padx=app.px(12), pady=app.px(4), highlightthickness=1)
+            self.step_labels[key].pack(side=tk.LEFT)
+        self.intro = lab(self, "", 'muted', app.f_small, wraplength=app.px(900))
+        self.intro.pack(fill=tk.X, pady=(app.px(8), app.px(8)))
+        self.bind("<Configure>", lambda e: self.intro.configure(wraplength=max(app.px(300), self.winfo_width() - app.px(48))) if e.widget is self else None)
+        # rodapé e registro primeiro: reservam o fundo da janela; o corpo ocupa o resto
+        self.foot = tk.Frame(self, bg=t['panel'])
+        self.foot.pack(side=tk.BOTTOM, fill=tk.X, pady=(app.px(10), 0))
+        self.status = lab(self.foot, "", 'muted', app.f_small)
+        self.status.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.primary = IconButton(self.foot, app, "autorun", "Iniciar", self.on_primary, kind="primary", bg_token="panel")
+        self.primary.pack(side=tk.RIGHT)
+        self.secondary = IconButton(self.foot, app, "", "Cancelar", self.on_secondary, bg_token="panel")
+        self.log_toggle = lab(self, "▸  Registro completo (para suporte)", 'muted', app.f_small, cursor="hand2")
+        self.log_toggle.pack(side=tk.BOTTOM, fill=tk.X, pady=(app.px(8), 0))
+        self.log_toggle.bind("<Button-1>", lambda e: self.toggle_log())
+        mono = next((f for f in ("JetBrains Mono", "Consolas", "DejaVu Sans Mono") if f in app.families), "TkFixedFont")
+        self.log = tk.Text(self, wrap=tk.WORD, state=tk.DISABLED, font=(mono, 9), bg=t['panel'], fg=t['fg'], insertbackground=t['fg'],
+                           selectbackground=t['sel_bg'], selectforeground=t['sel_fg'], relief=tk.FLAT, highlightthickness=1,
+                           highlightbackground=t['border'], highlightcolor=t['border'], padx=app.px(8), pady=app.px(6), height=7)
+        # opções (só na etapa Preparar)
+        self.opts = tk.Frame(self, bg=t['panel'])
+
+        def choice(widget, **kw):
+            return widget(self.opts, bg=t['panel'], fg=t['fg'], selectcolor=t['panel2'], activebackground=t['panel'], activeforeground=t['fg'],
+                          font=app.f_ui, anchor="w", highlightthickness=1, highlightbackground=t['panel'], highlightcolor=t['accent'], **kw)
+        choice(tk.Radiobutton, text="Simulação: só gera os dossiês (não chama o agy, não gasta cota)", variable=self.dry, value=True).grid(row=0, column=0, columnspan=4, sticky="w")
+        choice(tk.Radiobutton, text="Retomar de verdade: abre uma sessão nova no agy para cada sessão marcada", variable=self.dry, value=False).grid(row=1, column=0, columnspan=4, sticky="w")
+        choice(tk.Checkbutton, text="Refazer as que já foram retomadas", variable=self.redo, command=self.redo_changed).grid(row=2, column=0, columnspan=4, sticky="w")
+        gap = (app.px(6), 0)
+        lab(self.opts, "Modelo do agy:").grid(row=3, column=0, sticky="w", pady=gap)
+        self.model_box = ttk.Combobox(self.opts, textvariable=self.model_var, values=app.agy_model_choices(), width=34)
+        self.model_box.grid(row=3, column=1, sticky="w", padx=app.px(6), pady=gap)
+        lab(self.opts, "vazio = padrão do agy · o agy roda em modo plan (somente leitura)", 'muted', app.f_small).grid(row=3, column=2, columnspan=2, sticky="w", pady=gap)
+        lab(self.opts, "Pasta dos dossiês:").grid(row=4, column=0, sticky="w", pady=gap)
+        self.dir_entry = tk.Entry(self.opts, textvariable=self.dir_var, state="readonly", readonlybackground=t['panel2'], fg=t['fg'], relief=tk.FLAT,
+                                  font=app.f_ui, highlightthickness=1, highlightbackground=t['border'], width=52)
+        self.dir_entry.grid(row=4, column=1, sticky="we", padx=app.px(6), pady=gap, ipady=app.px(2))
+        IconButton(self.opts, app, "folder", "Escolher…", self.choose_dir, bg_token="panel").grid(row=4, column=2, padx=(0, app.px(6)), pady=gap)
+        IconButton(self.opts, app, "", "Padrão", self.reset_dir, bg_token="panel").grid(row=4, column=3, pady=gap)
+        # corpo: lista de sessões à esquerda, detalhe à direita
+        self.body = tk.Frame(self, bg=t['panel'])
+        self.body.pack(fill=tk.BOTH, expand=True)
+        left = tk.Frame(self.body, bg=t['panel'])
+        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        right = tk.Frame(self.body, bg=t['panel'], width=app.px(400))
+        right.pack(side=tk.RIGHT, fill=tk.Y, padx=(app.px(10), 0))
+        right.pack_propagate(False)
+        self.tools = tk.Frame(left, bg=t['panel'])
+        lab(self.tools, "Sessões aprovadas", font=app.f_bold).pack(side=tk.LEFT)
+        IconButton(self.tools, app, "", "Marcar todas", lambda: self.mark_all(True), bg_token="panel").pack(side=tk.LEFT, padx=(app.px(10), 0))
+        IconButton(self.tools, app, "", "Desmarcar todas", lambda: self.mark_all(False), bg_token="panel").pack(side=tk.LEFT, padx=(app.px(6), 0))
+        self.list_title = lab(left, "Sessões deste lote", font=app.f_bold)
+        self.tree_box = tk.Frame(left, bg=t['border'], padx=1, pady=1)
+        self.tree_box.pack(fill=tk.BOTH, expand=True, pady=(app.px(6), 0))
+        ttk.Style().configure("AutoRun.Treeview", rowheight=app.px(28))
+        self.tree = ttk.Treeview(self.tree_box, style="AutoRun.Treeview", columns=("sel", "state", "title", "where"), show="headings", selectmode="browse", height=7)
+        for col, text, width, stretch in (("sel", "", 36, False), ("state", "Estado", 130, False), ("title", "Sessão", 250, True), ("where", "Projeto / pasta", 170, False)):
+            self.tree.heading(col, text=text, anchor=tk.W)
+            self.tree.column(col, width=app.px(width), stretch=stretch, anchor=tk.CENTER if col == "sel" else tk.W)
+        sb = ttk.Scrollbar(self.tree_box, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        for tag, tok in (("ok", "success"), ("erro", "danger"), ("run", "accent_text"), ("wait", "fg"), ("muted", "muted")):
+            self.tree.tag_configure(tag, foreground=t[tok])
+        self.tree.bind("<<TreeviewSelect>>", lambda e: self.render_detail())
+        self.tree.bind("<Button-1>", self.on_click, add="+")
+        self.tree.bind("<space>", self.on_space)
+        self.tree.bind("<Double-1>", lambda e: self.open_receipt() if self.step != "prepare" else None)
+        lab(right, "Detalhe da sessão", font=app.f_bold).pack(fill=tk.X)
+        self.detail = tk.Text(right, wrap=tk.WORD, font=app.f_ui, bg=t['panel2'], fg=t['fg'], relief=tk.FLAT, highlightthickness=1, highlightbackground=t['border'],
+                              highlightcolor=t['border'], padx=app.px(10), pady=app.px(8), width=40, height=12, tabs=(app.px(120),),
+                              selectbackground=t['sel_bg'], selectforeground=t['sel_fg'])
+        self.detail.tag_configure("k", font=app.f_bold, foreground=t['muted'])
+        self.detail.tag_configure("row", lmargin2=app.px(120))
+        self.detail.tag_configure("h", font=app.f_bold, foreground=t['accent_text'], spacing1=app.px(8), spacing3=app.px(2))
+        self.detail.bind("<Key>", lambda e: None if (e.state & 0x4 and e.keysym.lower() in ("c", "a")) else "break")  # só leitura, mas copia
+        self.btn_receipt = IconButton(right, app, "export", "Ver recibo", self.open_receipt, bg_token="panel")
+        self.detail.pack(fill=tk.BOTH, expand=True, pady=(app.px(6), 0))
+
+    # --- etapas -----------------------------------------------------------------------------
+
+    def set_step(self, step):
+        app, t = self.app, self.t
+        self.step = step
+        for key, label in self.step_labels.items():
+            on = key == step
+            label.configure(bg=t['sel_bg'] if on else t['panel'], fg=t['sel_fg'] if on else t['muted'], highlightbackground=t['accent'] if on else t['panel'])
+        self.intro.configure(text=self.INTRO[step])
+        if step == "prepare":
+            self.opts.pack(fill=tk.X, pady=(0, app.px(8)), before=self.body)
+            self.list_title.pack_forget()
+            self.tools.pack(fill=tk.X, before=self.tree_box)
+            self.primary.kind, self.primary.icon = "primary", "autorun"
+            self.primary.set_text("Iniciar")
+            self.secondary.set_text("Cancelar")
+            self.secondary.pack(side=tk.RIGHT, padx=(0, app.px(8)))
+        else:
+            self.opts.pack_forget()
+            self.tools.pack_forget()
+            self.list_title.pack(fill=tk.X, before=self.tree_box)
+            if step == "run":
+                self.primary.kind, self.primary.icon = "normal", ""
+                self.primary.set_text("Cancelar lote")
+                self.secondary.pack_forget()
+            else:
+                self.primary.kind, self.primary.icon = "primary", ""
+                self.primary.set_text("Fechar")
+                self.secondary.set_text("Salvar relatório…")
+                self.secondary.pack(side=tk.RIGHT, padx=(0, app.px(8)))
+        self.tree["displaycolumns"] = ("sel", "state", "title", "where") if step == "prepare" else ("state", "title", "where")
+        self.primary.redraw()
+        self.secondary.redraw()
+
+    def show_prepare(self, items, done):
+        self.title("Auto-Run — preparar")
+        self.items, self.by_cid, self.done_ids = list(items), {it['cid']: it for it in items}, set(done)
+        self.checks = {it['cid']: tk.BooleanVar(master=self, value=it['cid'] not in self.done_ids) for it in self.items}
+        for cid, var in self.checks.items():
+            var.trace_add("write", lambda *a, c=cid: self.refresh_row(c))
+        self.states, self.info, self.lines, self.current, self.summary, self.result = {}, {}, {}, None, None, None
+        self.decision.set("")
+        self.fill_tree()
+        self.set_step("prepare")
+        self.update_status()
+        if self.items:
+            self.tree.selection_set(self.items[0]['cid'])
+        self.render_detail()
+
+    def show_run(self, items, n, dry_run, model, dossier_dir):
+        if items:
+            self.items, self.by_cid = list(items), {it['cid']: it for it in items}
+        self.states = {it['cid']: "wait" for it in self.items}
+        self.info, self.lines, self.current, self.summary = {}, {}, None, None
+        self.dry_run, self.model_used, self.dossier_used = dry_run, model, dossier_dir
+        self.title("Auto-Run — " + ("simulação" if dry_run else "executando"))
+        self.fill_tree()
+        self.set_step("run")
+        self.update_status()
+        if self.items:
+            self.tree.selection_set(self.items[0]['cid'])
+        self.render_detail()
+
+    def finish(self, payload):
+        self.summary = payload if isinstance(payload, dict) else {}
+        self.current = None
+        self.set_step("done")
+        self.update_status()
+        self.render_detail()
+
+    # --- lista ------------------------------------------------------------------------------
+
+    def state_key(self, cid):
+        if self.step == "prepare":
+            if self.checks.get(cid) is not None and not self.checks[cid].get():
+                return "done_off" if cid in self.done_ids else "off"
+            return "redo" if cid in self.done_ids else "ready"
+        return self.states.get(cid, "wait")
+
+    def row_values(self, cid):
+        it = self.by_cid[cid]
+        meta = it.get('meta') or {}
+        mark = "☑" if self.checks.get(cid) is not None and self.checks[cid].get() else "☐"
+        return (mark, self.STATE_TEXT[self.state_key(cid)], it['title'][:80], it.get('workspace_label') or meta.get('project') or "")
+
+    def fill_tree(self):
+        self.tree.delete(*self.tree.get_children())
+        for it in self.items:
+            self.tree.insert("", tk.END, iid=it['cid'], values=self.row_values(it['cid']), tags=(self.STATE_TAG[self.state_key(it['cid'])],))
+
+    def refresh_row(self, cid):
+        if cid in self.by_cid and self.tree.exists(cid):
+            self.tree.item(cid, values=self.row_values(cid), tags=(self.STATE_TAG[self.state_key(cid)],))
+            self.update_status()
+            if self.selected() == cid:
+                self.render_detail()
+
+    def selected(self):
+        sel = self.tree.selection()
+        return sel[0] if sel else None
+
+    def mark_all(self, flag):
+        for var in self.checks.values():
+            var.set(flag)
+
+    def redo_changed(self):  # Refazer marca ou desmarca as já retomadas
+        for cid in self.done_ids:
+            if cid in self.checks:
+                self.checks[cid].set(self.redo.get())
+
+    def on_click(self, e):
+        if self.step == "prepare" and self.tree.identify_region(e.x, e.y) == "cell" and self.tree.identify_column(e.x) == "#1":
+            cid = self.tree.identify_row(e.y)
+            if cid in self.checks:
+                self.checks[cid].set(not self.checks[cid].get())
+                self.tree.selection_set(cid)
+                return "break"
+
+    def on_space(self, e):
+        cid = self.selected()
+        if self.step == "prepare" and cid in self.checks:
+            self.checks[cid].set(not self.checks[cid].get())
+        return "break"
+
+    # --- eventos do lote ------------------------------------------------------------------------
+
+    def item_event(self, kind, cid, info):
+        if cid not in self.by_cid:
+            return
+        if kind == "start":
+            self.current, self.states[cid] = cid, "run"
+        elif kind == "done":
+            self.info[cid], self.states[cid] = info, info.get('state', 'erro')
+        elif kind == "skipped":
+            self.states[cid] = "skipped"
+        self.refresh_row(cid)
+
+    def add_line(self, line):
+        if self.current:
+            self.lines.setdefault(self.current, []).append(line.strip())
+            if self.selected() == self.current:
+                self.render_detail()
+
+    def update_status(self):
+        n = len(self.items)
+        if self.step == "prepare":
+            self.status.configure(text=f"{sum(1 for v in self.checks.values() if v.get())} de {n} sessões marcadas")
+            return
+        cnt = lambda *keys: sum(1 for s in self.states.values() if s in keys)
+        pl = lambda k, one, many: f"{k} {one if k == 1 else many}"
+        if self.step == "run":
+            self.status.configure(text=f"{cnt('ok', 'erro', 'dossie')} de {n} processadas · ✔ {cnt('ok')} · ✖ {pl(cnt('erro'), 'falha', 'falhas')}")
+            return
+        s = self.summary or {}
+        text = (f"✔ {pl(s.get('ok', 0), 'retomada', 'retomadas')} · ▤ {pl(s.get('dossier', 0), 'dossiê', 'dossiês')} · ✖ {pl(s.get('failed', 0), 'falha', 'falhas')} · "
+                f"» {pl(s.get('skipped', 0), 'não executada', 'não executadas')}")
+        if s.get('aborted'):
+            text += f" · motivo: {s['aborted']}"
+        if s.get('error'):
+            text = f"Erro inesperado: {s['error']}"
+        self.status.configure(text=text)
+
+    # --- detalhe ------------------------------------------------------------------------------
+
+    def dossier_dir(self):
+        return self.dir_var.get().strip() or HANDOFF_DIR
+
+    def render_detail(self):
+        txt = self.detail
+        txt.configure(state=tk.NORMAL)
+        txt.delete("1.0", tk.END)
+
+        def kv(label, value):
+            txt.insert(tk.END, label, ("k", "row"))
+            txt.insert(tk.END, f"\t{value}\n", ("row",))
+        cid = self.selected()
+        show_receipt = False
+        if not cid or cid not in self.by_cid:
+            txt.insert(tk.END, "Selecione uma sessão na lista para ver o detalhe." if self.items else "Sem sessões neste lote.", "k")
+        else:
+            it, info = self.by_cid[cid], self.info.get(cid, {})
+            meta = it.get('meta') or {}
+            kv("Sessão", it['title'])
+            kv("UUID", cid)
+            kv("Estado", self.STATE_TEXT[self.state_key(cid)])
+            if self.step == "prepare":
+                project, _dirs, cwd = AutoRunner._target(it, self.dossier_dir())
+                kv("Projeto original", meta.get('project') or "-")
+                kv("Nova sessão em", cwd)
+                kv("Projeto no agy", f"{meta.get('project') or project} (--project)" if project else "CLI Project (sem --project)")
+                kv("Dossiê em", self.dossier_dir())
+                if cid in self.done_ids:
+                    kv("Já retomada", f"↪ {str(self.app.handoffs.get(cid, ''))[:8]}")
+            else:
+                if info.get('new_cid'):
+                    kv("Sessão nova", info['new_cid'])
+                if info.get('cwd'):
+                    kv("Pasta", info['cwd'])
+                if info.get('project'):
+                    kv("Projeto no agy", info['project'])
+                if info.get('model') is not None and info.get('state') == 'ok':
+                    kv("Modelo", info['model'] or "padrão do agy")
+                if isinstance(info.get('duration'), (int, float)):
+                    kv("Duração", f"{info['duration']:.1f} s".replace(".", ","))
+                if usage_text(info.get('usage')):
+                    kv("Tokens", usage_text(info['usage']))
+                if info.get('dossier'):
+                    kv("Dossiê", info['dossier'])
+                if info.get('error'):
+                    kv("Motivo", info['error'].strip().splitlines()[0][:300] if info['error'].strip() else "-")
+                show_receipt = self.states.get(cid) == "ok"
+                if self.lines.get(cid):
+                    txt.insert(tk.END, "O que aconteceu\n", "h")
+                    txt.insert(tk.END, "\n".join(self.lines[cid]) + "\n")
+                if info.get('response'):
+                    resp = " ".join(redact(info['response']).split())
+                    txt.insert(tk.END, "Resposta do agy\n", "h")
+                    txt.insert(tk.END, resp[:700] + ("…" if len(resp) > 700 else "") + ("\nA resposta completa está no recibo.\n" if len(resp) > 700 else "\n"))
+        txt.configure(state=tk.DISABLED)
+        if show_receipt:
+            if not self.btn_receipt.winfo_manager():
+                self.btn_receipt.pack(side=tk.BOTTOM, anchor="w", pady=(self.app.px(8), 0), before=self.detail)
+        elif self.btn_receipt.winfo_manager():
+            self.btn_receipt.pack_forget()
+
+    def open_receipt(self):
+        cid = self.selected()
+        if cid and self.states.get(cid) == "ok":
+            self.app.show_receipt(cid)
+
+    # --- botões -------------------------------------------------------------------------------
+
+    def on_primary(self):
+        if self.step == "prepare":
+            self.go()
+        elif self.step == "run":
+            self.app.cancel_autorun()
+        else:
+            self.app.close_autorun(self)
+
+    def on_secondary(self):
+        if self.step == "prepare":
+            self.cancel_prepare()
+        elif self.step == "done":
+            self.save_report()
+
+    def toggle_log(self):
+        if self.log.winfo_manager():
+            self.log.pack_forget()
+            self.log_toggle.configure(text="▸  Registro completo (para suporte)")
+        else:
+            self.log.pack(side=tk.BOTTOM, fill=tk.X, before=self.log_toggle)
+            self.log_toggle.configure(text="▾  Registro completo (para suporte)")
+
+    def choose_dir(self):
+        folder = filedialog.askdirectory(parent=self, title="Pasta dos dossiês do Auto-Run", initialdir=self.dossier_dir() if os.path.isdir(self.dossier_dir()) else None, mustexist=False)
+        if folder:
+            self.dir_var.set(os.path.normpath(folder))
+            self.render_detail()
+
+    def reset_dir(self):
+        self.dir_var.set(HANDOFF_DIR)
+        self.render_detail()
+
+    def go(self):
+        """Iniciar: confere a pasta dos dossiês, guarda as escolhas e libera o `confirm_autorun`. A janela fica: vira a etapa Executando."""
+        app = self.app
+        folder = self.dossier_dir()
+        try:
+            os.makedirs(folder, exist_ok=True)
+            probe = os.path.join(folder, ".agygate_teste")
+            open(probe, "w").close()
+            os.remove(probe)
+        except OSError as e:
+            messagebox.showerror("Auto-Run", f"Não consigo gravar na pasta dos dossiês:\n{folder}\n\n{e}", parent=self)
+            return
+        model = self.model_var.get().strip()
+        history = [m for m in app.settings.get("agy_models", []) if isinstance(m, str)]
+        self.result = {'dry_run': self.dry.get(), 'redo': self.redo.get(), 'model': model, 'dossier_dir': folder,
+                       'cids': {c for c, v in self.checks.items() if v.get()}}
+        app.settings["agy_model"] = model
+        if model:
+            app.settings["agy_models"] = ([model] + [m for m in history if m != model])[:6]
+        same = os.path.normcase(os.path.abspath(folder)) == os.path.normcase(os.path.abspath(HANDOFF_DIR))
+        app.settings["dossier_dir"] = "" if same else folder
+        save_settings(app.settings)
+        self.decision.set("go")
+
+    def cancel_prepare(self):
+        self.result = None
+        self.decision.set("cancel")
+        self.destroy()
+
+    def destroy(self):
+        app = getattr(self, "app", None)
+        if app is not None and app.auto_win and app.auto_win[0] is self:
+            app.auto_win = None
+        try:
+            if self.step == "prepare" and not self.decision.get():
+                self.result = None
+                self.decision.set("cancel")  # solta o confirm_autorun que ainda espera
+        except tk.TclError:
+            pass
+        super().destroy()
+
+    # --- relatório ------------------------------------------------------------------------------
+
+    def report_markdown(self):
+        s = self.summary or {}
+        pl = lambda k, one, many: f"{k} {one if k == 1 else many}"
+        out = ["# Relatório do Auto-Run", "",
+               f"- **Quando:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+               "- **Modo:** " + ("simulação (só gera os dossiês)" if self.dry_run else "retomada real (agy, modo plan)"),
+               f"- **Modelo:** {self.model_used or 'padrão do agy'}",
+               f"- **Pasta dos dossiês:** {self.dossier_used}",
+               f"- **Resultado:** ✔ {pl(s.get('ok', 0), 'retomada', 'retomadas')} · ▤ {pl(s.get('dossier', 0), 'dossiê', 'dossiês')} · "
+               f"✖ {pl(s.get('failed', 0), 'falha', 'falhas')} · » {pl(s.get('skipped', 0), 'não executada', 'não executadas')}"]
+        if s.get('aborted'):
+            out.append(f"- **Interrompido:** {s['aborted']}")
+        if s.get('quota'):
+            out.append(f"- **Cota esgotada:** volta em {s['quota']}")
+        for i, it in enumerate(self.items, 1):
+            cid, info = it['cid'], self.info.get(it['cid'], {})
+            out += ["", f"## {i}. {it['title']}", "", f"- **UUID:** `{cid}`", f"- **Estado:** {self.STATE_TEXT[self.states.get(cid, 'wait')]}"]
+            if info.get('new_cid'):
+                out.append(f"- **Sessão nova:** `{info['new_cid']}`")
+            for label, key in (("Pasta de trabalho", "cwd"), ("Projeto no agy", "project"), ("Dossiê", "dossier")):
+                if info.get(key):
+                    out.append(f"- **{label}:** {info[key]}")
+            if isinstance(info.get('duration'), (int, float)):
+                out.append(f"- **Duração:** {info['duration']:.1f} s".replace(".", ","))
+            if usage_text(info.get('usage')):
+                out.append(f"- **Tokens:** {usage_text(info['usage'])}")
+            if info.get('error'):
+                out.append(f"- **Motivo:** {info['error'].strip().splitlines()[0][:300] if info['error'].strip() else '-'}")
+            if info.get('response'):
+                out += ["", "Resposta do agy:", "", redact(info['response']).strip()]
+        return "\n".join(out) + "\n"
+
+    def save_report(self):
+        os.makedirs(EXPORT_DIR, exist_ok=True)
+        name = f"AntigravityGate_autorun_{datetime.now().strftime('%Y%m%d-%H%M%S')}.md"
+        out = filedialog.asksaveasfilename(parent=self, title="Salvar relatório do Auto-Run", initialdir=EXPORT_DIR, initialfile=name,
+                                           defaultextension=".md", filetypes=[("Markdown", "*.md"), ("Texto", "*.txt"), ("Todos os arquivos", "*.*")])
+        if not out:
+            return
+        try:
+            with open(out, "w", encoding="utf-8") as fh:
+                fh.write(self.report_markdown())
+        except OSError as e:
+            messagebox.showerror("Auto-Run", f"Não foi possível salvar o relatório: {e}", parent=self)
+            return
+        self.app.notify("ok", f"Relatório salvo: {out}")
 
 
 class AboutDialog(tk.Toplevel):
@@ -2874,6 +3386,7 @@ class AntigravityGateApp(tk.Tk):
         self.match, self.sort_col, self.sort_rev = None, "col_date", True
         self.chip_filter = None
         self.side_items, self.proj_items, self.tabs, self._proj_key, self.sidebar_wanted = {}, [], {}, None, True
+        self._confirming = False  # a janela do Auto-Run está na etapa Preparar, esperando o Iniciar
         self.search_note = ""
 
         self.settings = load_settings()
@@ -4446,89 +4959,37 @@ class AntigravityGateApp(tk.Tk):
 
     # --- Auto-Run ---
 
+    def auto_window(self):
+        """A janela única do Auto-Run (cria se não existir)."""
+        if self.auto_win and self.auto_win[0].winfo_exists():
+            return self.auto_win[0]
+        win = AutoRunWindow(self)
+        self.auto_win = (win, win.log, win.primary)
+        return win
+
+    def drop_auto_window(self):
+        """O lote não começou (nada marcado, sem agy): fecha a janela que ficou na etapa Preparar."""
+        if self.auto_win and self.auto_win[0].step == "prepare":
+            self.auto_win[0].destroy()
+
     def confirm_autorun(self, items, done):
-        """Confirmação no tema do app: uma caixa por sessão aprovada (já retomadas vêm desmarcadas, salvo Refazer), simulação,
-        modelo. Devolve {'dry_run', 'redo', 'model', 'cids'} ou None se o usuário cancelar."""
-        t = self.t
-        win = self.confirm_win = tk.Toplevel(self)
-        win.title("Auto-Run — confirmar")
-        win.transient(self)
-        win.configure(bg=t['panel'], padx=self.px(16), pady=self.px(12))
-        result = {'v': None}
-
-        def lab(parent, text, fg='fg', font=None, **kw):
-            return tk.Label(parent, text=text, bg=t['panel'], fg=t[fg], font=font or self.f_ui, justify=tk.LEFT, anchor="w", **kw)
-
-        def check(parent, text, var, command=None, font=None):
-            return tk.Checkbutton(parent, text=text, variable=var, command=command, bg=t['panel'], fg=t['fg'], selectcolor=t['panel2'],
-                                  activebackground=t['panel'], activeforeground=t['fg'], font=font or self.f_ui, anchor="w",
-                                  highlightthickness=1, highlightbackground=t['panel'], highlightcolor=t['accent'])
-
-        lab(win, f"{len(items)} sessão(ões) aprovada(s) nesta fonte. Marque as que vão rodar agora.", font=self.f_bold).pack(anchor="w")
-        lab(win, "Para cada uma o app gera o dossiê de retomada e, fora da simulação, abre uma sessão NOVA com o agy "
-                 "(a original não é alterada). Rodam uma de cada vez.", 'muted', self.f_small, wraplength=self.px(640)).pack(anchor="w", pady=(2, 8))
-
-        # lista com rolagem (até ~8 linhas visíveis)
-        outer = tk.Frame(win, bg=t['border'], padx=1, pady=1)
-        outer.pack(fill=tk.BOTH, expand=True)
-        canvas = tk.Canvas(outer, bg=t['panel2'], highlightthickness=0, height=self.px(30) * min(8, max(2, len(items))))
-        sb = ttk.Scrollbar(outer, orient=tk.VERTICAL, command=canvas.yview)
-        inner = tk.Frame(canvas, bg=t['panel2'])
-        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=inner, anchor="nw")
-        canvas.configure(yscrollcommand=sb.set, width=self.px(640))
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        if len(items) > 8:
-            sb.pack(side=tk.RIGHT, fill=tk.Y)
-        self.confirm_checks = {}
-        for it in items:
-            var = tk.BooleanVar(value=it['cid'] not in done)
-            self.confirm_checks[it['cid']] = var
-            ws = f"  ·  {it['workspace_label']}" if it.get('workspace_label') else ""
-            mark = "  (já retomada)" if it['cid'] in done else ""
-            tk.Checkbutton(inner, text=f"{it['title'][:60]}  [{it['cid'][:8]}]{ws}{mark}", variable=var, bg=t['panel2'], fg=t['fg'],
-                           selectcolor=t['panel'], activebackground=t['panel2'], activeforeground=t['fg'], font=self.f_ui,
-                           anchor="w", highlightthickness=1, highlightbackground=t['panel2'],
-                           highlightcolor=t['accent']).pack(fill=tk.X, anchor="w", padx=self.px(6), pady=1)
-
-        dry, redo = tk.BooleanVar(value=True), tk.BooleanVar(value=False)
-
-        def redo_changed():  # Refazer marca/desmarca as já retomadas
-            for cid in done:
-                if cid in self.confirm_checks:
-                    self.confirm_checks[cid].set(redo.get())
-        self.confirm_redo_changed = redo_changed
-        check(win, "Só gerar os dossiês (simulação: não chama o agy, não gasta cota)", dry).pack(anchor="w", pady=(10, 0))
-        check(win, "Refazer as que já foram retomadas", redo, redo_changed).pack(anchor="w")
-        mrow = tk.Frame(win, bg=t['panel'])
-        mrow.pack(anchor="w", fill=tk.X, pady=(8, 0))
-        lab(mrow, "Modelo do agy:").pack(side=tk.LEFT)
-        self.model_var = tk.StringVar(value=str(self.settings.get("agy_model") or ""))
-        history = [m for m in self.settings.get("agy_models", []) if isinstance(m, str)]
-        self.model_box = ttk.Combobox(mrow, textvariable=self.model_var, values=self.agy_model_choices(), width=32)
-        self.model_box.pack(side=tk.LEFT, padx=(6, 8))
-        lab(mrow, "vazio = padrão do agy", 'muted', self.f_small).pack(side=tk.LEFT)
-        lab(win, "Modo do agy: plan (somente leitura). Um erro de cota interrompe o lote inteiro.", 'muted', self.f_small).pack(anchor="w", pady=(6, 0))
-
-        def go():
-            model = self.model_var.get().strip()
-            cids = {cid for cid, v in self.confirm_checks.items() if v.get()}
-            result['v'] = {'dry_run': dry.get(), 'redo': redo.get(), 'model': model, 'cids': cids}
-            self.settings["agy_model"] = model
-            if model:
-                self.settings["agy_models"] = ([model] + [m for m in history if m != model])[:6]
-            save_settings(self.settings)
-            win.destroy()
-        self.confirm_go, self.confirm_dry, self.confirm_redo = go, dry, redo  # usados pelos testes
-        row = tk.Frame(win, bg=t['panel'])
-        row.pack(anchor="e", pady=(self.px(12), 0))
-        IconButton(row, self, "", "Cancelar", win.destroy, bg_token="panel").pack(side=tk.LEFT, padx=(0, self.px(8)))
-        IconButton(row, self, "autorun", "Iniciar", go, kind="primary", bg_token="panel").pack(side=tk.LEFT)
-        win.bind("<Escape>", lambda e: win.destroy())
-        place_over(win, self)
-        win.grab_set()
-        self.wait_window(win)
-        return result['v']
+        """Etapa 1 (Preparar) da janela única do Auto-Run: uma linha por sessão aprovada (as já retomadas vêm desmarcadas, salvo Refazer),
+        simulação ou retomada real, modelo e pasta dos dossiês. Espera o Iniciar. Devolve {'dry_run', 'redo', 'model', 'cids', 'dossier_dir'}
+        ou None se o usuário cancelar."""
+        win = self.auto_window()
+        win.show_prepare(items, done)
+        self.confirm_win, self.confirm_checks, self.confirm_dry, self.confirm_redo = win, win.checks, win.dry, win.redo  # usados pelos testes
+        self.confirm_redo_changed, self.confirm_go, self.model_var, self.model_box = win.redo_changed, win.go, win.model_var, win.model_box
+        win.lift()
+        win.focus_force()
+        self._confirming = True
+        try:
+            self.wait_variable(win.decision)
+        except tk.TclError:
+            return None
+        finally:
+            self._confirming = False
+        return win.result
 
     def agy_model_choices(self):
         """Usados por último, depois a lista conhecida (a mais recente que o agy devolveu, ou a do app), sem repetir."""
@@ -4540,6 +5001,10 @@ class AntigravityGateApp(tk.Tk):
     def start_autorun(self):
         if self.autorunning:
             messagebox.showinfo("Aviso", "O Auto-Run já está em andamento.")
+            return
+        if self._confirming:  # a janela de preparação já está aberta: só traz para a frente
+            if self.auto_win:
+                self.auto_win[0].lift()
             return
         cands = []
         for grp in self.grouped.values():
@@ -4561,11 +5026,13 @@ class AntigravityGateApp(tk.Tk):
             items = [c for c in cands if c['cid'] in opts['cids']]
             if not items:
                 messagebox.showinfo("Auto-Run", "Nenhuma sessão marcada. Marque ao menos uma na lista para rodar.")
+                self.drop_auto_window()
                 return
         else:
             items = [c for c in cands if opts['redo'] or c['cid'] not in self.handoffs]
         if not items:
             messagebox.showinfo("Auto-Run", "Todas as sessões aprovadas já foram retomadas. Marque \"Refazer\" para repetir.")
+            self.drop_auto_window()
             return
         agy = None
         if not opts['dry_run']:
@@ -4573,13 +5040,17 @@ class AntigravityGateApp(tk.Tk):
             if not agy:
                 messagebox.showerror("Auto-Run", "Não encontrei o agy. Confira se `agy --help` funciona no PowerShell, "
                                                  "ou defina AGY_EXE com o caminho do agy.exe.")
+                self.drop_auto_window()
                 return
         self.autorunning = True
         self.btn["autorun"].set_busy(True, "Executando…")
         self.update_actions()
         model = (opts.get('model') or '').strip()
-        self.open_autorun_window(len(items), opts['dry_run'], model)
-        runner = AutoRunner(items, self.state, lambda line: self.queue.put((0, 'auto_log', line)), agy=agy, dry_run=opts['dry_run'], model=model or None)
+        dossier_dir = opts.get('dossier_dir') or HANDOFF_DIR
+        EXTRA_OWN_DIRS[:] = [dossier_dir]  # pasta escolhida pelo usuário: do app, nunca workspace de projeto (gate_owned)
+        self.open_autorun_window(len(items), opts['dry_run'], model, items=items, dossier_dir=dossier_dir)
+        runner = AutoRunner(items, self.state, lambda line: self.queue.put((0, 'auto_log', line)), agy=agy, dry_run=opts['dry_run'], model=model or None,
+                            dossier_dir=dossier_dir, item_cb=lambda kind, cid, info: self.queue.put((0, 'auto_item', (kind, cid, info))))
         self.runner = runner
 
         def job():
@@ -4593,28 +5064,10 @@ class AntigravityGateApp(tk.Tk):
         self.auto_thread = threading.Thread(target=job, daemon=True)
         self.auto_thread.start()
 
-    def open_autorun_window(self, n, dry_run, model=""):
-        if self.auto_win:  # janela de um lote anterior ainda aberta (já no "Fim."): uma por vez
-            try:
-                self.auto_win[0].destroy()
-            except tk.TclError:
-                pass
-            self.auto_win = None
-        t = self.t
-        win = tk.Toplevel(self)
-        win.title("Auto-Run — " + ("simulação" if dry_run else "executando"))
-        win.transient(self)  # sempre acima da janela principal (abria atrás dela)
-        win.configure(bg=t['panel'])
-        mono = next((f for f in ("JetBrains Mono", "Consolas", "DejaVu Sans Mono") if f in self.families), "TkFixedFont")
-        txt = tk.Text(win, wrap=tk.WORD, state=tk.DISABLED, font=(mono, 9), bg=t['panel'], fg=t['fg'], insertbackground=t['fg'],
-                      selectbackground=t['sel_bg'], selectforeground=t['sel_fg'], relief=tk.FLAT, highlightthickness=1,
-                      highlightbackground=t['border'], highlightcolor=t['border'], padx=self.px(8), pady=self.px(6))
-        txt.pack(fill=tk.BOTH, expand=True, padx=self.px(10), pady=self.px(10))
-        btn = IconButton(win, self, "", "Cancelar", lambda: self.close_autorun(win), bg_token="panel")
-        btn.pack(pady=(0, self.px(10)))
-        win.protocol("WM_DELETE_WINDOW", lambda: self.close_autorun(win))  # X = Cancelar (lote rodando) ou Fechar (depois do Fim)
-        place_over(win, self, size=(self.px(780), self.px(420)))
-        self.auto_win = (win, txt, btn)
+    def open_autorun_window(self, n, dry_run, model="", items=None, dossier_dir=None):
+        """Etapa Executando da janela única (cria a janela se a confirmação não passou por ela)."""
+        win = self.auto_window()
+        win.show_run(items or [], n, dry_run, model, dossier_dir or HANDOFF_DIR)
         win.lift()
         win.focus_force()
         mode = 'simulação (só dossiês)' if dry_run else 'agy --mode plan, modelo ' + (model or 'padrão do agy')
@@ -4623,11 +5076,12 @@ class AntigravityGateApp(tk.Tk):
     def append_auto(self, line):
         if not self.auto_win:
             return
-        _win, txt, _btn = self.auto_win
+        win, txt, _btn = self.auto_win
         txt.configure(state=tk.NORMAL)
         txt.insert(tk.END, line + "\n")
         txt.see(tk.END)
         txt.configure(state=tk.DISABLED)
+        win.add_line(line)
 
     def cancel_autorun(self):
         if self.runner and self.autorunning:
@@ -4635,13 +5089,15 @@ class AntigravityGateApp(tk.Tk):
             self.runner.cancel()
         elif self.auto_win:
             self.auto_win[0].destroy()
-            self.auto_win = None
 
     def close_autorun(self, win):
-        """Botão e X de uma janela de andamento: agem só sobre ela. A atual cancela o lote (ou fecha depois do Fim);
-        uma antiga que tenha ficado aberta apenas fecha, sem tocar no lote em curso."""
+        """Botão e X da janela do Auto-Run: agem só sobre ela. Preparar: cancela. Executando: cancela o lote. Resumo: fecha.
+        Outra janela que tenha ficado aberta apenas fecha, sem tocar no lote em curso."""
         if self.auto_win and self.auto_win[0] is win:
-            self.cancel_autorun()
+            if win.step == "prepare":
+                win.cancel_prepare()
+            else:
+                self.cancel_autorun()
         else:
             try:
                 win.destroy()
@@ -4651,6 +5107,10 @@ class AntigravityGateApp(tk.Tk):
     def on_auto_event(self, kind, payload):
         if kind == 'auto_log':
             self.append_auto(payload)
+            return
+        if kind == 'auto_item':  # estado de uma sessão do lote (começou, terminou, não executada)
+            if self.auto_win:
+                self.auto_win[0].item_event(*payload)
             return
         self.autorunning = False
         self.btn["autorun"].set_busy(False, "Auto-Run")
@@ -4672,7 +5132,7 @@ class AntigravityGateApp(tk.Tk):
                              f"✖ {n('failed', 'falha', 'falhas')} · » {n('skipped', 'não executada', 'não executadas')}"
                              + (f" · motivo: {payload['aborted']}" if payload['aborted'] else ""))
         if self.auto_win:
-            self.auto_win[2].set_text("Fechar")
+            self.auto_win[0].finish(payload)  # etapa Resumo; o botão passa a Fechar
             fim = "erro" if 'error' in payload else ("concluído com problemas" if payload.get('failed') or payload.get('aborted') else "concluído")
             self.auto_win[0].title("Auto-Run — " + fim)  # antes ficava "executando" depois do Fim
         try:

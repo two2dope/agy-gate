@@ -23,7 +23,7 @@ A conferência da integridade do download: a Release mostra o SHA-256 do `.exe`.
 - Coluna Consumo (tokens, % do nível crítico, medidor) e tabela compacta ou confortável; coluna ⋮ com o menu da sessão.
 - Painel de detalhes, busca (inclusive no conteúdo das conversas), ordenação e menu de contexto.
 - **Diálogo completo** e **dossiê de retomada** em Markdown, com lista de arquivos alterados e consultados. O dossiê mascara chaves e senhas por padrões conhecidos (heurística: confira antes de compartilhar).
-- **Auto-Run**: abre uma sessão nova no `agy` com o dossiê das sessões aprovadas, no projeto e na pasta da sessão original (modo simulação disponível). O app não grava nos bancos do Antigravity, mas cada sessão nova que o `agy` cria fica neles.
+- **Auto-Run**: abre uma sessão nova no `agy` com o dossiê das sessões aprovadas, no projeto e na pasta da sessão original (modo simulação disponível). O app não grava nos bancos do Antigravity, mas cada sessão nova que o `agy` cria fica neles. A janela é uma só, em três etapas (preparar, executando, resumo), com recibo e relatório salváveis em arquivo.
 - 8 temas; ícones em 6 estilos (Windows, Font Awesome, Bootstrap, Material, Unicode ou nenhum), com as fontes dentro do `.exe`; barra de título que segue o tema.
 
 ## Rodar a partir do código
