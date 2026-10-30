@@ -96,7 +96,7 @@ app.tree.selection_set(app.tree.get_children()[0]); app.update()
 assert "3 sessões" in app.d_sub.cget("text") and "pendentes" in app.d_note.cget("text") and not app.btn["d_export"].enabled
 # 8. estado e retomada refletem no painel; mudar de tema redesenha
 app.tree.selection_set(iid(1)); app.mark_selected("aprovada"); app.handoffs[U(1)] = "bbbbbbbb-1111"; app.refresh_labels(); app.update_details()
-assert F("state") == "Aprovada" and F("handoff") == "↪ bbbbbbbb"
+assert F("state") == "Aprovada" and F("handoff") == "↪ bbbbbbbb  ·  ver recibo"
 old = app.gauge.itemcget(app.gauge.find_all()[0], "fill"); app.set_theme("cyber"); app.update()
 assert app.gauge.itemcget(app.gauge.find_all()[0], "fill") != old
 # 9. botões do painel
