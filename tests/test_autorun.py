@@ -178,7 +178,7 @@ app.cancel_autorun(); assert app.auto_win is None
 reset("ok"); app.start_autorun(); wait(app); w1 = app.auto_win[0]
 assert str(w1.transient()) == str(app), "janela de andamento acima da principal (transient)"
 app.start_autorun(); wait(app); w2 = app.auto_win[0]
-assert w2 is not w1 and not w1.winfo_exists() and w2.winfo_exists(), "uma janela de andamento por vez"
+assert w2 is w1 and w1.winfo_exists(), "janela única: o novo lote reaproveita a mesma"
 stray = G.tk.Toplevel(app); app.close_autorun(stray)
 assert not stray.winfo_exists() and app.auto_win and app.auto_win[0] is w2, "fechar outra janela não mexe na atual"
 app.close_autorun(w2); assert app.auto_win is None and not w2.winfo_exists()

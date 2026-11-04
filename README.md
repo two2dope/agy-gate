@@ -4,7 +4,7 @@ Aplicativo de janela (Windows) para **gerir o contexto e curar as conversas do A
 
 O app só **lê** os bancos do Antigravity. O que ele grava (estado, log, exportações) fica em `%LOCALAPPDATA%\AntigravityGate\`.
 
-Versão atual: **1.1.0**. Veja o [CHANGELOG](CHANGELOG.md).
+Versão atual: **1.2.0**. Veja o [CHANGELOG](CHANGELOG.md).
 
 ## Como usar (sem instalar nada)
 
@@ -23,7 +23,7 @@ A conferência da integridade do download: a Release mostra o SHA-256 do `.exe`.
 - Coluna Consumo (tokens, % do nível crítico, medidor) e tabela compacta ou confortável; coluna ⋮ com o menu da sessão.
 - Painel de detalhes, busca (inclusive no conteúdo das conversas), ordenação e menu de contexto.
 - **Diálogo completo** e **dossiê de retomada** em Markdown, com lista de arquivos alterados e consultados. O dossiê mascara chaves e senhas por padrões conhecidos (heurística: confira antes de compartilhar).
-- **Auto-Run**: abre uma sessão nova no `agy` com o dossiê das sessões aprovadas, no projeto e na pasta da sessão original (modo simulação disponível). O app não grava nos bancos do Antigravity, mas cada sessão nova que o `agy` cria fica neles.
+- **Auto-Run**: abre uma sessão nova no `agy` com o dossiê das sessões aprovadas, no projeto e na pasta da sessão original (modo simulação disponível). O app não grava nos bancos do Antigravity, mas cada sessão nova que o `agy` cria fica neles. A janela é uma só, em três etapas (preparar, executando, resumo), com recibo e relatório salváveis em arquivo.
 - 8 temas; ícones em 6 estilos (Windows, Font Awesome, Bootstrap, Material, Unicode ou nenhum), com as fontes dentro do `.exe`; barra de título que segue o tema.
 
 ## Rodar a partir do código
@@ -43,7 +43,7 @@ tests/run_all.sh              # todos
 tests/run_all.sh test_theme   # um só
 ```
 
-São 29 conjuntos (leitura, exportação, Auto-Run com `agy` simulado, salvaguardas do Auto-Run e do fechamento, temas e contraste, janelas e interface). Usam bancos sintéticos; não tocam nos seus dados. Foram escritos e validados em Linux com Xvfb; não foram validados no Windows (o `agy` simulado usa a linha `#!` do arquivo).
+São 31 conjuntos (leitura, exportação, Auto-Run com `agy` simulado, salvaguardas do Auto-Run e do fechamento, temas e contraste, janelas e interface). Usam bancos sintéticos; não tocam nos seus dados. Foram escritos e validados em Linux com Xvfb; não foram validados no Windows (o `agy` simulado usa a linha `#!` do arquivo).
 
 ## Gerar o `.exe` e publicar uma versão
 

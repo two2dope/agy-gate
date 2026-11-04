@@ -2,6 +2,22 @@
 
 Formato: [Versionamento Semântico](https://semver.org/lang/pt-BR/). Enquanto a versão começar com 0, o app está em candidato a lançamento: funciona, mas faltam itens listados abaixo.
 
+## [1.2.0] - 2026-11-04
+
+Ajustes pedidos depois de usar a 1.1.0. Marcos: M1 recibo de retomada; M2 janela única do Auto-Run.
+
+### Adicionado
+- **Recibo de retomada.** Na sessão retomada, clicar em "↪ … ver recibo" nos detalhes (ou "Ver recibo da retomada" no menu da sessão) abre o recibo: sessão original e nova, projeto, modelo, pasta de trabalho, duração, turnos, tokens, dossiê e a resposta completa do agy. Dá para copiar e **salvar em arquivo** (Markdown ou texto). A resposta passa pela máscara de segredos. O Auto-Run passa a gravar esses campos; retomadas de versões anteriores mostram o que existe e "não registrado" no resto (a resposta, nelas, é só o começo).
+
+- **Janela do Auto-Run reescrita: uma só, em três etapas.** 1 Preparar (marcar as sessões, simulação ou retomada real, modelo, **pasta dos dossiês**), 2 Executando (lista com o estado de cada sessão: aguardando, rodando, retomada, dossiê gerado, falhou, não executada) e 3 Resumo. Clicar numa sessão mostra o detalhe: onde a nova será criada, sessão nova, pasta, projeto, modelo, duração, tokens, motivo da falha, o que aconteceu e a resposta; duplo clique (ou "Ver recibo") abre o recibo. **Salvar relatório…** grava o resumo do lote em Markdown. O registro completo continua na janela, recolhido.
+- **Pasta dos dossiês escolhível** (Escolher… e Padrão), lembrada entre execuções. É também a pasta de trabalho das sessões sem projeto.
+
+### Alterado
+- **Cabeçalho e busca com menos texto.** A marca virou o ícone e o nome (a descrição "Gestão de contexto e curadoria" foi para a dica ao passar o mouse). As abas ganharam sublinhado na marcada e um selo de contagem em "Aprovadas aguardando" (a aba "Todas as sessões" passou a "Todas"). A busca ocupa a linha inteira, com a dica dentro do campo, e Buscar e Limpar ficaram só com ícone. A **fonte das sessões** foi para o topo da barra lateral; sem a barra (Ctrl+B ou janela estreita), o seletor volta para a linha da busca.
+
+### Corrigido
+- As janelas de confirmação e de andamento do Auto-Run se sobrepunham e fechar uma delas podia travar. Agora é uma janela só: iniciar outro lote a reaproveita. Esc fecha nas etapas 1 e 3; na 2 não, para não cancelar o lote sem querer.
+
 ## [1.1.0] - 2026-10-29
 
 Pacote visual (plano em `docs/PACOTE_VISUAL_1.1.md`). Marcos M1 (ícones e fontes), M2 (barra lateral), M3 (tabela) e M4 (cores, ambiente e ícone do app).
