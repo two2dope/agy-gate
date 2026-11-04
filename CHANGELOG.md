@@ -2,7 +2,7 @@
 
 Formato: [Versionamento Semântico](https://semver.org/lang/pt-BR/). Enquanto a versão começar com 0, o app está em candidato a lançamento: funciona, mas faltam itens listados abaixo.
 
-## [1.2.0] - 2026-10-30
+## [1.2.0] - 2026-11-04
 
 Ajustes pedidos depois de usar a 1.1.0. Marcos: M1 recibo de retomada; M2 janela única do Auto-Run.
 
