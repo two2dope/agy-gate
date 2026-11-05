@@ -31,15 +31,15 @@ app = G.AntigravityGateApp(); app.geometry("1240x720+0+0"); wait(app); settle(ap
 
 # 1. barra lateral aberta ao iniciar, com categorias e projetos
 assert app.sidebar.winfo_manager() == "pack" and app.tabs_frame.winfo_manager() == "pack"
-assert list(app.side_items) == ["pendente", "rot", "crit", "aprovada", "arquivada"]
-assert counts(app) == dict(pendente=4, rot=0, crit=0, aprovada=0, arquivada=0), counts(app)
+assert list(app.side_items) == ["pendente", "rot", "crit", "aprovada", "arquivada", "lixeira"]
+assert counts(app) == dict(pendente=4, rot=0, crit=0, aprovada=0, arquivada=0, lixeira=0), counts(app)
 assert [(i.name.cget("text"), i.count.cget("text")) for i in app.proj_items] == [("Alpha", "2"), ("Beta", "1"), ("Outside of Project", "1")]
 assert app.tabs["todas"].on and not app.tabs["aguardando"].on
 
 # 2. contagens acompanham os estados; "aguardando" = aprovada sem retomada
 for ids, st in (((1, 2), "aprovada"), ((3,), "arquivada")):
     app.tree.selection_set([iid(app, n) for n in ids]); app.mark_selected(st); app.update()
-assert counts(app) == dict(pendente=1, rot=0, crit=0, aprovada=2, arquivada=1), counts(app)
+assert counts(app) == dict(pendente=1, rot=0, crit=0, aprovada=2, arquivada=1, lixeira=0), counts(app)
 assert app.tabs["aguardando"].cget("text") == "Aprovadas aguardando" and app.tabs["aguardando"].count == 2 and app.tabs["aguardando"].badge.cget("text") == "2"
 app.handoffs[U(1)] = "aaaaaaaa-0000"; app.update_chips()
 assert app.tabs["aguardando"].count == 1 and app.tabs["aguardando"].badge.cget("text") == "1" and app.chip_match("aguardando", app.row_by_cid[U(2)]) and not app.chip_match("aguardando", app.row_by_cid[U(1)])
