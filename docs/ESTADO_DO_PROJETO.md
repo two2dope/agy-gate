@@ -1,14 +1,14 @@
 # AntigravityGate: estado do projeto
 
-Atualizado em 2026-11-05. Versão **1.2.1** publicada (PR two2dope/agy-gate#7, Release `v1.2.1`, SHA-256 do `.exe` `469EE122BD7C473C2304E4830EC128BF5766F1D4FB515C43DA3F9DBA9597E12F`); 1.2.2 na branch, sem PR. Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
+Atualizado em 2026-11-05. Versão **1.2.2** publicada (PR two2dope/agy-gate#8, Release `v1.2.2`, SHA-256 do `.exe` `09DB7261E904FA1746A6F873A3E664D606BA8FB607583523ACEF980A0A76D4AC`). Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
 
 ## Snapshot
 
 | | |
 |---|---|
-| **Feito** | 1.0.2, 1.1.0, 1.2.0 e 1.2.1 publicadas. **1.2.2 na branch `claude/agy-gate-handoff-analysis-702a8c`** (05/11, sessão local): dossiê com a resposta visível do modelo (antes saía o raciocínio interno), nome do modelo, seção "Artefatos da sessão" no topo e arquivos temporários recolhidos. Pasta `handoffs\` analisada (ver "Análise dos dossiês de 28 e 29/10"). 32 conjuntos de teste |
-| **Faltando** | CI da 1.2.2 e conferência do `.exe` no Windows; depois "PR + merge + tag" pelo usuário. Lixeira com prazo (1.3), agora com candidatas automáticas. Doctor passivo (1.4), com o C2. Parados enquanto o `agy` estiver fora de uso: retomada real com projeto, PowerShell piscando, editor vazio. Backups: não apagar |
-| **Próximo passo único** | Usuário confere a 1.2.2 (exportar um dossiê de sessão longa no `.exe`) e decide o PR; em seguida, a 1.3 |
+| **Feito** | 1.0.2, 1.1.0, 1.2.0, 1.2.1 e **1.2.2 publicadas** (05/11, sessão local). 1.2.2: dossiê com a resposta visível do modelo (antes saía o raciocínio interno), nome do modelo, seção "Artefatos da sessão" no topo e arquivos temporários recolhidos. 1.2.1 SHA-256 `469EE122BD7C473C2304E4830EC128BF5766F1D4FB515C43DA3F9DBA9597E12F`. Pasta `handoffs\` analisada (ver "Análise dos dossiês de 28 e 29/10"). 32 conjuntos de teste |
+| **Faltando** | Conferir a 1.2.2 no Windows (exportar o dossiê de uma sessão longa). Lixeira com prazo (1.3), agora com candidatas automáticas. Doctor passivo (1.4), com o C2. Parados enquanto o `agy` estiver fora de uso: retomada real com projeto, PowerShell piscando, editor vazio. Backups: não apagar |
+| **Próximo passo único** | Começar a 1.3 (lixeira com prazo e candidatas automáticas), depois de o usuário conferir a 1.2.2 |
 
 ## Pendências (backlog pós-1.0)
 
