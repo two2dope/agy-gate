@@ -36,6 +36,15 @@ messagebox.askyesno = lambda *a, **k: True
 for n in ("showinfo", "showwarning", "showerror"): setattr(messagebox, n, lambda *a, **k: info.append(a))
 G.setup_logging()
 
+
+def search(a, q=None):
+    """Busca (a parte no conteúdo roda em thread desde a 1.5.0): espera terminar."""
+    if q is not None: a.search_var.set(q)
+    a.run_search()
+    end = time.time() + 10
+    while a.searching and time.time() < end: a.update(); time.sleep(0.01)
+    a.update()
+
 def wait(a):
     end = time.time() + 30
     while a.loading and time.time() < end: a.update(); time.sleep(0.01)
@@ -65,20 +74,20 @@ app.sort_by("col_title"); assert kids(app, 1) == [U(2), U(3)]                   
 app.sort_by("col_title"); assert kids(app, 1) == [U(3), U(2)]
 
 # 3. busca por metadados (título/agente/projeto) -> lista plana
-app.search_var.set("postgres"); app.run_search()
+search(app, "postgres")
 flat = [app.cid_of(i) for i in app.iter_sessions()]; assert flat == [U(1)], flat
 assert app.tree.get_children(iid(app, 1)) == (), "com busca ativa a lista é plana"
-app.search_var.set("deepcoderworker"); app.run_search(); assert [app.cid_of(i) for i in app.iter_sessions()] == [U(2)]
-app.search_var.set("projeto um"); app.run_search(); assert {app.cid_of(i) for i in app.iter_sessions()} == {U(1), U(2), U(3), U(4)}
+search(app, "deepcoderworker"); assert [app.cid_of(i) for i in app.iter_sessions()] == [U(2)]
+search(app, "projeto um"); assert {app.cid_of(i) for i in app.iter_sessions()} == {U(1), U(2), U(3), U(4)}
 # 4. busca por CONTEÚDO (índice FTS do Antigravity), com prefixo e sem acento
-app.search_var.set("kubern"); app.run_search(); assert [app.cid_of(i) for i in app.iter_sessions()] == [U(5)], [app.cid_of(i) for i in app.iter_sessions()]
+search(app, "kubern"); assert [app.cid_of(i) for i in app.iter_sessions()] == [U(5)], [app.cid_of(i) for i in app.iter_sessions()]
 assert "1 resultado" in app.status.cget("text")
-app.search_var.set("suite"); app.run_search(); assert [app.cid_of(i) for i in app.iter_sessions()] == [U(3)]     # "suíte" casa "suite"
-app.search_var.set("inexistente-xyz"); app.run_search(); assert list(app.iter_sessions()) == [] and "0 resultado" in app.status.cget("text")
+search(app, "suite"); assert [app.cid_of(i) for i in app.iter_sessions()] == [U(3)]     # "suíte" casa "suite"
+search(app, "inexistente-xyz"); assert list(app.iter_sessions()) == [] and "0 resultado" in app.status.cget("text")
 # 5. limpar volta à árvore com hierarquia
 app.clear_search(); assert kids(app, 1) and app.search_var.get() == ""
 # 6. entrada mal-formada não quebra o FTS
-for q in ('"', "a OR", "foo*", "(", "NEAR(", "'; DROP"): app.search_var.set(q); app.run_search()
+for q in ('"', "a OR", "foo*", "(", "NEAR(", "'; DROP"): search(app, q)
 app.clear_search()
 
 # 7. marcar o pai não marca os filhos; pasta marca todos, inclusive netos
@@ -95,6 +104,6 @@ app.copy_uuid(iid(app, 4)); assert app.clipboard_get() == U(4)
 app.db_files.pop(U(4)); info.clear(); app.open_folder(iid(app, 4)); assert info and "não tem arquivo" in info[0][1]
 
 # 9. recarregar zera a busca; tema não mexe nos dados
-app.search_var.set("postgres"); app.run_search(); app.refresh(); wait(app)
+search(app, "postgres"); app.refresh(); wait(app)
 assert app.search_var.get() == "" and len(list(app.iter_sessions())) == 7
 app.destroy(); print("TODOS OS TESTES M3b OK")

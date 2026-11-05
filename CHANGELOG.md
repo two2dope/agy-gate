@@ -2,6 +2,29 @@
 
 Formato: [Versionamento Semântico](https://semver.org/lang/pt-BR/). Enquanto a versão começar com 0, o app está em candidato a lançamento: funciona, mas faltam itens listados abaixo.
 
+## [1.5.0] - 2026-11-05
+
+Acabamento: as recomendações abertas da auditoria da 1.0.0 (R2 a R5, R8, R9, R11 a R15) e as datas sem horário.
+
+### Adicionado
+- **Notas por sessão** (menu da sessão, "Nota da sessão…"): o que você decidiu, onde parou, o que falta. Ficam só no app, aparecem na linha como "✎ nota" e entram no dossiê de retomada, numa seção "Notas do usuário", com a máscara de segredos.
+- **Copiar título para buscar** (menu da sessão): copia as primeiras palavras do título, para colar na 🔍 do Antigravity.
+- **Exportar diálogo sem máscara…** (menu da sessão), com confirmação, para quem precisa do texto fiel.
+- **`--help`** com as opções e as variáveis de ambiente (`ANTIGRAVITY_HOME`, `AGY_EXE`, `AGY_ICONS`, `AGY_ROT_TOKENS`).
+- Depois de uma retomada real, o aviso de conclusão lembra que a barra do IDE pode não mostrar a sessão nova (procure pela 🔍, pelo Desktop ou pelo remote control).
+
+### Alterado
+- **O diálogo completo sai com os segredos mascarados** (antes saía fiel). O cabeçalho do arquivo diz qual foi a escolha.
+- **Busca no conteúdo em segundo plano:** o filtro por título, pasta e UUID aparece na hora, e o resultado da busca no conteúdo das conversas entra quando termina. Em banco grande, a janela não congela mais.
+- **Cancelar o Auto-Run encerra o `agy` e os processos filhos dele** (antes, só o processo principal).
+- O README descreve a fronteira certa: o app só lê os bancos; o Auto-Run cria sessões novas pelo `agy`.
+- `packaging/build_exe.bat` instala o PyInstaller 6.22.3, a mesma versão do CI.
+
+### Corrigido
+- **Projeto pela pasta de trabalho:** vencia a primeira pasta de projeto que aparecesse no caminho, e `c:\proj` casava com `c:\projetos\x`. Agora vence a pasta mais específica, com fronteira de pasta.
+- Chaves do Google no formato `AQ.…` passam a ser mascaradas.
+- Sessões sem horário gravado (`0001-01-01`) mostram "-" na tabela e nos detalhes, em vez da data.
+
 ## [1.4.0] - 2026-11-05
 
 Diagnóstico do ecossistema (doctor passivo), com o que a auditoria de 28 e 29/10 aprendeu. Só leitura: o app mostra o que achou, o que significa e o que fazer, e nunca corrige.

@@ -26,7 +26,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from tkinter import font as tkfont
 
-__version__ = "1.4.0"  # ver CHANGELOG.md
+__version__ = "1.5.0"  # ver CHANGELOG.md
 __build__ = "código-fonte"  # o CI troca pelo commit e pela data da montagem do .exe
 APP_AUTHOR = "Thominha"
 APP_EMAIL = "twoo2dope@gmail.com"
@@ -178,6 +178,8 @@ def fmt_time(v):
     m = re.match(r"(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:\.\d+)?\s*(Z|[+-]\d{2}:?\d{2})?", str(v))
     if not m:
         return str(v)[:19].replace('T', ' ')
+    if int(m.group(1)[:4]) < 1971:  # "0001-01-01T00:00:00Z": sessão sem horário gravado (vira "-" na tabela)
+        return ''
     naive = datetime.strptime(f"{m.group(1)} {m.group(2)}", "%Y-%m-%d %H:%M:%S")
     tz = m.group(3)
     if not tz:
@@ -390,6 +392,7 @@ CMD_KEYS = ("CommandLine", "command", "Command", "cmd")
 SECRET_PATTERNS = [
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S),
     re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b"),
+    re.compile(r"\bAQ\.[A-Za-z0-9_\-]{30,}"),                                # chave do Google no formato AQ.… (R3 da auditoria)
     re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
@@ -717,10 +720,24 @@ def meta_table(meta, qm):
     return out
 
 
-def write_full_export(fh, meta, qm, steps, progress=None, files=None):
+class _RedactWriter:
+    """Passa cada trecho pela máscara de segredos antes de gravar (diálogo completo com máscara, R4)."""
+    def __init__(self, fh):
+        self.fh = fh
+
+    def write(self, text):
+        return self.fh.write(redact(text))
+
+
+def write_full_export(fh, meta, qm, steps, progress=None, files=None, mask=True):
     fh.write(f"# Diálogo completo — {meta.get('title') or meta['cid']}\n\n")
-    fh.write("> Este arquivo reproduz o conteúdo da conversa e pode conter chaves, senhas e dados pessoais. "
-             "Revise antes de compartilhar. Horários no fuso local deste computador.\n\n")
+    if mask:
+        fh.write("> Segredos conhecidos (chaves de API, tokens, senhas) foram mascarados como [REDACTED]. A máscara é heurística: "
+                 "revise antes de compartilhar. Dados pessoais não são mascarados. Horários no fuso local deste computador.\n\n")
+        fh = _RedactWriter(fh)
+    else:
+        fh.write("> Exportado SEM máscara: este arquivo reproduz o conteúdo da conversa e pode conter chaves, senhas e dados pessoais. "
+                 "Revise antes de compartilhar. Horários no fuso local deste computador.\n\n")
     fh.write(meta_table(meta, qm) + "\n")
     if files:
         fh.write(f"## Arquivos citados ({len(files)})\n\n" + files_table(files, "both") + "\n")
@@ -840,6 +857,8 @@ def build_dossier(meta, qm, steps, progress=None):
          "> Extração local feita pelo AntigravityGate: nenhum modelo foi usado para resumir, então nada aqui é interpretação. "
          "Segredos conhecidos foram mascarados, mas revise antes de enviar a qualquer serviço.\n",
          "## Origem\n", meta_table(meta, qm)]
+    if meta.get('note'):
+        o += ["## Notas do usuário\n", clip(meta['note'], 4000) + "\n"]
     if parent_task:
         o += ["## Tarefa recebida do agente pai\n", clip(parent_task, 2000) + "\n"]
     arts = session_artifacts(meta.get('fpath') or '', meta['cid'])
@@ -904,7 +923,7 @@ class ExportCancelled(Exception):
     """Levantada pelo callback de progresso para interromper uma exportação."""
 
 
-def export_session(kind, fpath, meta, out_path, progress=None):
+def export_session(kind, fpath, meta, out_path, progress=None, mask=True):
     """Grava o diálogo completo ('full') ou o dossiê de retomada ('dossier') de uma sessão.
     Escreve num arquivo .part e só o renomeia no fim: erro ou cancelamento não deixam arquivo pela metade."""
     tmp = out_path + ".part"
@@ -914,7 +933,7 @@ def export_session(kind, fpath, meta, out_path, progress=None):
             if kind == 'full':
                 files = collect_file_activity(iter_steps(conn))
                 with open(tmp, 'w', encoding='utf-8', newline='\n') as fh:
-                    write_full_export(fh, meta, qm, iter_steps(conn), progress, files)
+                    write_full_export(fh, meta, qm, iter_steps(conn), progress, files, mask)
             else:
                 text = build_dossier(meta, qm, iter_steps(conn), progress)
                 with open(tmp, 'w', encoding='utf-8', newline='\n') as fh:
@@ -968,6 +987,7 @@ class StateStore:
             conn = sqlite3.connect(self.path, timeout=5.0)
         with conn:
             conn.execute("CREATE TABLE IF NOT EXISTS session_state(cid TEXT PRIMARY KEY, status TEXT NOT NULL, updated_at TEXT NOT NULL)")
+            conn.execute("CREATE TABLE IF NOT EXISTS notes(cid TEXT PRIMARY KEY, text TEXT NOT NULL, at TEXT NOT NULL)")
             conn.execute("CREATE TABLE IF NOT EXISTS state_log(id INTEGER PRIMARY KEY AUTOINCREMENT, cid TEXT NOT NULL, status TEXT NOT NULL, at TEXT NOT NULL)")
             conn.execute("CREATE TABLE IF NOT EXISTS handoffs(id INTEGER PRIMARY KEY AUTOINCREMENT, src_cid TEXT NOT NULL, new_cid TEXT, "
                          "dossier_path TEXT, status TEXT NOT NULL, detail TEXT, at TEXT NOT NULL)")
@@ -1029,6 +1049,21 @@ class StateStore:
                                   "ON CONFLICT(cid) DO UPDATE SET status=excluded.status, updated_at=excluded.updated_at", (cid, status, now))
                     c.execute("INSERT INTO state_log(cid, status, at) VALUES(?,?,?)", (cid, status, now))
 
+    def notes(self):
+        with self._connect() as c:
+            return dict(c.execute("SELECT cid, text FROM notes").fetchall())
+
+    def set_note(self, cid, text):
+        """Grava a nota da sessão; texto vazio apaga."""
+        text = (text or "").strip()
+        with self._connect() as c:
+            with c:
+                if text:
+                    c.execute("INSERT INTO notes(cid, text, at) VALUES(?,?,?) ON CONFLICT(cid) DO UPDATE SET text=excluded.text, at=excluded.at",
+                              (cid, text, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+                else:
+                    c.execute("DELETE FROM notes WHERE cid=?", (cid,))
+
     def sweep_trash(self, days, now=None):
         """Leva para a lixeira as sessões arquivadas há `days` dias ou mais (pela data da marcação). days <= 0 desliga.
         Devolve os UUIDs movidos."""
@@ -1055,6 +1090,11 @@ class StateStore:
 
 TRASH_DAYS_DEFAULT = 30
 DOSSIER_NAME_RE = re.compile(r"^retomada_[0-9a-f]{8}_\d{8}-\d{6}\.md$")  # nome que o Auto-Run dá aos dossiês
+
+
+def search_words(title, n=4):
+    """As n primeiras palavras do título, sem reticências do corte: o bastante para achar a sessão na 🔍 do Antigravity."""
+    return " ".join(title.replace("...", " ").replace("…", " ").split()[:n])
 
 
 def trash_reason(r, status):
@@ -1140,6 +1180,24 @@ def parse_agy_models(text):
 AGY_PROMPT = ("Você está retomando o trabalho de uma sessão anterior. Leia o dossiê em: {path} . "
               "Depois responda, em poucas linhas: (1) o que entendeu do objetivo e do estado atual; (2) o que falta; "
               "(3) os próximos passos que propõe. Não altere nenhum arquivo e não execute comandos; aguarde minha confirmação.")
+
+
+def kill_tree(proc):
+    """Encerra o processo e os filhos (no Windows, taskkill /T: o agy abre processos próprios que o terminate deixava vivos).
+    Se o taskkill falhar, cai para o kill do próprio processo."""
+    if proc is None or proc.poll() is not None:
+        return
+    if os.name == "nt":
+        try:
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True, timeout=10,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except (OSError, subprocess.SubprocessError) as e:
+            log.warning("taskkill falhou: %s", e)
+    if proc.poll() is None:
+        try:
+            proc.kill()
+        except OSError:
+            pass
 
 
 def find_agy():
@@ -1333,10 +1391,7 @@ class AutoRunner:
     def cancel(self):
         self.cancelled = True
         if self.proc and self.proc.poll() is None:
-            try:
-                self.proc.terminate()
-            except OSError:
-                pass
+            kill_tree(self.proc)
 
     def _item(self, kind, cid, **info):
         if self.item_cb:
@@ -1375,7 +1430,8 @@ class AutoRunner:
         return project, dirs, (dirs[0] if dirs else (fallback or HANDOFF_DIR))
 
     def _run_agy(self, args, cwd=None):
-        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        # Grupo próprio: o cancelamento encerra o agy e os filhos dele (R12), sem atingir o app.
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         self.proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                      encoding="utf-8", errors="replace", creationflags=flags, cwd=cwd)
         deadline = time.time() + self.timeout_s + self.grace_s
@@ -1388,7 +1444,7 @@ class AutoRunner:
                 return out, err, "cancelada" if self.cancelled and code != 0 else None, code
             except subprocess.TimeoutExpired:
                 if self.cancelled:
-                    self.proc.terminate()
+                    kill_tree(self.proc)
                     try:
                         out, err = self.proc.communicate(timeout=5)
                     except subprocess.TimeoutExpired:
@@ -1396,7 +1452,7 @@ class AutoRunner:
                         out, err = self.proc.communicate()
                     return out, err, "cancelada", self.proc.returncode
                 if time.time() > deadline:
-                    self.proc.kill()
+                    kill_tree(self.proc)
                     out, err = self.proc.communicate()
                     return out, err, "tempo esgotado", self.proc.returncode
 
@@ -1686,6 +1742,19 @@ def doctor_markdown(checks):
     return "\n".join(out)
 
 
+def project_by_uri(w_decoded, uri_to_proj):
+    """Projeto da sessão pela pasta de trabalho: vence a pasta de projeto mais específica que contém a do workspace, com fronteira de
+    pasta (R2 da auditoria: antes valia a primeira substring, e 'c:/proj' casava com 'c:/projetos/x')."""
+    best, best_len = "", -1
+    for uri in re.findall(r"file://[^\s,;\"'\[\]<>]+", w_decoded or ""):
+        w = uri.lower().rstrip("/")
+        for k, name in uri_to_proj.items():
+            k = k.rstrip("/")
+            if (w == k or w.startswith(k + "/")) and len(k) > best_len:
+                best, best_len = name, len(k)
+    return best
+
+
 def load_projects(warn):
     proj_map = {'outside-of-project': 'Outside of Project'}
     uri_to_proj = {}
@@ -1789,10 +1858,7 @@ def scan_source(conv_dir, sum_db, is_active, progress=None, is_stale=None):
         w_decoded = urllib.parse.unquote(w_uris)
         ws_paths = uri_paths(w_uris)
         if not proj_name or proj_name == 'Outside of Project':
-            for u_key, p_val in uri_to_proj.items():
-                if u_key in w_decoded.lower():
-                    proj_name = p_val
-                    break
+            proj_name = project_by_uri(w_decoded, uri_to_proj) or proj_name
         if not proj_name:
             proj_name = 'Outside of Project'
 
@@ -3224,6 +3290,46 @@ class TrashDialog(tk.Toplevel):
         self.app.notify("ok" if not failed else "warn", f"{done} dossiê(s) apagado(s)." + (f" {len(failed)} falharam (ver log)." if failed else ""))
 
 
+class NoteDialog(tk.Toplevel):
+    """Nota sua sobre a sessão (decisões, o que falta, onde parou). Entra no dossiê de retomada."""
+
+    def __init__(self, app, cid, title):
+        super().__init__(app)
+        self.app, self.cid = app, cid
+        t = app.t
+        self.title("Nota da sessão")
+        self.transient(app)
+        self.configure(bg=t['panel'], padx=app.px(14), pady=app.px(12))
+        tk.Label(self, text=ellipsize(title, 70), font=app.f_bold, bg=t['panel'], fg=t['fg'], anchor="w").pack(fill=tk.X)
+        tk.Label(self, text="Fica só no AntigravityGate e entra no dossiê de retomada (com a máscara de segredos). Deixe vazio para apagar.",
+                 font=app.f_small, bg=t['panel'], fg=t['muted'], anchor="w", justify=tk.LEFT, wraplength=app.px(520)).pack(fill=tk.X, pady=(2, 8))
+        row = tk.Frame(self, bg=t['panel'])
+        row.pack(side=tk.BOTTOM, fill=tk.X, pady=(app.px(10), 0))
+        IconButton(row, app, "approve", "Salvar", self.save, bg_token="panel", kind="primary").pack(side=tk.RIGHT)
+        IconButton(row, app, "", "Cancelar", self.destroy, bg_token="panel").pack(side=tk.RIGHT, padx=(0, app.px(8)))
+        self.text = tk.Text(self, wrap=tk.WORD, font=app.f_ui, bg=t['panel2'], fg=t['fg'], relief=tk.FLAT, highlightthickness=1,
+                            highlightbackground=t['border'], highlightcolor=t['accent'], padx=app.px(8), pady=app.px(6), width=64, height=10,
+                            insertbackground=t['fg'], selectbackground=t['sel_bg'], selectforeground=t['sel_fg'])
+        self.text.insert("1.0", app.notes.get(cid, ""))
+        self.text.pack(fill=tk.BOTH, expand=True)
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.bind("<Control-Return>", lambda e: self.save())
+        place_over(self, app)
+        self.text.focus_set()
+
+    def save(self):
+        try:
+            self.app.state.set_note(self.cid, self.text.get("1.0", "end"))
+            self.app.notes = self.app.state.notes()
+        except sqlite3.Error as e:
+            messagebox.showerror("Nota", f"Não foi possível salvar a nota:\n{e}", parent=self)
+            return
+        self.app.refresh_labels()
+        self.app.update_details()
+        self.app.notify("ok", "Nota salva: entra no próximo dossiê." if self.app.notes.get(self.cid) else "Nota apagada.")
+        self.destroy()
+
+
 class DoctorDialog(tk.Toplevel):
     """Diagnóstico do ecossistema: cada verificação com o estado, o que foi visto e o que fazer. Só leitura."""
 
@@ -3972,10 +4078,11 @@ class AntigravityGateApp(tk.Tk):
         self.base_status = ""
         self.proj_map, self.summaries, self.db_files = {}, {}, {}
         self.state = StateStore(STATE_DB)
-        self.states = {}
+        self.states, self.notes = {}, {}
         self.grouped, self.total, self.sub_count, self.row_by_cid = {}, 0, {}, {}
         self.match, self.sort_col, self.sort_rev = None, "col_date", True
         self.chip_filter = None
+        self.searching, self.search_gen = False, 0
         self.side_items, self.proj_items, self.tabs, self._proj_key, self.sidebar_wanted = {}, [], {}, None, True
         self._confirming = False  # a janela do Auto-Run está na etapa Preparar, esperando o Iniciar
         self.search_note = ""
@@ -5111,7 +5218,8 @@ class AntigravityGateApp(tk.Tk):
         n = self.sub_count.get(cid, 0)
         sub = f"  (+{n} sub-agente{'s' if n != 1 else ''})" if n else ""
         ret = f"  ↪ retomada {self.handoffs[cid][:8]}" if self.handoffs.get(cid) else ""
-        return "  " + STATUS_NAME[self.states.get(cid, "pendente")] + ret + sub
+        note = "  ✎ nota" if self.notes.get(cid) else ""
+        return "  " + STATUS_NAME[self.states.get(cid, "pendente")] + ret + note + sub
 
     def refresh_labels(self):
         if self.chip_filter:  # filtro de selo: refaz a lista (uma sessão marcada pode ter saído do filtro)
@@ -5361,7 +5469,7 @@ class AntigravityGateApp(tk.Tk):
                           fg=t['warning'] if r['ws_ok'] is False else t['fg'])
         F['agent'].configure(text=r['agent'] or "-")
         F['steps'].configure(text=str(r['steps']))
-        F['date'].configure(text=f"{r['date']}  ·  {rel_time(r['date'])}".rstrip(" ·"))
+        F['date'].configure(text=f"{r['date']}  ·  {rel_time(r['date'])}".rstrip(" ·") if r['date'] else "-")
         F['size'].configure(text=r['size'])
         F['fails'].configure(text=(f"⚠ {r['failures']} ferramenta(s)" if r['failures'] else "nenhuma"), fg=t['warning'] if r['failures'] else t['fg'])
         F['handoff'].configure(text=(f"↪ {self.handoffs[cid][:8]}  ·  ver recibo" if self.handoffs.get(cid) else "-"),
@@ -5394,24 +5502,44 @@ class AntigravityGateApp(tk.Tk):
             return
         terms = q.lower().split()
         rows = [r for grp in self.grouped.values() for r in grp]
-        hits = {r['cid'] for r in rows if all(t in r['hay'] for t in terms)}
-        content_ok = True
-        sum_db = self.sources[self.source_idx][2]
-        if sum_db:
-            try:
-                hits |= self.fts_hits(sum_db, q)
-            except sqlite3.Error as e:
-                content_ok = False
-                log.info("Busca por conteúdo indisponível: %s", e)
-        else:
-            content_ok = False
-        self.match = hits & {r['cid'] for r in rows}
+        meta_hits = {r['cid'] for r in rows if all(t in r['hay'] for t in terms)}
         self.chip_filter = None
+        sum_db = self.sources[self.source_idx][2]
+        # R11: a busca no conteúdo (FTS) roda na thread de trabalho; em banco grande ela travava a janela. Os metadados filtram já.
+        self.search_gen = getattr(self, "search_gen", 0) + 1
+        sgen, gen = self.search_gen, self.gen
+        self.searching = True
+        self.match = meta_hits
+        self.search_note = f"buscando “{q}” no conteúdo…"
+        self.populate()
+
+        def work():
+            hits, content_ok = set(), bool(sum_db)
+            if sum_db:
+                try:
+                    hits = self.fts_hits(sum_db, q)
+                except sqlite3.Error as e:
+                    content_ok = False
+                    log.info("Busca por conteúdo indisponível: %s", e)
+            self.queue.put((gen, 'search', (sgen, q, meta_hits, hits, content_ok)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_search_done(self, payload):
+        sgen, q, meta_hits, hits, content_ok = payload
+        # Descarta se veio busca mais nova, ou se o usuário limpou, trocou o texto ou escolheu um filtro enquanto esta rodava.
+        if (sgen != self.search_gen or self.match is None or self.chip_filter or self.search_var.get().strip() != q
+                or not self.search_note.startswith("buscando")):
+            self.searching = False
+            return
+        self.searching = False
+        self.match = (meta_hits | hits) & set(self.row_by_cid)
         self.search_note = f"{len(self.match)} resultado(s) para “{q}”" + ("" if content_ok else " (só metadados: sem índice de conteúdo nesta fonte)")
         self.populate()
 
     def clear_search(self):
         self.search_var.set("")
+        self.searching = False
         self.match = None
         self.chip_filter = None
         self.search_note = ""
@@ -5442,8 +5570,11 @@ class AntigravityGateApp(tk.Tk):
         m = tk.Menu(self, tearoff=0)
         if self.is_session(iid):
             m.add_command(label="Copiar UUID", command=lambda: self.copy_uuid(iid))
+            m.add_command(label="Copiar título para buscar", command=lambda: self.copy_title(iid))
+            m.add_command(label="Nota da sessão…", command=lambda: self.edit_note(self.cid_of(iid)))
             m.add_command(label="Abrir pasta do banco", command=lambda: self.open_folder(iid))
             m.add_command(label="Exportar diálogo", command=self.open_selected)
+            m.add_command(label="Exportar diálogo sem máscara…", command=lambda: self.start_export('full', mask=False))
             m.add_command(label="Dossiê de retomada", command=lambda: self.start_export('dossier'))
             if self.handoffs.get(self.cid_of(iid)):
                 m.add_command(label="Ver recibo da retomada", command=lambda: self.show_receipt(self.cid_of(iid)))
@@ -5462,6 +5593,20 @@ class AntigravityGateApp(tk.Tk):
             messagebox.showinfo("Recibo de retomada", "Esta sessão ainda não foi retomada pelo Auto-Run.")
             return None
         return ReceiptDialog(self, rec, self.row_by_cid.get(cid))
+
+    def copy_title(self, iid):
+        """As primeiras palavras do título, para colar na 🔍 do Antigravity (R8): o título inteiro raramente bate com o de lá."""
+        r = self.row_by_cid.get(self.cid_of(iid), {})
+        text = search_words(r.get('title') or "")
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self.notify("ok", f"Copiado para buscar no Antigravity: {text}")
+
+    def edit_note(self, cid):
+        """Nota sua sobre a sessão (R15): fica no estado do Gate e entra no dossiê de retomada, com a máscara de segredos."""
+        if not cid:
+            return None
+        return NoteDialog(self, cid, (self.row_by_cid.get(cid) or {}).get('title') or cid)
 
     def copy_uuid(self, iid):
         self.clipboard_clear()
@@ -5554,6 +5699,8 @@ class AntigravityGateApp(tk.Tk):
                     self.set_status(f"{label}  |  carregando… {payload[0]}/{payload[1]}")
                 elif kind == 'done':
                     self.render(payload)
+                elif kind == 'search':
+                    self.on_search_done(payload)
         except queue.Empty:
             pass
         try:
@@ -5577,9 +5724,10 @@ class AntigravityGateApp(tk.Tk):
         try:
             self.states = self.state.load()
             self.handoffs = self.state.handoffs_ok()
+            self.notes = self.state.notes()
         except sqlite3.Error as e:
             log.warning("Falha ao ler estado: %s", e)
-            self.states, self.handoffs = {}, {}
+            self.states, self.handoffs, self.notes = {}, {}, {}
         if self.source_idx == 0:  # o prazo vale para a fonte ativa (as outras são cópias e backups)
             self.sweep_trash()
         self.populate()
@@ -5622,7 +5770,7 @@ class AntigravityGateApp(tk.Tk):
                     return  # proteção contra ciclos de parentesco
                 placed.add(r['cid'])
                 iid = self.tree.insert(parent_iid, tk.END, text=self.leaf_text(r['cid']), tags=self.row_tags(r['cid']), image=self.status_icon(r['cid']),
-                                       values=(r['date'].replace(" ", "\n", 1) if two else r['date'], r['size'], ctx_label(r['ctx'], two_lines=two), r['steps'],
+                                       values=((r['date'].replace(" ", "\n", 1) if two else r['date']) or "-", r['size'], ctx_label(r['ctx'], two_lines=two), r['steps'],
                                                f"⚠ {r['failures']}" if r['failures'] else "-", r['title'], r['agent'] or "-", r['cid'], "⋮"))
                 for ch in sorted(kids.get(r['cid'], []), key=key, reverse=rev):
                     add(iid, ch)
@@ -5649,10 +5797,12 @@ class AntigravityGateApp(tk.Tk):
         s = self.summaries.get(cid, {})
         return {'cid': cid, 'title': row.get('title') or cid, 'project': row.get('project', ''),
                 'workspace': ", ".join(uri_paths(str(val(s, 'workspace_uris')))) or urllib.parse.unquote(str(val(s, 'workspace_uris'))), 'agent': row.get('agent', ''),
-                'parent': row.get('parent', ''), 'status': self.states.get(cid, 'pendente'),
+                'parent': row.get('parent', ''), 'status': self.states.get(cid, 'pendente'), 'note': self.notes.get(cid, ''),
                 'source': self.sources[self.source_idx][0], 'fpath': self.db_files.get(cid, '')}
 
-    def start_export(self, kind):
+    def start_export(self, kind, mask=True):
+        """Exporta o diálogo completo ('full') ou o dossiê ('dossier'). O diálogo sai com os segredos mascarados;
+        mask=False (menu "Exportar diálogo sem máscara…") pede confirmação antes."""
         if self.exporting:
             messagebox.showinfo("Aviso", "Já existe uma exportação em andamento.")
             return
@@ -5675,7 +5825,11 @@ class AntigravityGateApp(tk.Tk):
             os.makedirs(EXPORT_DIR, exist_ok=True)
         except OSError:
             pass
-        nome = ("AntigravityGate_dialogo_" if kind == 'full' else "AntigravityGate_dossie_") + cid[:8] + ".md"
+        if kind == 'full' and not mask and not messagebox.askyesno(
+                "Exportar sem máscara", "O arquivo vai conter as chaves, tokens e senhas que aparecerem na conversa, sem [REDACTED].\n\n"
+                                        "Use só para guardar no seu computador. Continuar?"):
+            return
+        nome = ("AntigravityGate_dialogo_" + ("" if mask else "SEM-MASCARA_") if kind == 'full' else "AntigravityGate_dossie_") + cid[:8] + ".md"
         out = filedialog.asksaveasfilename(
             title="Salvar diálogo completo" if kind == 'full' else "Salvar dossiê de retomada",
             initialdir=EXPORT_DIR if os.path.isdir(EXPORT_DIR) else None, initialfile=nome,
@@ -5695,7 +5849,7 @@ class AntigravityGateApp(tk.Tk):
 
         def job():
             try:
-                export_session(kind, meta['fpath'], meta, out, progress=progress)
+                export_session(kind, meta['fpath'], meta, out, progress=progress, mask=mask)
                 self.queue.put((0, 'export_done', out))
             except ExportCancelled:
                 log.info("Exportação de %s cancelada", cid)
@@ -5899,7 +6053,9 @@ class AntigravityGateApp(tk.Tk):
             self.notify("warn", f"Auto-Run terminou com problemas: {payload['ok']} retomadas, {payload['failed']} falhas, {payload['skipped']} não executadas.")
         else:
             feito = payload['ok'] or payload['dossier']
-            self.notify("ok", f"Auto-Run concluído: {feito} sessão(ões) " + ("retomadas." if payload['ok'] else "com dossiê gerado (simulação)."))
+            self.notify("ok", f"Auto-Run concluído: {feito} sessão(ões) " + ("retomadas." if payload['ok'] else "com dossiê gerado (simulação).")
+                        + (" A barra do IDE pode não mostrar a sessão nova: procure pela 🔍 do Antigravity, pelo Desktop ou pelo remote control."
+                           if payload['ok'] else ""))
 
     def on_export_event(self, kind, payload):
         if kind == 'export_progress':
@@ -5954,9 +6110,31 @@ def selftest(out_path):
     return 0 if msg.startswith("OK") else 1
 
 
+HELP_TEXT = """AntigravityGate {version}: gestão de contexto e curadoria das sessões do Antigravity.
+
+Uso:
+  AntigravityGate                 abre a janela
+  AntigravityGate --version       mostra a versão
+  AntigravityGate --help          mostra esta ajuda
+  AntigravityGate --selftest ARQ  autoteste do .exe (fontes, ícone, carga) e grava o resultado em ARQ
+
+Variáveis de ambiente:
+  ANTIGRAVITY_HOME   pasta de dados do Antigravity (padrão: %USERPROFILE%\\.gemini)
+  AGY_EXE            caminho do agy, se ele não estiver no PATH (usado pelo Auto-Run)
+  AGY_ICONS          estilo dos ícones: fa, bootstrap, material, mdl2, symbol ou none
+  AGY_ROT_TOKENS     nível de atenção do contexto, em tokens (o crítico se ajusta em Limites)
+
+O app só lê os bancos do Antigravity. O Auto-Run pede ao agy para criar sessões novas.
+Estado, log, exportações e dossiês ficam em %LOCALAPPDATA%\\AntigravityGate.
+"""
+
+
 def main(argv):
     if len(argv) >= 2 and argv[1] == "--version":
         print(f"AntigravityGate {__version__}")
+        return 0
+    if len(argv) >= 2 and argv[1] in ("--help", "-h", "/?"):
+        print(HELP_TEXT.format(version=__version__))
         return 0
     setup_logging()
     log.info("AntigravityGate %s", __version__)

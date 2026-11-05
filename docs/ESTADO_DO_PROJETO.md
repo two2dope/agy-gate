@@ -6,9 +6,9 @@ Atualizado em 2026-11-05. Versão **1.4.0** publicada (PR two2dope/agy-gate#10, 
 
 | | |
 |---|---|
-| **Feito** | 1.0.2 a 1.3.0 e **1.4.0 publicadas** (05/11, sessão local). 1.4.0: diagnóstico do ecossistema só leitura (junções do remote control, sessões escondidas na barra do IDE, manifestos de projeto) e C2. 1.3.0: lixeira com prazo (SHA-256 `AA0B6A987870BD1C46038ACEFEB4756EC6D0316A13BF603284011953CE98BA6A`). Nos dados reais em 05/11: junções ok, 69 de 69 sessões com origem CLI, manifesto do SMT1_WATCHDOG com 18 repetidas e 1 ausente. 34 conjuntos de teste |
-| **Faltando** | Conferir a 1.4.0 no `.exe` (linha de diagnóstico e janela). Auditoria R2 a R17. Parados enquanto o `agy` estiver fora de uso: retomada real com projeto, PowerShell piscando, editor vazio. Backups: não apagar |
-| **Próximo passo único** | Usuário confere a 1.4.0; a próxima frente se decide com "isso entra no lugar de quê?" (candidatas: R2 a R17 da auditoria, itens 4, 5 e 7 do backlog) |
+| **Feito** | 1.0.2 a 1.3.0 e **1.4.0 publicadas** (05/11, sessão local). 1.4.0: diagnóstico do ecossistema só leitura (junções do remote control, sessões escondidas na barra do IDE, manifestos de projeto) e C2. 1.3.0: lixeira com prazo (SHA-256 `AA0B6A987870BD1C46038ACEFEB4756EC6D0316A13BF603284011953CE98BA6A`). Nos dados reais em 05/11: junções ok, 69 de 69 sessões com origem CLI, manifesto do SMT1_WATCHDOG com 18 repetidas e 1 ausente. 35 conjuntos de teste |
+| **Faltando** | **1.5.0 na branch `claude/agy-gate-handoff-analysis-702a8c`**, sem PR: R2 a R5, R8, R9, R11 a R15 da auditoria e o item 7 do backlog. Ficaram de fora (escolha de 05/11): R16 (só investigação), R17 (dividir o monólito), item 4 (conferência manual) e item 5 (depende do `agy`, fora de uso). Parados enquanto o `agy` estiver fora de uso: retomada real com projeto, PowerShell piscando, editor vazio. Backups: não apagar |
+| **Próximo passo único** | Usuário confere a 1.5.0 no `.exe` (notas, copiar título, busca, exportar sem máscara) e decide o PR |
 
 ## Pendências (backlog pós-1.0)
 
@@ -31,7 +31,7 @@ Em ordem de prioridade. Cada item vira uma 1.0.x com teste; nada entra sem decid
 4. Não verificado no Windows: escala 125% a 150%, glifos Segoe MDL2 em todos os botões, significado dos status 6 e 7 das ferramentas.
 5. Lista de modelos do Auto-Run pelo `agy models` (hoje: lista embutida + a que o `agy` devolve no erro).
 6. **[Feito na 1.2.2]** Campo "Modelo(s)" vazio: o nome mudou para `gen_metadata` `f3.f28`.
-7. Datas `0001-01-01 00:00:00` em sessões sem horário: mostrar "-".
+7. **[Feito na 1.5.0]** Datas `0001-01-01 00:00:00` em sessões sem horário: mostrar "-".
 
 Saiu do backlog em 27/10: divisor de altura entre a tabela e os detalhes (a faixa de alerta da 1.0.2 entrou no lugar dele).
 
