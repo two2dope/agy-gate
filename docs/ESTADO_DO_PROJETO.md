@@ -1,14 +1,14 @@
 # AntigravityGate: estado do projeto
 
-Atualizado em 2026-11-05. Última versão publicada: **1.2.0** (Release `v1.2.0`; SHA-256 do `.exe` nas notas da Release). **1.2.1** na branch `claude/funny-tesla-4w2i3q` (cabeçalho alinhado com o painel de sessões), à espera da conferência do usuário no Windows e do ok para PR, merge e tag. Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
+Atualizado em 2026-11-05. Versão **1.2.1** publicada (PR two2dope/agy-gate#7, Release `v1.2.1`, SHA-256 do `.exe` `469EE122BD7C473C2304E4830EC128BF5766F1D4FB515C43DA3F9DBA9597E12F`). Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
 
 ## Snapshot
 
 | | |
 |---|---|
-| **Feito** | 1.0.2, 1.1.0 e 1.2.0 publicadas. **1.2.1 na branch** (pedido do usuário em 05/11, "cabeçalho ainda não me agrada"): a marca (ícone e nome) isolada na esquerda, numa coluna com a largura da barra lateral e uma linha separadora; as abas começam onde começa o painel de sessões (alinhadas com a busca e a tabela) e os botões terminam na mesma borda direita. 31 conjuntos de teste, todos passam localmente. 1.2.0: recibo de retomada com salvar em arquivo, janela do Auto-Run única em 3 etapas, cabeçalho e busca com menos texto. Antes: Antigravity restaurado (27/10), auditoria `reviews/audit-full-v1.0.0.md`, 1.0.1 (C1), 1.0.2 (alerta em dois níveis), 1.1.0 (pacote visual) |
-| **Faltando** | Conferir a 1.2.1 no Windows (cabeçalho) e o ok do usuário para PR, merge e tag `v1.2.1`. **O usuário abandonou o `agy` por ora (05/11: bugou e travou conversas) e usa o Auto-Run em simulação para trazer as sessões como dossiês; funciona.** Ele vai apresentar um aprendizado do que viveu com o `agy`, para deliberarmos. **Backups: não apagar** (o prazo de 03/11 foi cancelado). Retomada real de sessão com projeto e testes do `agy` (PowerShell piscando, editor vazio): parados, enquanto o `agy` estiver fora de uso. Lixeira com prazo (1.3). Não verificado: escala 125–150%, status 6 e 7, nome da entrada do daemon na chave Run |
-| **Próximo passo único** | Usuário confere o cabeçalho da 1.2.1 e diz se publica; depois apresenta o aprendizado do `agy` para deliberarmos (o que entra no Gate, o que sai do plano) |
+| **Feito** | 1.0.2, 1.1.0, 1.2.0 e **1.2.1 publicadas** (1.2.1: cabeçalho alinhado com o painel de sessões, conferido pelo usuário no Windows). 1.2.0: recibo de retomada com salvar em arquivo, janela do Auto-Run única em 3 etapas, cabeçalho e busca com menos texto. 1.2.0 SHA-256 `6D3007E2B4AF4D4243EF8483FE353E14F4A1D1B8DCB0AE06B0DD2EA89085296E`. 31 conjuntos de teste |
+| **Faltando** | **Analisar a pasta local `C:\Users\Thomáz\Projetos\01_dev-systems\04_apps-games\agy-gate\handoffs`** (dossiês das sessões que o usuário rodou no Antigravity): conhecimento e aprendizado a aproveitar de forma concreta no Gate. A sessão na nuvem não conseguiu ler a pasta (Remote Control do Windows não oferece pastas a sessões na nuvem); o usuário vai abrir uma sessão **local** no PC. O usuário abandonou o `agy` por ora (05/11) e usa o Auto-Run em simulação para trazer as sessões como dossiês. Backups: não apagar. Parados enquanto o `agy` estiver fora de uso: retomada real com projeto, PowerShell piscando, editor vazio. Lixeira com prazo (1.3) |
+| **Próximo passo único** | Na sessão local: ler os arquivos de `handoffs\`, extrair o aprendizado (falhas do `agy`, o que funcionou) e propor recursos concretos para o Gate, comparados com a lixeira (1.3) |
 
 ## Pendências (backlog pós-1.0)
 
