@@ -2,6 +2,19 @@
 
 Formato: [Versionamento Semântico](https://semver.org/lang/pt-BR/). Enquanto a versão começar com 0, o app está em candidato a lançamento: funciona, mas faltam itens listados abaixo.
 
+## [1.4.0] - 2026-11-05
+
+Diagnóstico do ecossistema (doctor passivo), com o que a auditoria de 28 e 29/10 aprendeu. Só leitura: o app mostra o que achou, o que significa e o que fazer, e nunca corrige.
+
+### Adicionado
+- **Diagnóstico na barra lateral:** uma linha na caixa de ambiente ("● diagnóstico: tudo ok" ou "▲ diagnóstico: N alerta(s)"), com o resumo na dica. Clicar abre a janela com cada verificação, o que foi visto e o que fazer; **Copiar**, **Salvar relatório…** e **Verificar de novo**. Roda ao abrir o app e no Atualizar (F5).
+- **Junções do remote control:** `antigravity-cli\conversations` e `antigravity-cli\brain` precisam apontar para as pastas ativas. Sem isso, o daemon descarta da memória as sessões que não acha na pasta dele e o celular abre vazio. Em caso de problema, a janela traz os comandos (`ren` e `mklink /J`) para rodar com o Antigravity fechado.
+- **Sessões escondidas na barra do IDE:** conta as sessões com origem fora das que a barra lateral do IDE aceita (UNSPECIFIED, JETBOX, CIDER). Fica como atenção, não problema: o `agy --hub` regrava a origem como CLI a cada reload, e corrigir o banco não dura.
+- **Manifestos de projeto:** em `config\projects\*.json`, entradas repetidas, sessões que não existem mais no índice e sessões do índice fora do manifesto.
+
+### Corrigido
+- **Junções apareciam como fonte "Backup/outros"** (crítico C2 da auditoria da 1.0.0): `antigravity-cli\conversations`, que é a própria pasta ativa, virava uma fonte separada no seletor. Agora as fontes são comparadas pelo caminho real.
+
 ## [1.3.0] - 2026-11-05
 
 Lixeira com prazo (pedido de 27/10), com as sugestões tiradas do plano de higiene de 29/10.
