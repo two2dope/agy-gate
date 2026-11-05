@@ -26,7 +26,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from tkinter import font as tkfont
 
-__version__ = "1.3.0"  # ver CHANGELOG.md
+__version__ = "1.4.0"  # ver CHANGELOG.md
 __build__ = "código-fonte"  # o CI troca pelo commit e pela data da montagem do .exe
 APP_AUTHOR = "Thominha"
 APP_EMAIL = "twoo2dope@gmail.com"
@@ -1536,10 +1536,11 @@ def discover_sources():
     A primeira é sempre a pasta ativa. Cópias de backup e quarentena ficam em fontes separadas,
     nunca misturadas com as ativas."""
     sources = [(ACTIVE_LABEL, ACTIVE_CONV_DIR, ACTIVE_SUM_DB if os.path.isfile(ACTIVE_SUM_DB) else None)]
-    seen = {os.path.normcase(os.path.abspath(ACTIVE_CONV_DIR))}
+    # realpath: junções (antigravity-cli\conversations -> antigravity\conversations) são a pasta ativa, não um backup (C2 da auditoria).
+    seen = {os.path.normcase(os.path.realpath(ACTIVE_CONV_DIR))}
     for top in sorted((e for e in scandir_safe(BASE_DIR) if e.is_dir()), key=lambda e: e.name.lower()):
         for folder in [top] + sorted((e for e in scandir_safe(top.path) if e.is_dir()), key=lambda e: e.name.lower()):
-            key = os.path.normcase(os.path.abspath(folder.path))
+            key = os.path.normcase(os.path.realpath(folder.path))
             if key in seen or not any(UUID_DB_RE.match(e.name) for e in scandir_safe(folder.path) if e.is_file()):
                 continue
             seen.add(key)
@@ -1549,6 +1550,140 @@ def discover_sources():
             rel = os.path.relpath(folder.path, BASE_DIR).replace(os.sep, "/")
             sources.append((f"Backup/outros: {rel}", folder.path, summ))
     return sources
+
+
+# --- diagnóstico do ecossistema (só leitura) ---------------------------------------------------
+# Conhecimento da auditoria de 28 e 29/10 (sessão ece4c25f, docs/HANDOFF_ECOSYSTEM_EVOLUTION.md). O app nunca corrige: mostra o que
+# achou, o que significa e o que fazer.
+
+DAEMON_DIR = os.path.join(BASE_DIR, "antigravity-cli")
+SIDEBAR_SOURCES = ("", "CORTEX_TRAJECTORY_SOURCE_UNSPECIFIED", "CORTEX_TRAJECTORY_SOURCE_JETBOX", "CORTEX_TRAJECTORY_SOURCE_CIDER")
+DOCTOR_LEVEL = {None: "não se aplica", 0: "ok", 1: "atenção", 2: "problema"}
+
+
+def same_dir(a, b):
+    return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
+
+
+def check_junctions():
+    """antigravity-cli\\conversations e \\brain precisam apontar para antigravity\\: o daemon do remote control cruza o índice com a
+    pasta conversations dele e descarta da memória o que não acha lá (log: 'dropped N'); o celular abre vazio."""
+    c = {'key': "junctions", 'title': "Junções do remote control", 'lines': [], 'action': ""}
+    if not os.path.isdir(DAEMON_DIR):
+        c.update(level=None, summary="Sem a pasta antigravity-cli: o remote control não foi configurado neste computador.")
+        return c
+    bad = []
+    for sub in ("conversations", "brain"):
+        link, target = os.path.join(DAEMON_DIR, sub), os.path.join(BASE_DIR, "antigravity", sub)
+        if not os.path.exists(link):
+            c['lines'].append(f"✖ {link}: não existe.")
+            bad.append((link, target))
+        elif same_dir(link, target):
+            c['lines'].append(f"✔ {link} → {target}")
+        else:
+            n = sum(1 for e in scandir_safe(link) if e.is_file() and UUID_DB_RE.match(e.name)) if sub == "conversations" else None
+            c['lines'].append(f"✖ {link}: pasta separada" + (f", com {n} sessão(ões)" if n is not None else "") + ", não aponta para a ativa.")
+            bad.append((link, target))
+    if not bad:
+        c.update(level=0, summary="As duas pastas do daemon apontam para as pastas ativas.")
+        return c
+    c.update(level=2, summary=f"{len(bad)} pasta(s) do daemon fora das ativas: o celular pode abrir vazio ou sem as sessões recentes.")
+    cmds = []
+    for l, t in bad:
+        if os.path.exists(l):  # pasta separada: guarda como backup antes de criar a junção
+            cmds.append(f'ren "{l}" "{os.path.basename(l)}.bak"')
+        cmds.append(f'mklink /J "{l}" "{t}"')
+    c['action'] = ("Com o Antigravity e o daemon fechados, no Prompt de Comando: renomeie a pasta separada, se houver (fica como backup), "
+                   "e crie a junção:\n" + "\n".join(cmds))
+    return c
+
+
+def check_cli_source(sum_db=ACTIVE_SUM_DB):
+    """Sessões que a barra lateral do IDE esconde: o filtro do IDE só aceita as origens UNSPECIFIED, JETBOX e CIDER, e o agy --hub (2.28.1)
+    regrava a origem como CLI a cada reload. Corrigir os dados não dura; o Desktop e o remote control mostram tudo."""
+    c = {'key': "cli_source", 'title': "Sessões escondidas na barra do IDE", 'lines': [], 'action': ""}
+    try:
+        with open_ro(sum_db) as conn:
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(conversation_summaries)")}
+            if "source" not in cols:
+                c.update(level=None, summary="O índice desta versão do Antigravity não tem a coluna source.")
+                return c
+            rows = conn.execute("SELECT source, count(*) FROM conversation_summaries GROUP BY source").fetchall()
+    except (sqlite3.Error, OSError) as e:
+        c.update(level=None, summary=f"Não consegui ler o índice ({e}).")
+        return c
+    total = sum(n for _s, n in rows)
+    hidden = sum(n for s, n in rows if (s or "") not in SIDEBAR_SOURCES)
+    c['lines'] = [f"{s or '(vazio)'}: {n}" for s, n in sorted(rows, key=lambda x: -x[1])]
+    if not hidden:
+        c.update(level=0, summary=f"As {total} sessões têm origem aceita pela barra do IDE.")
+        return c
+    c.update(level=1, summary=f"{hidden} de {total} sessões ficam fora da barra lateral do IDE (aparecem no Desktop e no remote control).")
+    c['action'] = ("Bug conhecido do agy --hub: ele regrava a origem como CLI a cada reload, então corrigir o banco não dura (3 tentativas em 29/10). "
+                   "Use o Desktop ou o remote control como índice; no IDE, a sessão volta a aparecer depois de aberta por lá. "
+                   "Relato do bug: bug-report-antigravity-hub-source-cli.md na pasta brain da sessão ece4c25f.")
+    return c
+
+
+def check_manifests(sum_db=ACTIVE_SUM_DB, projects_dir=None):
+    """config/projects/*.json lista as sessões de cada projeto (projectConversations.conversations). Fora de sincronia com o índice,
+    o IDE não agrupa a sessão na pasta do projeto ou mostra nós repetidos."""
+    projects_dir = projects_dir or PROJECTS_DIR
+    c = {'key': "manifests", 'title': "Manifestos de projeto", 'lines': [], 'action': ""}
+    try:
+        with open_ro(sum_db) as conn:
+            by_pid = {}
+            for cid, pid in conn.execute("SELECT conversation_id, project_id FROM conversation_summaries"):
+                by_pid.setdefault(pid or "", set()).add(cid)
+    except (sqlite3.Error, OSError) as e:
+        c.update(level=None, summary=f"Não consegui ler o índice ({e}).")
+        return c
+    known = set().union(*by_pid.values()) if by_pid else set()
+    issues = 0
+    for p_file in sorted(glob.glob(os.path.join(projects_dir, "*.json"))):
+        try:
+            with open(p_file, encoding="utf-8-sig") as fh:
+                d = json.load(fh)
+            convs = (d.get("projectConversations") or {}).get("conversations")
+        except (OSError, ValueError, AttributeError):
+            c['lines'].append(f"✖ {os.path.basename(p_file)}: JSON ilegível.")
+            issues += 1
+            continue
+        if not isinstance(convs, list) or d.get("id") in NO_PROJECT_IDS:
+            continue
+        ids = [x.get("conversationId") if isinstance(x, dict) else str(x) for x in convs]
+        uniq = set(filter(None, ids))
+        dup, orphan = len(ids) - len(uniq), len(uniq - known)
+        missing = len(by_pid.get(d.get("id"), set()) - uniq)
+        if dup or orphan or missing:
+            issues += 1
+            parts = [f"{dup} repetida(s)" if dup else "", f"{orphan} sem sessão no índice" if orphan else "",
+                     f"{missing} do índice fora do manifesto" if missing else ""]
+            c['lines'].append(f"▲ {d.get('name') or d.get('id')}: {len(ids)} entradas; " + ", ".join(x for x in parts if x) + ".")
+    if not issues:
+        c.update(level=0, summary="Os manifestos batem com o índice de sessões.")
+        return c
+    c.update(level=1, summary=f"{issues} projeto(s) com o manifesto fora de sincronia com o índice.")
+    c['action'] = ("O Antigravity costuma refazer o manifesto ao abrir o projeto. Se a pasta do projeto continuar sem as sessões no IDE, "
+                   "feche o Antigravity, faça backup de config\\projects e reconcilie (há um script de 29/10 citado no session-report da sessão ece4c25f).")
+    return c
+
+
+def doctor_checks():
+    return [check_junctions(), check_cli_source(), check_manifests()]
+
+
+def doctor_markdown(checks):
+    out = [f"# Diagnóstico do ecossistema — {datetime.now().strftime('%Y-%m-%d %H:%M')}", "",
+           "> Só leitura: o AntigravityGate não altera nada no Antigravity.", ""]
+    for c in checks:
+        out += [f"## {c['title']}: {DOCTOR_LEVEL[c['level']]}", "", c['summary'], ""]
+        out += [f"- {x}" for x in c['lines']] + ([""] if c['lines'] else [])
+        if c['action']:
+            out += ["**O que fazer:** " + c['action'].split("\n")[0], ""]
+            if "\n" in c['action']:
+                out += [fence("\n".join(c['action'].split("\n")[1:])), ""]
+    return "\n".join(out)
 
 
 def load_projects(warn):
@@ -3089,6 +3224,85 @@ class TrashDialog(tk.Toplevel):
         self.app.notify("ok" if not failed else "warn", f"{done} dossiê(s) apagado(s)." + (f" {len(failed)} falharam (ver log)." if failed else ""))
 
 
+class DoctorDialog(tk.Toplevel):
+    """Diagnóstico do ecossistema: cada verificação com o estado, o que foi visto e o que fazer. Só leitura."""
+
+    MARK = {None: "–", 0: "✔", 1: "▲", 2: "✖"}
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.app = app
+        t = app.t
+        self.title("Diagnóstico do ecossistema")
+        self.transient(app)
+        self.configure(bg=t['panel'], padx=app.px(14), pady=app.px(12))
+        tk.Label(self, text="Diagnóstico do ecossistema", font=app.f_title, bg=t['panel'], fg=t['fg'], anchor="w").pack(fill=tk.X)
+        tk.Label(self, text="Só leitura: o AntigravityGate não altera nada no Antigravity. Roda ao abrir o app e no Atualizar (F5).",
+                 font=app.f_small, bg=t['panel'], fg=t['muted'], anchor="w", justify=tk.LEFT, wraplength=app.px(720)).pack(fill=tk.X, pady=(2, 8))
+        row = tk.Frame(self, bg=t['panel'])
+        row.pack(side=tk.BOTTOM, fill=tk.X, pady=(app.px(10), 0))
+        IconButton(row, app, "copy", "Copiar", self.copy, bg_token="panel").pack(side=tk.LEFT)
+        IconButton(row, app, "export", "Salvar relatório…", self.save, bg_token="panel").pack(side=tk.LEFT, padx=(app.px(8), 0))
+        IconButton(row, app, "refresh", "Verificar de novo", self.rerun, bg_token="panel").pack(side=tk.LEFT, padx=(app.px(8), 0))
+        IconButton(row, app, "", "Fechar", self.destroy, bg_token="panel").pack(side=tk.RIGHT)
+        self.text = tk.Text(self, wrap=tk.WORD, font=app.f_ui, bg=t['panel2'], fg=t['fg'], relief=tk.FLAT, highlightthickness=1,
+                            highlightbackground=t['border'], highlightcolor=t['accent'], padx=app.px(10), pady=app.px(8), width=88, height=24,
+                            selectbackground=t['sel_bg'], selectforeground=t['sel_fg'], insertbackground=t['fg'])
+        self.text.tag_configure("h", font=app.f_bold, spacing1=app.px(10), spacing3=app.px(2))
+        for lv, tok in ((None, 'muted'), (0, 'success'), (1, 'warning'), (2, 'danger')):
+            self.text.tag_configure(f"lv{lv}", foreground=t[tok], font=app.f_bold)
+        self.text.tag_configure("muted", foreground=t['muted'])
+        mono = next((f for f in ("JetBrains Mono", "Consolas", "DejaVu Sans Mono") if f in app.families), "TkFixedFont")
+        self.text.tag_configure("code", font=(mono, 9) if mono != "TkFixedFont" else mono, lmargin1=app.px(14), lmargin2=app.px(14))
+        self.text.bind("<Key>", lambda e: None if (e.state & 0x4 and e.keysym.lower() in ("c", "a")) else "break")
+        self.text.pack(fill=tk.BOTH, expand=True)
+        self.render()
+        self.bind("<Escape>", lambda e: self.destroy())
+        place_over(self, app)
+        self.lift()
+        self.focus_force()
+
+    def render(self):
+        self.text.delete("1.0", tk.END)
+        for c in self.app.doctor:
+            lv = c['level']
+            self.text.insert(tk.END, f"{self.MARK[lv]} ", (f"lv{lv}", "h"))
+            self.text.insert(tk.END, f"{c['title']}: {DOCTOR_LEVEL[lv]}\n", ("h",))
+            self.text.insert(tk.END, c['summary'] + "\n")
+            for line in c['lines']:
+                self.text.insert(tk.END, "   " + line + "\n", ("muted",))
+            if c['action']:
+                first, _, rest = c['action'].partition("\n")
+                self.text.insert(tk.END, "O que fazer: ", ("h",))
+                self.text.insert(tk.END, first + "\n")
+                if rest:
+                    self.text.insert(tk.END, rest + "\n", ("code",))
+
+    def rerun(self):
+        self.app.run_doctor()
+        self.render()
+
+    def copy(self):
+        self.app.clipboard_clear()
+        self.app.clipboard_append(doctor_markdown(self.app.doctor))
+        self.app.notify("ok", "Diagnóstico copiado.")
+
+    def save(self):
+        os.makedirs(EXPORT_DIR, exist_ok=True)
+        out = filedialog.asksaveasfilename(parent=self, title="Salvar diagnóstico", initialdir=EXPORT_DIR,
+                                           initialfile=f"AntigravityGate_diagnostico_{datetime.now().strftime('%Y%m%d-%H%M')}.md",
+                                           defaultextension=".md", filetypes=[("Markdown", "*.md"), ("Texto", "*.txt"), ("Todos os arquivos", "*.*")])
+        if not out:
+            return
+        try:
+            with open(out, "w", encoding="utf-8") as fh:
+                fh.write(doctor_markdown(self.app.doctor))
+        except OSError as e:
+            messagebox.showerror("Diagnóstico", f"Não foi possível salvar: {e}", parent=self)
+            return
+        self.app.notify("ok", f"Diagnóstico salvo: {out}")
+
+
 def usage_text(usage):
     """Tokens do agy em texto: 'entrada 1.500, saída 20, total 1.520' (só o que veio)."""
     usage = usage if isinstance(usage, dict) else {}
@@ -4208,6 +4422,12 @@ class AntigravityGateApp(tk.Tk):
         self.env_box.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, self.px(10)))
         self.env_agy = self.themed_widget(tk.Label(self.env_box, font=self.f_small, anchor="w", padx=self.px(14)), bg="panel")
         self.env_rc = self.themed_widget(tk.Label(self.env_box, font=self.f_small, anchor="w", padx=self.px(14)), bg="panel")
+        # Diagnóstico do ecossistema (1.4): uma linha com o pior estado; clicar abre a janela com os detalhes.
+        self.env_doc = self.themed_widget(tk.Label(self.env_box, font=self.f_small, anchor="w", padx=self.px(14), cursor="hand2"), bg="panel")
+        self.env_doc.bind("<Button-1>", lambda e: self.open_doctor())
+        self.env_doc.pack(fill=tk.X)
+        Tooltip(self.env_doc, self, lambda: "\n".join(f"{DoctorDialog.MARK[c['level']]} {c['title']}: {c['summary']}" for c in self.doctor)
+                + "\n\nClique para ver o que significa e o que fazer.")
         self.env_agy.pack(fill=tk.X)
         self.env_rc.pack(fill=tk.X)
         self.env_state, self.env_tips = (False, None), ("", "")
@@ -4655,12 +4875,40 @@ class AntigravityGateApp(tk.Tk):
         self.env_tips = (agy or "Não achei o agy no PATH nem em AGY_EXE: o Auto-Run precisa dele. Confira `agy --help` no PowerShell.",
                          "Procurei 'remote-control' na chave Run do Windows (HKCU, Run): mostra se o daemon inicia no login, não se está online. "
                          "Para ver se está online, abra o site do Antigravity (instância dev-thomaz). Para registrar: agy remote-control start.")
+        self.run_doctor()
+
+    def run_doctor(self):
+        """Diagnóstico do ecossistema (só leitura). Roda com o indicador de ambiente: ao abrir e no Atualizar (F5)."""
+        try:
+            self.doctor = doctor_checks()
+        except Exception as e:  # o diagnóstico nunca derruba o app
+            log.exception("Falha no diagnóstico")
+            self.doctor = [{'key': "erro", 'title': "Diagnóstico", 'level': None, 'summary': f"Falhou: {e}", 'lines': [], 'action': ""}]
         self.paint_env()
+        win = getattr(self, "doctor_win", None)
+        if win is not None and win.winfo_exists():
+            win.render()
+
+    def doctor_level(self):
+        return max((c['level'] for c in getattr(self, "doctor", []) if c['level'] is not None), default=0)
+
+    def open_doctor(self):
+        win = getattr(self, "doctor_win", None)
+        if win is not None and win.winfo_exists():
+            win.lift()
+            return win
+        self.doctor_win = DoctorDialog(self)
+        return self.doctor_win
 
     def paint_env(self):
         if not hasattr(self, "env_agy"):
             return
         t, (agy_ok, rc) = self.t, self.env_state
+        if hasattr(self, "env_doc") and hasattr(self, "doctor"):
+            lv = self.doctor_level()
+            n = sum(1 for c in self.doctor if c['level'])
+            self.env_doc.configure(text="● diagnóstico: tudo ok" if not lv else f"{'▲' if lv == 1 else '✖'} diagnóstico: {n} alerta(s)",
+                                   fg=t[{0: 'success', 1: 'warning', 2: 'danger'}[lv]])
         self.env_agy.configure(text="● agy encontrado" if agy_ok else "○ agy não encontrado", fg=t['success'] if agy_ok else t['warning'])
         if rc is None:
             self.env_rc.pack_forget()
