@@ -19,7 +19,8 @@ A conferência da integridade do download: a Release mostra o SHA-256 do `.exe`.
 
 - Tabela de sessões por projeto, com sub-agentes, contexto em tokens (medidor), passos e falhas de ferramenta.
 - **Limites de contexto** (botão Limites): três faixas prontas e uma personalizada. Alerta acima da tabela em dois níveis: crítico (vermelho, em destaque) e atenção (âmbar).
-- Barra lateral (categorias e projetos, Ctrl+B) e abas no cabeçalho (Todas, Aprovadas aguardando, Arquivadas) sobre um filtro só.
+- Barra lateral (categorias e projetos, Ctrl+B) e abas no cabeçalho (Todas, Aprovadas aguardando, Arquivadas, Lixeira) sobre um filtro só.
+- Lixeira com prazo: arquivadas há 30 dias (ajustável) e as sessões de teste ou sem trabalho que você confirmar saem da lista; o Gate lista os UUIDs para apagar pelo agy (`/resume`, F4) e apaga só os dossiês que ele mesmo gravou. Nada é apagado nos bancos do Antigravity.
 - Coluna Consumo (tokens, % do nível crítico, medidor) e tabela compacta ou confortável; coluna ⋮ com o menu da sessão.
 - Painel de detalhes, busca (inclusive no conteúdo das conversas), ordenação e menu de contexto.
 - **Diálogo completo** e **dossiê de retomada** em Markdown, com lista de arquivos alterados e consultados. O dossiê mascara chaves e senhas por padrões conhecidos (heurística: confira antes de compartilhar).

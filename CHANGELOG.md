@@ -2,6 +2,19 @@
 
 Formato: [Versionamento Semântico](https://semver.org/lang/pt-BR/). Enquanto a versão começar com 0, o app está em candidato a lançamento: funciona, mas faltam itens listados abaixo.
 
+## [1.3.0] - 2026-11-05
+
+Lixeira com prazo (pedido de 27/10), com as sugestões tiradas do plano de higiene de 29/10.
+
+### Adicionado
+- **Lixeira.** Estado novo "Na lixeira": a sessão some de Todas, da busca e dos avisos de contexto, e aparece na aba **Lixeira** e no item Lixeira da barra lateral (com contagem). No menu da sessão, "Mover para a lixeira".
+- **Prazo das arquivadas.** Ao abrir o app, as sessões arquivadas há 30 dias ou mais (contados da marcação) vão para a lixeira, com aviso. O prazo é ajustável na janela da lixeira (0 desliga) e lembrado entre execuções.
+- **Sugestões de limpeza.** Entre as pendentes, o app sugere as sessões de teste, as retomadas sem trabalho (até 6 passos, inclusive as abertas pelo Auto-Run) e as triviais (até 3 passos). Nada muda sozinho: um aviso abre a janela, todas vêm marcadas e você desmarca as que quer manter antes de mover.
+- **Janela da lixeira** (botão Lixeira… na barra de ações): sugeridas e na lixeira; **Copiar UUIDs** e **Salvar lista…** (Markdown) para apagar pela exclusão oficial do agy (`/resume`, selecione a sessão, F4); **Apagar dossiês do Gate**, que remove só os arquivos `retomada_….md` que o Auto-Run gravou para essas sessões, com confirmação; **Restaurar marcadas**, que volta a sessão para arquivada com o prazo recomeçando.
+
+### Segurança
+- O app continua sem escrever nos bancos do Antigravity. Apagar arquivo por fora com o servidor aberto trava a sessão até reiniciar (o ID entra numa lista interna do motor), por isso a exclusão fica com o agy.
+
 ## [1.2.2] - 2026-11-05
 
 Ajustes no dossiê, vistos ao ler os dossiês das sessões de 28 e 29/10 (pasta `handoffs`).

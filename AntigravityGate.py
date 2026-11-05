@@ -26,7 +26,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from tkinter import font as tkfont
 
-__version__ = "1.2.2"  # ver CHANGELOG.md
+__version__ = "1.3.0"  # ver CHANGELOG.md
 __build__ = "código-fonte"  # o CI troca pelo commit e pela data da montagem do .exe
 APP_AUTHOR = "Thominha"
 APP_EMAIL = "twoo2dope@gmail.com"
@@ -45,7 +45,7 @@ HANDOFF_DIR = os.path.join(LOG_DIR, "handoffs")
 EXTRA_OWN_DIRS = []  # pastas de dossiê escolhidas pelo usuário (Auto-Run): também são do app
 STATE_DB = os.path.join(LOG_DIR, "gate_state.db")  # estado do AntigravityGate; nunca grava nos bancos do Antigravity
 
-STATUS_NAME = {"pendente": "Pendente", "aprovada": "Aprovada", "arquivada": "Arquivada"}
+STATUS_NAME = {"pendente": "Pendente", "aprovada": "Aprovada", "arquivada": "Arquivada", "lixeira": "Na lixeira"}
 
 # Níveis de alerta do contexto (tokens de entrada da última resposta do modelo: f2 + f5 de step_payload.f5.f9).
 # Faixas prontas e uma personalizada. Os valores são heurísticas de uso, não medidas: a degradação real depende do modelo e da tarefa.
@@ -1029,6 +1029,79 @@ class StateStore:
                                   "ON CONFLICT(cid) DO UPDATE SET status=excluded.status, updated_at=excluded.updated_at", (cid, status, now))
                     c.execute("INSERT INTO state_log(cid, status, at) VALUES(?,?,?)", (cid, status, now))
 
+    def sweep_trash(self, days, now=None):
+        """Leva para a lixeira as sessões arquivadas há `days` dias ou mais (pela data da marcação). days <= 0 desliga.
+        Devolve os UUIDs movidos."""
+        if days <= 0:
+            return []
+        cutoff = ((now or datetime.now()) - timedelta(days=days)).strftime('%Y-%m-%d %H:%M:%S')
+        with self._connect() as c:
+            cids = [r[0] for r in c.execute("SELECT cid FROM session_state WHERE status='arquivada' AND updated_at <= ?", (cutoff,))]
+        if cids:
+            self.set_many(cids, "lixeira")
+        return cids
+
+    def dossiers_for(self, cids):
+        """Dossiês que o Auto-Run gravou para essas sessões (caminhos registrados em handoffs, sem repetir)."""
+        cids = list(cids)
+        out = []
+        with self._connect() as c:
+            for i in range(0, len(cids), 500):
+                part = cids[i:i + 500]
+                q = f"SELECT dossier_path FROM handoffs WHERE src_cid IN ({','.join('?' * len(part))}) AND dossier_path IS NOT NULL"
+                out += [r[0] for r in c.execute(q, part) if r[0]]
+        return list(dict.fromkeys(out))
+
+
+TRASH_DAYS_DEFAULT = 30
+DOSSIER_NAME_RE = re.compile(r"^retomada_[0-9a-f]{8}_\d{8}-\d{6}\.md$")  # nome que o Auto-Run dá aos dossiês
+
+
+def trash_reason(r, status):
+    """Por que a sessão é candidata à lixeira ('' se não é). Critério do plano de higiene de 29/10: sessões de teste,
+    retomadas sem trabalho (até 6 passos) e triviais (até 3 passos). Só pendentes: aprovadas e arquivadas já têm destino
+    (as arquivadas chegam à lixeira pelo prazo), e uma sessão em execução fica de fora."""
+    if status != "pendente" or r.get('running'):
+        return ""
+    steps, title = r.get('steps') or 0, (r.get('title') or "").strip().lower()
+    if steps <= 6:
+        if re.match(r"^teste?(\d|\b)", title) or "test conversation" in title:
+            return "teste"
+        if title.startswith("retomada") or AGY_PROMPT_MARK.lower() in (r.get('hay') or ""):
+            return "retomada sem trabalho"
+    if steps <= 3:
+        return "trivial"
+    return ""
+
+
+def gate_dossiers(paths):
+    """Só os arquivos que são dossiês do Auto-Run (nome retomada_<id>_<data>.md) e ainda existem: o resto nunca é apagado."""
+    return [p for p in paths if DOSSIER_NAME_RE.match(os.path.basename(p)) and os.path.isfile(p)]
+
+
+def delete_files(paths):
+    """Apaga os arquivos; devolve (apagados, [(caminho, erro)])."""
+    done, failed = 0, []
+    for p in paths:
+        try:
+            os.remove(p)
+            done += 1
+        except OSError as e:
+            failed.append((p, str(e)))
+    return done, failed
+
+
+def trash_markdown(rows):
+    """Lista da lixeira para apagar pelo agy: título, UUID, projeto, passos."""
+    out = [f"# Lixeira do AntigravityGate — {datetime.now().strftime('%Y-%m-%d %H:%M')}", "",
+           f"{len(rows)} sessão(ões). O AntigravityGate não apaga nada nos bancos do Antigravity. Para apagar de vez, use a exclusão "
+           "oficial do agy: `agy`, comando `/resume`, selecione a sessão e tecle F4. Ela também limpa subagentes, worktrees e anotações.", "",
+           "| Sessão | UUID | Projeto | Passos |", "| :-- | :-- | :-- | --: |"]
+    for r in rows:
+        out.append(f"| {(r.get('title') or '').replace('|', '/')} | `{r['cid']}` | {(r.get('project') or '-').replace('|', '/')} | {r.get('steps') or 0} |")
+    out += ["", "## Só os UUIDs", "", fence("\n".join(r['cid'] for r in rows))]
+    return "\n".join(out)
+
 
 class _NoClose:
     """Envolve a conexão em memória para o `closing` não destruir o banco entre chamadas."""
@@ -1648,7 +1721,7 @@ ICONS = {
     "refresh": ("\uE72C", "↻"), "search": ("\uE721", "⌕"), "clear": ("\uE711", "✕"), "approve": ("\uE73E", "✔"),
     "archive": ("\uE7B8", "▣"), "pending": ("\uE7A7", "↶"), "export": ("\uE74E", "↧"), "dossier": ("\uE768", "▶"),
     "autorun": ("\uE945", "⚡"), "theme": ("\uE790", "◐"), "warn": ("\uE7BA", "⚠"), "limits": ("\uE713", "⚙"), "copy": ("\uE8C8", "⧉"), "folder": ("\uE838", "▭"),
-    "about": ("\uE946", "ⓘ"),
+    "about": ("\uE946", "ⓘ"), "trash": ("\uE74D", "✖"),
 }
 
 # Conjuntos com a fonte empacotada em fonts/ (registrada só para este processo, no Windows). modo -> (família, arquivo, glifos).
@@ -1657,15 +1730,15 @@ ICON_FONTS = {
     "fa": ("Font Awesome 6 Free Solid", "fa-solid-900.ttf", {
         "refresh": "\uf2f1", "search": "\uf002", "clear": "\uf00d", "approve": "\uf00c", "archive": "\uf187", "pending": "\uf2ea",
         "export": "\uf56e", "dossier": "\uf04b", "autorun": "\uf0e7", "theme": "\uf53f", "warn": "\uf071", "limits": "\uf1de",
-        "copy": "\uf0c5", "folder": "\uf07c", "about": "\uf05a"}),
+        "copy": "\uf0c5", "folder": "\uf07c", "about": "\uf05a", "trash": "\uf1f8"}),
     "bootstrap": ("bootstrap-icons", "bootstrap-icons.ttf", {
         "refresh": "\uf116", "search": "\uf52a", "clear": "\uf659", "approve": "\uf633", "archive": "\uf10d", "pending": "\uf117",
         "export": "\uf1c6", "dossier": "\uf4f4", "autorun": "\uf46e", "theme": "\uf4b1", "warn": "\uf33a", "limits": "\uf56b",
-        "copy": "\uf759", "folder": "\uf3d8", "about": "\uf431"}),
+        "copy": "\uf759", "folder": "\uf3d8", "about": "\uf431", "trash": "\uf5de"}),
     "material": ("Material Icons", "MaterialIcons-Regular.ttf", {
         "refresh": "\ue5d5", "search": "\ue8b6", "clear": "\ue5cd", "approve": "\ue5ca", "archive": "\ue149", "pending": "\ue166",
         "export": "\ue171", "dossier": "\ue037", "autorun": "\uea0b", "theme": "\ue40a", "warn": "\ue002", "limits": "\ue429",
-        "copy": "\ue14d", "folder": "\ue2c8", "about": "\ue88e"}),
+        "copy": "\ue14d", "folder": "\ue2c8", "about": "\ue88e", "trash": "\ue872"}),
 }
 
 
@@ -2840,6 +2913,177 @@ class ReceiptDialog(tk.Toplevel):
             messagebox.showinfo("Recibo", "A pasta do dossiê não existe mais neste computador.", parent=self)
 
 
+class TrashDialog(tk.Toplevel):
+    """Lixeira: sugestões de limpeza (você confirma), prazo das arquivadas, lista para apagar pelo agy e os dossiês do Gate.
+    O Gate não apaga nada nos bancos do Antigravity: só muda o estado próprio dele e apaga os dossiês que ele mesmo gravou."""
+
+    COLS = (("title", "Sessão", 330), ("why", "Motivo", 150), ("steps", "Passos", 60), ("project", "Projeto", 150))
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.app = app
+        t = app.t
+        self.title("Lixeira")
+        self.transient(app)
+        self.configure(bg=t['panel'], padx=app.px(14), pady=app.px(12))
+        lab = lambda parent, text, font=None, fg='fg', **kw: tk.Label(parent, text=text, font=font or app.f_ui, bg=t['panel'], fg=t[fg], anchor="w",
+                                                                      justify=tk.LEFT, **kw)
+        lab(self, "Lixeira", app.f_title).pack(fill=tk.X)
+        lab(self, "O AntigravityGate não apaga nada nos bancos do Antigravity. Aqui você manda sessões para a lixeira (elas somem da lista), "
+                  "copia ou salva os UUIDs para apagar pela exclusão oficial do agy (/resume, selecione a sessão, F4) e apaga os dossiês que o "
+                  "próprio Gate gravou.", app.f_small, 'muted', wraplength=app.px(720)).pack(fill=tk.X, pady=(2, 8))
+        days_row = tk.Frame(self, bg=t['panel'])
+        days_row.pack(fill=tk.X, pady=(0, app.px(8)))
+        lab(days_row, "Arquivadas vão para a lixeira depois de").pack(side=tk.LEFT)
+        self.days = tk.StringVar(value=str(app.trash_days()))
+        sb = tk.Spinbox(days_row, from_=0, to=3650, width=5, textvariable=self.days, command=self.save_days, font=app.f_ui)
+        sb.bind("<FocusOut>", lambda e: self.save_days())
+        sb.bind("<Return>", lambda e: self.save_days())
+        sb.pack(side=tk.LEFT, padx=app.px(6))
+        lab(days_row, "dias (0 desliga)", fg='muted').pack(side=tk.LEFT)
+
+        self.sug_head = lab(self, "", app.f_bold)
+        self.sug_head.pack(fill=tk.X, pady=(app.px(6), 2))
+        lab(self, "Sessões de teste, retomadas sem trabalho (até 6 passos) e triviais (até 3 passos), entre as pendentes. "
+                  "Todas vêm marcadas: desmarque (Ctrl+clique) as que quer manter.", app.f_small, 'muted', wraplength=app.px(720)).pack(fill=tk.X)
+        self.sug = self.make_tree()
+        row = tk.Frame(self, bg=t['panel'])
+        row.pack(fill=tk.X, pady=(app.px(6), 0))
+        self.b_move = IconButton(row, app, "trash", "Mover marcadas para a lixeira", self.move_selected, bg_token="panel", kind="primary")
+        self.b_move.pack(side=tk.LEFT)
+
+        self.bin_head = lab(self, "", app.f_bold)
+        self.bin_head.pack(fill=tk.X, pady=(app.px(14), 2))
+        self.bin = self.make_tree()
+        row = tk.Frame(self, bg=t['panel'])
+        row.pack(fill=tk.X, pady=(app.px(6), 0))
+        self.b_copy = IconButton(row, app, "copy", "Copiar UUIDs", self.copy_ids, bg_token="panel")
+        self.b_copy.pack(side=tk.LEFT)
+        self.b_save = IconButton(row, app, "export", "Salvar lista…", self.save_list, bg_token="panel")
+        self.b_save.pack(side=tk.LEFT, padx=(app.px(8), 0))
+        self.b_dossiers = IconButton(row, app, "clear", "Apagar dossiês do Gate", self.delete_dossiers, bg_token="panel")
+        self.b_dossiers.pack(side=tk.LEFT, padx=(app.px(8), 0))
+        self.b_restore = IconButton(row, app, "pending", "Restaurar marcadas", self.restore_selected, bg_token="panel")
+        self.b_restore.pack(side=tk.LEFT, padx=(app.px(8), 0))
+        row = tk.Frame(self, bg=t['panel'])
+        row.pack(fill=tk.X, pady=(app.px(12), 0))
+        IconButton(row, app, "", "Fechar", self.destroy, bg_token="panel").pack(side=tk.RIGHT)
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.reload()
+        place_over(self, app)
+        self.lift()
+        self.focus_force()
+
+    def make_tree(self):
+        frame = tk.Frame(self, bg=self.app.t['panel'])
+        frame.pack(fill=tk.BOTH, expand=True)
+        tree = ttk.Treeview(frame, columns=[c for c, _h, _w in self.COLS], show="headings", height=7, selectmode="extended")
+        for c, h, w in self.COLS:
+            tree.heading(c, text=h)
+            tree.column(c, width=self.app.px(w), anchor="e" if c == "steps" else "w", stretch=c == "title")
+        sb = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=sb.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb.pack(side=tk.LEFT, fill=tk.Y)
+        return tree
+
+    def bin_rows(self):
+        return sorted((r for r in self.app.row_by_cid.values() if self.app.states.get(r['cid']) == "lixeira"), key=lambda r: r['title'].lower())
+
+    def bin_dossiers(self):
+        try:
+            return gate_dossiers(self.app.state.dossiers_for(r['cid'] for r in self.bin_rows()))
+        except sqlite3.Error:
+            return []
+
+    def reload(self):
+        for tree in (self.sug, self.bin):
+            tree.delete(*tree.get_children())
+        cands = self.app.trash_candidates()
+        for r, why in cands:
+            self.sug.insert("", tk.END, iid=r['cid'], values=(r['title'], why, r['steps'], r['project']))
+        self.sug.selection_set(self.sug.get_children())
+        self.sug_head.configure(text=f"Sugeridas ({len(cands)})")
+        rows = self.bin_rows()
+        for r in rows:
+            self.bin.insert("", tk.END, iid=r['cid'], values=(r['title'], "na lixeira", r['steps'], r['project']))
+        self.bin_head.configure(text=f"Na lixeira ({len(rows)})")
+        n_dos = len(self.bin_dossiers())
+        self.b_dossiers.set_text(f"Apagar dossiês do Gate ({n_dos})")
+        self.b_move.set_enabled(bool(cands), "" if cands else "Nenhuma sugestão agora.")
+        for b in (self.b_copy, self.b_save, self.b_restore):
+            b.set_enabled(bool(rows), "" if rows else "A lixeira está vazia.")
+        self.b_dossiers.set_enabled(bool(n_dos), "" if n_dos else "Nenhum dossiê do Gate para as sessões da lixeira.")
+
+    def save_days(self):
+        try:
+            d = max(0, min(3650, int(self.days.get())))
+        except ValueError:
+            d = self.app.trash_days()
+        self.days.set(str(d))
+        if d != self.app.trash_days():
+            self.app.settings['trash_days'] = d
+            save_settings(self.app.settings)
+
+    def apply(self, cids, status, text):
+        if not cids:
+            return
+        try:
+            self.app.state.set_many(cids, status)
+        except sqlite3.Error as e:
+            log.exception("Falha ao gravar estado")
+            messagebox.showerror("Lixeira", f"Não foi possível gravar o estado:\n{e}", parent=self)
+            return
+        self.app.states = self.app.state.load()
+        self.app.refresh_labels()
+        self.reload()
+        self.app.notify("ok", text)
+
+    def move_selected(self):
+        cids = list(self.sug.selection())
+        self.apply(cids, "lixeira", f"{len(cids)} sessão(ões) na lixeira. Elas saíram da lista; a aba Lixeira mostra todas.")
+
+    def restore_selected(self):
+        cids = list(self.bin.selection())
+        if not cids:
+            messagebox.showinfo("Lixeira", "Marque na lista \"Na lixeira\" as sessões que quer restaurar.", parent=self)
+            return
+        self.apply(cids, "arquivada", f"{len(cids)} sessão(ões) restaurada(s) como arquivadas (o prazo recomeça hoje).")
+
+    def copy_ids(self):
+        rows = self.bin_rows()
+        self.app.clipboard_clear()
+        self.app.clipboard_append("\n".join(r['cid'] for r in rows))
+        self.app.notify("ok", f"{len(rows)} UUID(s) copiados. No agy: /resume, selecione a sessão e tecle F4.")
+
+    def save_list(self):
+        os.makedirs(EXPORT_DIR, exist_ok=True)
+        out = filedialog.asksaveasfilename(parent=self, title="Salvar lista da lixeira", initialdir=EXPORT_DIR,
+                                           initialfile=f"AntigravityGate_lixeira_{datetime.now().strftime('%Y%m%d-%H%M')}.md",
+                                           defaultextension=".md", filetypes=[("Markdown", "*.md"), ("Texto", "*.txt"), ("Todos os arquivos", "*.*")])
+        if not out:
+            return
+        try:
+            with open(out, "w", encoding="utf-8") as fh:
+                fh.write(trash_markdown(self.bin_rows()))
+        except OSError as e:
+            messagebox.showerror("Lixeira", f"Não foi possível salvar a lista: {e}", parent=self)
+            return
+        self.app.notify("ok", f"Lista salva: {out}")
+
+    def delete_dossiers(self):
+        paths = self.bin_dossiers()
+        if not paths or not messagebox.askyesno(
+                "Lixeira", f"Apagar {len(paths)} dossiê(s) que o AntigravityGate gravou para as sessões da lixeira?\n\n"
+                           "Só os arquivos retomada_….md do Auto-Run. As sessões e as exportações que você salvou ficam.", parent=self):
+            return
+        done, failed = delete_files(paths)
+        for p, err in failed:
+            log.warning("Não apaguei o dossiê %s: %s", p, err)
+        self.reload()
+        self.app.notify("ok" if not failed else "warn", f"{done} dossiê(s) apagado(s)." + (f" {len(failed)} falharam (ver log)." if failed else ""))
+
+
 def usage_text(usage):
     """Tokens do agy em texto: 'entrada 1.500, saída 20, total 1.520' (só o que veio)."""
     usage = usage if isinstance(usage, dict) else {}
@@ -3650,7 +3894,7 @@ class AntigravityGateApp(tk.Tk):
         return img
 
     def status_icon(self, cid):
-        name = {"pendente": "pending", "aprovada": "approved", "arquivada": "archived"}[self.states.get(cid, "pendente")]
+        name = {"pendente": "pending", "aprovada": "approved", "arquivada": "archived", "lixeira": "archived"}[self.states.get(cid, "pendente")]
         return self.icon(name, handoff=bool(self.handoffs.get(cid)))
 
     def restyle_rows(self):
@@ -3760,7 +4004,7 @@ class AntigravityGateApp(tk.Tk):
     def level_rows(self, level):
         """Sessões visíveis e não arquivadas no nível de contexto `level` (1 atenção, 2 crítico)."""
         shown = [self.row_by_cid[self.cid_of(i)] for i in self.iter_sessions() if self.cid_of(i) in self.row_by_cid]
-        return [r for r in shown if ctx_level(r['ctx']) == level and self.states.get(r['cid']) != "arquivada"]
+        return [r for r in shown if ctx_level(r['ctx']) == level and self.states.get(r['cid']) not in ("arquivada", "lixeira")]
 
     def critical_rows(self):
         return self.level_rows(2)
@@ -3910,7 +4154,7 @@ class AntigravityGateApp(tk.Tk):
         # Abas: atalhos para o mesmo filtro dos selos do rodapé e da barra lateral (`chip_filter`).
         self.tabs_frame = self.themed_widget(tk.Frame(self.hdr_main), bg="header_bg")
         self.tabs_frame.pack(side=tk.LEFT)
-        for key, text in (("todas", "Todas"), ("aguardando", "Aprovadas aguardando"), ("arquivada", "Arquivadas")):
+        for key, text in (("todas", "Todas"), ("aguardando", "Aprovadas aguardando"), ("arquivada", "Arquivadas"), ("lixeira", "Lixeira")):
             tab = Tab(self.tabs_frame, self, text, lambda k=key: self.set_filter(None if k == "todas" else k))
             tab.pack(side=tk.LEFT, padx=(0, self.px(2)))
             self.tabs[key] = tab
@@ -4007,6 +4251,9 @@ class AntigravityGateApp(tk.Tk):
         mk("pending", "pending", "Pendente", lambda: self.mark_selected("pendente"), "Voltar a seleção para pendente", icon_token="muted").pack(side=tk.LEFT, padx=(gap, 0))
         self.sep1 = self.themed_widget(tk.Frame(self.actions_frame, width=1, height=self.px(22)), bg="border")
         self.sep1.pack(side=tk.LEFT, padx=self.px(14))
+        mk("trash", "trash", "Lixeira…", self.open_trash, "Sugestões de limpeza, lista para apagar pelo agy e dossiês do Gate", icon_token="danger").pack(side=tk.LEFT)
+        self.sep2 = self.themed_widget(tk.Frame(self.actions_frame, width=1, height=self.px(22)), bg="border")
+        self.sep2.pack(side=tk.LEFT, padx=self.px(14))
         mk("export", "export", "Exportar diálogo", self.open_selected, "Salvar a conversa completa em Markdown (duplo clique na sessão)").pack(side=tk.LEFT)
         mk("dossier", "dossier", "Dossiê de retomada", lambda: self.start_export('dossier'), "Salvar um resumo local para retomar a sessão (segredos mascarados)", icon_token="accent_text").pack(side=tk.LEFT, padx=(gap, 0))
         mk("autorun", "autorun", "Auto-Run", self.start_autorun, "Retomar as sessões aprovadas em sessões novas com o agy", kind="primary").pack(side=tk.RIGHT)
@@ -4245,9 +4492,10 @@ class AntigravityGateApp(tk.Tk):
 
     ROW_HEIGHT = {"compact": 30, "comfortable": 46}  # px a 96 dpi: 1 linha por sessão, ou 2 (data e hora, consumo e faixa)
     CHIP_FILTERS = {"pendente": "pendentes", "aprovada": "aprovadas", "arquivada": "arquivadas", "rot": "em atenção", "crit": "críticas",
-                    "aguardando": "aprovadas aguardando o Auto-Run"}
+                    "aguardando": "aprovadas aguardando o Auto-Run", "lixeira": "na lixeira"}
     NAV_CATS = (("pendente", "Pendentes", "○", "accent_text"), ("rot", "Em atenção", "⚠", "warning"), ("crit", "Críticas", "‼", "danger"),
-                ("aprovada", "Aprovadas", "✔", "success"), ("arquivada", "Arquivadas", "▣", "muted"))
+                ("aprovada", "Aprovadas", "✔", "success"), ("arquivada", "Arquivadas", "▣", "muted"),
+                ("lixeira", "Lixeira", "✖", "danger"))
     NAV_PROJECTS = 14  # projetos listados na barra lateral; os demais ficam só na tabela
 
     def chip_match(self, key, r):
@@ -4345,13 +4593,15 @@ class AntigravityGateApp(tk.Tk):
         rows = list(self.row_by_cid.values())
         st = lambda r: self.states.get(r['cid'], "pendente")
         levels = [ctx_level(r['ctx']) for r in rows]
-        counts = {k: sum(1 for r in rows if st(r) == k) for k in ("pendente", "aprovada", "arquivada")}
+        counts = {k: sum(1 for r in rows if st(r) == k) for k in ("pendente", "aprovada", "arquivada", "lixeira")}
         counts.update(rot=levels.count(1), crit=levels.count(2))
         for key, item in self.side_items.items():
             item.update_item(count=counts[key], on=self.chip_filter == key)
         waiting = sum(1 for r in rows if self.chip_match("aguardando", r))
         self.tabs["aguardando"].set_count(waiting)
-        on = {"todas": not self.chip_filter and self.match is None, "aguardando": self.chip_filter == "aguardando", "arquivada": self.chip_filter == "arquivada"}
+        self.tabs["lixeira"].set_count(counts["lixeira"])
+        on = {"todas": not self.chip_filter and self.match is None, "aguardando": self.chip_filter == "aguardando", "arquivada": self.chip_filter == "arquivada",
+              "lixeira": self.chip_filter == "lixeira"}
         for key, tab in self.tabs.items():
             tab.on = on[key]
             tab.repaint()
@@ -4524,10 +4774,58 @@ class AntigravityGateApp(tk.Tk):
             messagebox.showwarning("Aviso", "O estado não pôde ser salvo em disco e será perdido ao fechar o app.")
         self.states = self.state.load()
         self.refresh_labels()
-        self.btn[{"aprovada": "approve", "arquivada": "archive", "pendente": "pending"}[status]].flash_ok()
+        b = {"aprovada": "approve", "arquivada": "archive", "pendente": "pending"}.get(status)
+        if b:
+            self.btn[b].flash_ok()
         n = len(cids)
         self.notify("ok", f"{n} sessão marcada como {STATUS_NAME[status]}" if n == 1 else f"{n} sessões marcadas como {STATUS_NAME[status]}",
                     [("Desfazer", lambda: self.undo_mark(previous))])
+
+    def trash_days(self):
+        try:
+            return max(0, int(self.settings.get('trash_days', TRASH_DAYS_DEFAULT)))
+        except (TypeError, ValueError):
+            return TRASH_DAYS_DEFAULT
+
+    def trash_set(self):
+        return frozenset(c for c, s in self.states.items() if s == "lixeira")
+
+    def trash_candidates(self):
+        """[(linha, motivo)] das sessões que a lixeira sugere, em ordem de título."""
+        out = []
+        for r in self.row_by_cid.values():
+            why = trash_reason(r, self.states.get(r['cid'], "pendente"))
+            if why:
+                out.append((r, why))
+        return sorted(out, key=lambda x: x[0]['title'].lower())
+
+    def open_trash(self):
+        """Janela da lixeira (só uma: abrir de novo traz a mesma para frente)."""
+        win = getattr(self, "trash_win", None)
+        if win is not None and win.winfo_exists():
+            win.reload()
+            win.lift()
+            return win
+        self.trash_win = TrashDialog(self)
+        return self.trash_win
+
+    def sweep_trash(self):
+        """Ao carregar: arquivadas além do prazo vão para a lixeira; avisa disso e das sugestões (estas, uma vez por execução)."""
+        days = self.trash_days()
+        try:
+            moved = self.state.sweep_trash(days)
+        except sqlite3.Error as e:
+            log.warning("Falha ao varrer a lixeira: %s", e)
+            moved = []
+        if moved:
+            self.states = self.state.load()
+            self.notify("info", f"{len(moved)} sessão(ões) arquivada(s) há {days} dias ou mais foram para a lixeira.",
+                        [("Ver lixeira", self.open_trash)])
+        n = len(self.trash_candidates())
+        if n and not getattr(self, "_trash_hint", False):
+            self._trash_hint = True
+            self.notify("info", f"{n} sessão(ões) de teste ou sem trabalho sugerida(s) para a lixeira.", [("Revisar", self.open_trash)])
+        return moved
 
     def undo_mark(self, previous):
         """Volta cada sessão ao estado que tinha antes da última marcação."""
@@ -4548,7 +4846,7 @@ class AntigravityGateApp(tk.Tk):
     def row_tags(self, cid):
         st = self.states.get(cid, "pendente")
         level = ctx_level(self.row_by_cid.get(cid, {}).get('ctx', 0))
-        if st == "arquivada":
+        if st in ("arquivada", "lixeira"):
             return ("st_arquivada",)
         if level == 2:
             return ("crit",)
@@ -4567,6 +4865,9 @@ class AntigravityGateApp(tk.Tk):
             key = self.chip_filter
             self.chip_filter = None
             self.toggle_chip_filter(key)
+            return
+        if self.trash_set() != getattr(self, "_trash_shown", None):  # entrou ou saiu sessão da lixeira: ela some (ou volta) da lista
+            self.populate()
             return
         for iid in self.iter_sessions():
             cid = self.cid_of(iid)
@@ -4894,7 +5195,7 @@ class AntigravityGateApp(tk.Tk):
             if self.handoffs.get(self.cid_of(iid)):
                 m.add_command(label="Ver recibo da retomada", command=lambda: self.show_receipt(self.cid_of(iid)))
             m.add_separator()
-        for status, text in (("aprovada", "✔ Aprovar"), ("arquivada", "▣ Arquivar"), ("pendente", "↩ Pendente")):
+        for status, text in (("aprovada", "✔ Aprovar"), ("arquivada", "▣ Arquivar"), ("pendente", "↩ Pendente"), ("lixeira", "✖ Mover para a lixeira")):
             m.add_command(label=text, command=lambda st=status: self.mark_selected(st))
         return m
 
@@ -5026,6 +5327,8 @@ class AntigravityGateApp(tk.Tk):
         except sqlite3.Error as e:
             log.warning("Falha ao ler estado: %s", e)
             self.states, self.handoffs = {}, {}
+        if self.source_idx == 0:  # o prazo vale para a fonte ativa (as outras são cópias e backups)
+            self.sweep_trash()
         self.populate()
         if self.warnings:
             self.notify("warn", f"{self.warnings} aviso(s) ao ler os bancos de sessão. Algumas sessões podem estar incompletas.",
@@ -5041,9 +5344,12 @@ class AntigravityGateApp(tk.Tk):
         self.sub_count = {}
         key, rev = SORT_FUNCS[self.sort_col], self.sort_rev
         two = self.density == "comfortable"
+        self._trash_shown = self.trash_set()
         flat = self.match is not None  # com busca ativa a lista é plana; sem busca, sub-agentes ficam sob o pai
         for pname in sorted(self.grouped):
-            rows = [r for r in self.grouped[pname] if not flat or r['cid'] in self.match]
+            # Sessões na lixeira só aparecem no filtro Lixeira (aba, barra lateral ou janela da lixeira).
+            rows = [r for r in self.grouped[pname] if (not flat or r['cid'] in self.match)
+                    and (self.chip_filter == "lixeira" or self.states.get(r['cid']) != "lixeira")]
             if not rows:
                 continue
             ids = {r['cid'] for r in rows}
