@@ -1,14 +1,14 @@
 # AntigravityGate: estado do projeto
 
-Atualizado em 2026-11-05. Versão **1.4.0** publicada (PR two2dope/agy-gate#10, Release `v1.4.0`, SHA-256 do `.exe` `33076C7C490E452D156BEF802E74E53BA49B075431AD754430C8787DD9F73CB7`). Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
+Atualizado em 2026-11-05. Versão **1.5.0** publicada (PR two2dope/agy-gate#11, Release `v1.5.0`, SHA-256 do `.exe` `610A9B2314654901E6238F0900506DCA056D4DCA0E563ED2669FC266EFB04BEC`). Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
 
 ## Snapshot
 
 | | |
 |---|---|
-| **Feito** | 1.0.2 a 1.3.0 e **1.4.0 publicadas** (05/11, sessão local). 1.4.0: diagnóstico do ecossistema só leitura (junções do remote control, sessões escondidas na barra do IDE, manifestos de projeto) e C2. 1.3.0: lixeira com prazo (SHA-256 `AA0B6A987870BD1C46038ACEFEB4756EC6D0316A13BF603284011953CE98BA6A`). Nos dados reais em 05/11: junções ok, 69 de 69 sessões com origem CLI, manifesto do SMT1_WATCHDOG com 18 repetidas e 1 ausente. 35 conjuntos de teste |
-| **Faltando** | **1.5.0 na branch `claude/agy-gate-handoff-analysis-702a8c`**, sem PR: R2 a R5, R8, R9, R11 a R15 da auditoria e o item 7 do backlog. Ficaram de fora (escolha de 05/11): R16 (só investigação), R17 (dividir o monólito), item 4 (conferência manual) e item 5 (depende do `agy`, fora de uso). Parados enquanto o `agy` estiver fora de uso: retomada real com projeto, PowerShell piscando, editor vazio. Backups: não apagar |
-| **Próximo passo único** | Usuário confere a 1.5.0 no `.exe` (notas, copiar título, busca, exportar sem máscara) e decide o PR |
+| **Feito** | 1.0.2 a 1.4.0 e **1.5.0 publicadas** (05/11, sessão local). 1.5.0: acabamento da auditoria (R2 a R5, R8, R9, R11 a R15) e datas sem horário: diálogo mascarado por padrão, busca no conteúdo em segundo plano, cancelar encerra a árvore do `agy`, notas por sessão no dossiê, copiar título, `--help`. 1.4.0: diagnóstico e C2 (SHA-256 `33076C7C490E452D156BEF802E74E53BA49B075431AD754430C8787DD9F73CB7`). 35 conjuntos de teste |
+| **Faltando** | Conferir a 1.5.0 no `.exe` (notas, copiar título, busca, exportar sem máscara). Encerramento da árvore do `agy` só testado com processo sintético. Fora por escolha: R16, R17, itens 4 e 5. Parados enquanto o `agy` estiver fora de uso: retomada real com projeto, PowerShell piscando, editor vazio. Backups: não apagar |
+| **Próximo passo único** | Usuário confere a 1.5.0. Backlog do Gate zerado fora dos itens adiados: a próxima frente vem do uso ou da estratégia de produto ("isso entra no lugar de quê?") |
 
 ## Pendências (backlog pós-1.0)
 
