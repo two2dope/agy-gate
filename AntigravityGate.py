@@ -2917,7 +2917,7 @@ class TrashDialog(tk.Toplevel):
     """Lixeira: sugestões de limpeza (você confirma), prazo das arquivadas, lista para apagar pelo agy e os dossiês do Gate.
     O Gate não apaga nada nos bancos do Antigravity: só muda o estado próprio dele e apaga os dossiês que ele mesmo gravou."""
 
-    COLS = (("title", "Sessão", 330), ("why", "Motivo", 150), ("steps", "Passos", 60), ("project", "Projeto", 150))
+    COLS = (("title", "Sessão", 330), ("why", "Motivo", 150), ("steps", "Passos", 76), ("project", "Projeto", 150))
 
     def __init__(self, app):
         super().__init__(app)
@@ -2936,11 +2936,29 @@ class TrashDialog(tk.Toplevel):
         days_row.pack(fill=tk.X, pady=(0, app.px(8)))
         lab(days_row, "Arquivadas vão para a lixeira depois de").pack(side=tk.LEFT)
         self.days = tk.StringVar(value=str(app.trash_days()))
-        sb = tk.Spinbox(days_row, from_=0, to=3650, width=5, textvariable=self.days, command=self.save_days, font=app.f_ui)
+        sb = tk.Spinbox(days_row, from_=0, to=3650, width=5, textvariable=self.days, command=self.save_days, font=app.f_ui,
+                        bg=t['panel2'], fg=t['fg'], buttonbackground=t['panel2'], insertbackground=t['fg'], relief=tk.FLAT,
+                        highlightthickness=1, highlightbackground=t['border'], highlightcolor=t['accent'],
+                        selectbackground=t['sel_bg'], selectforeground=t['sel_fg'])
         sb.bind("<FocusOut>", lambda e: self.save_days())
         sb.bind("<Return>", lambda e: self.save_days())
         sb.pack(side=tk.LEFT, padx=app.px(6))
         lab(days_row, "dias (0 desliga)", fg='muted').pack(side=tk.LEFT)
+
+        # Botões de baixo empacotados primeiro: em tela baixa, as listas encolhem e os botões continuam visíveis.
+        row = tk.Frame(self, bg=t['panel'])
+        row.pack(side=tk.BOTTOM, fill=tk.X, pady=(app.px(12), 0))
+        IconButton(row, app, "", "Fechar", self.destroy, bg_token="panel").pack(side=tk.RIGHT)
+        bin_row = tk.Frame(self, bg=t['panel'])
+        bin_row.pack(side=tk.BOTTOM, fill=tk.X, pady=(app.px(6), 0))
+        self.b_copy = IconButton(bin_row, app, "copy", "Copiar UUIDs", self.copy_ids, bg_token="panel")
+        self.b_copy.pack(side=tk.LEFT)
+        self.b_save = IconButton(bin_row, app, "export", "Salvar lista…", self.save_list, bg_token="panel")
+        self.b_save.pack(side=tk.LEFT, padx=(app.px(8), 0))
+        self.b_dossiers = IconButton(bin_row, app, "clear", "Apagar dossiês do Gate", self.delete_dossiers, bg_token="panel")
+        self.b_dossiers.pack(side=tk.LEFT, padx=(app.px(8), 0))
+        self.b_restore = IconButton(bin_row, app, "pending", "Restaurar marcadas", self.restore_selected, bg_token="panel")
+        self.b_restore.pack(side=tk.LEFT, padx=(app.px(8), 0))
 
         self.sug_head = lab(self, "", app.f_bold)
         self.sug_head.pack(fill=tk.X, pady=(app.px(6), 2))
@@ -2955,19 +2973,6 @@ class TrashDialog(tk.Toplevel):
         self.bin_head = lab(self, "", app.f_bold)
         self.bin_head.pack(fill=tk.X, pady=(app.px(14), 2))
         self.bin = self.make_tree()
-        row = tk.Frame(self, bg=t['panel'])
-        row.pack(fill=tk.X, pady=(app.px(6), 0))
-        self.b_copy = IconButton(row, app, "copy", "Copiar UUIDs", self.copy_ids, bg_token="panel")
-        self.b_copy.pack(side=tk.LEFT)
-        self.b_save = IconButton(row, app, "export", "Salvar lista…", self.save_list, bg_token="panel")
-        self.b_save.pack(side=tk.LEFT, padx=(app.px(8), 0))
-        self.b_dossiers = IconButton(row, app, "clear", "Apagar dossiês do Gate", self.delete_dossiers, bg_token="panel")
-        self.b_dossiers.pack(side=tk.LEFT, padx=(app.px(8), 0))
-        self.b_restore = IconButton(row, app, "pending", "Restaurar marcadas", self.restore_selected, bg_token="panel")
-        self.b_restore.pack(side=tk.LEFT, padx=(app.px(8), 0))
-        row = tk.Frame(self, bg=t['panel'])
-        row.pack(fill=tk.X, pady=(app.px(12), 0))
-        IconButton(row, app, "", "Fechar", self.destroy, bg_token="panel").pack(side=tk.RIGHT)
         self.bind("<Escape>", lambda e: self.destroy())
         self.reload()
         place_over(self, app)
@@ -2977,7 +2982,7 @@ class TrashDialog(tk.Toplevel):
     def make_tree(self):
         frame = tk.Frame(self, bg=self.app.t['panel'])
         frame.pack(fill=tk.BOTH, expand=True)
-        tree = ttk.Treeview(frame, columns=[c for c, _h, _w in self.COLS], show="headings", height=7, selectmode="extended")
+        tree = ttk.Treeview(frame, columns=[c for c, _h, _w in self.COLS], show="headings", height=6, selectmode="extended")
         for c, h, w in self.COLS:
             tree.heading(c, text=h)
             tree.column(c, width=self.app.px(w), anchor="e" if c == "steps" else "w", stretch=c == "title")
