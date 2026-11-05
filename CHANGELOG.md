@@ -2,6 +2,11 @@
 
 Formato: [Versionamento Semântico](https://semver.org/lang/pt-BR/). Enquanto a versão começar com 0, o app está em candidato a lançamento: funciona, mas faltam itens listados abaixo.
 
+## [1.2.1] - 2026-11-05
+
+### Alterado
+- **Cabeçalho alinhado com o painel de sessões.** A marca (ícone e nome) fica isolada na esquerda, numa coluna com a largura da barra lateral e separada por uma linha; as abas começam onde começa o painel de sessões (alinhadas com a busca e a tabela) e os botões terminam na mesma borda direita. Sem a barra lateral, a marca volta a ocupar só o espaço do nome.
+
 ## [1.2.0] - 2026-11-04
 
 Ajustes pedidos depois de usar a 1.1.0. Marcos: M1 recibo de retomada; M2 janela única do Auto-Run.
