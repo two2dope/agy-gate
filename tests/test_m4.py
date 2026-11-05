@@ -21,7 +21,7 @@ def user(sec, text, skill=None):
     return 14, 3, fv(1, 14) + fl(5, fl(1, fv(1, sec) + fv(2, 5)) + fv(3, 4)) + fl(19, body), None
 def model(sec, text, calls=(), f2=None, f5=None):
     f9 = (fl(9, fv(1, 1318) + fv(2, f2) + (fv(5, f5) if f5 else b"")) if f2 is not None else b"")
-    body = fs(3, text) + b"".join(fl(7, fs(1, cid) + fs(2, name) + fs(3, args)) for cid, name, args in calls)
+    body = fs(1, text) + fs(3, "raciocínio: " + text) + fs(8, text) + b"".join(fl(7, fs(1, cid) + fs(2, name) + fs(3, args)) for cid, name, args in calls)
     return 15, 3, fv(1, 15) + fl(5, fl(1, fv(1, sec) + fv(2, 5)) + fv(3, 2) + f9) + fl(20, body), None
 def tool(sec, name, args, result, status=3, err=None):
     p = fv(1, 132) + fl(5, fl(1, fv(1, sec) + fv(2, 5)) + fv(3, 2) + fl(4, fs(1, "call_1") + fs(2, name) + fs(3, args))) + fl(140, fl(2, fs(1, result)))
