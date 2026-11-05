@@ -80,6 +80,15 @@ app.geometry("820x700+0+0"); settle(app); assert not app.sidebar.winfo_manager()
 app.geometry("1240x720+0+0"); settle(app); assert app.sidebar.winfo_manager() == "pack" and app.tabs_frame.winfo_manager() == "pack"
 assert app.sidebar.winfo_width() == app.px(232) and app.sidebar.winfo_x() < app.holder.winfo_x() and app.footer.winfo_width() >= app.winfo_width() - 2, "rodapé com a largura toda"
 
+# cabeçalho alinhado com o painel de sessões (1.2.1): a marca fica sobre a barra lateral; as abas começam onde começa o painel
+app.update()
+assert app.brand.winfo_width() == app.sidebar.winfo_width() == app.px(232) and app.brand_sep.winfo_rootx() == app.side_sep.winfo_rootx(), "marca na largura da barra"
+assert app.brand.cget("bg") == app.t["panel"] and app.title_lbl.cget("fg") == app.t["fg"] and app.brand_sep.winfo_ismapped()
+assert abs(app.tabs_frame.winfo_rootx() - app.search_box.winfo_rootx()) <= 1, "abas alinhadas com a busca e a tabela"
+assert abs((app.hdr_right.winfo_rootx() + app.hdr_right.winfo_width()) - (app.btn["clear"].winfo_rootx() + app.btn["clear"].winfo_width())) <= 1, "botões na mesma borda direita"
+app.toggle_sidebar(); app.update()
+assert app.brand.winfo_width() < app.px(232) and not app.brand_sep.winfo_ismapped() and app.brand.cget("bg") == app.t["header_bg"] and app.title_lbl.cget("fg") == app.t["header_fg"], "sem a barra, a marca volta ao espaço do nome"
+app.toggle_sidebar(); app.update()
 # 7. todos os temas: item marcado usa a cor de seleção; texto do item e da aba legíveis
 app.side_items["aprovada"].command(); app.update()
 for key in G.THEME_ORDER:

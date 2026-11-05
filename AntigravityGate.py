@@ -26,7 +26,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from tkinter import font as tkfont
 
-__version__ = "1.2.0"  # ver CHANGELOG.md
+__version__ = "1.2.1"  # ver CHANGELOG.md
 __build__ = "código-fonte"  # o CI troca pelo commit e pela data da montagem do .exe
 APP_AUTHOR = "Thominha"
 APP_EMAIL = "twoo2dope@gmail.com"
@@ -3800,30 +3800,37 @@ class AntigravityGateApp(tk.Tk):
     def create_widgets(self):
         t = self.t
         # Cabeçalho: marca à esquerda; atualizar e tema à direita
-        self.top_frame = self.themed_widget(tk.Frame(self, padx=self.px(16), pady=self.px(10)), bg="header_bg")
+        # Três colunas: a marca (com a largura da barra lateral, sobre ela), uma linha separadora e o resto do cabeçalho, que começa onde
+        # começa o painel de sessões: as abas ficam alinhadas com a busca e a tabela, e os botões, com a borda direita delas.
+        self.top_frame = self.themed_widget(tk.Frame(self), bg="header_bg")
         self.top_frame.pack(fill=tk.X)
-        self.brand = self.themed_widget(tk.Frame(self.top_frame), bg="header_bg")
-        self.brand.pack(side=tk.LEFT)
+        self.top_frame.grid_columnconfigure(2, weight=1)
+        self.brand = tk.Frame(self.top_frame, padx=self.px(16), pady=self.px(10))
+        self.brand.grid(row=0, column=0, sticky="nsew")
+        self.brand_sep = self.themed_widget(tk.Frame(self.top_frame, width=1), bg="border")
+        self.brand_sep.grid(row=0, column=1, sticky="ns")
+        self.hdr_main = self.themed_widget(tk.Frame(self.top_frame, padx=self.px(16), pady=self.px(10)), bg="header_bg")
+        self.hdr_main.grid(row=0, column=2, sticky="nsew")
         # Marca compacta: ícone e nome. A descrição ("Gestão de contexto e curadoria") ficou na dica, para o cabeçalho ter menos texto.
-        self.logo = self.themed_widget(tk.Label(self.brand, font=self.f_title), bg="header_bg", fg="header_fg")
+        self.logo = tk.Label(self.brand, font=self.f_title)
         icons = getattr(self, "_app_icons", None)
         if icons:
             self.logo.configure(image=icons[2] if self.px(32) < 48 else icons[1])  # 32 px, ou 64 px em tela de alta densidade
         else:
             self.logo.configure(text="◆")
         self.logo.pack(side=tk.LEFT)
-        self.title_lbl = self.themed_widget(tk.Label(self.brand, text="AntigravityGate", font=self.f_brand), bg="header_bg", fg="header_fg")
-        self.title_lbl.pack(side=tk.LEFT, padx=(self.px(8), self.px(18)))
+        self.title_lbl = tk.Label(self.brand, text="AntigravityGate", font=self.f_brand)
+        self.title_lbl.pack(side=tk.LEFT, padx=(self.px(8), 0))
         for w in (self.logo, self.title_lbl):
             Tooltip(w, self, lambda: f"Gestão de contexto e curadoria · v{__version__}")
         # Abas: atalhos para o mesmo filtro dos selos do rodapé e da barra lateral (`chip_filter`).
-        self.tabs_frame = self.themed_widget(tk.Frame(self.top_frame), bg="header_bg")
+        self.tabs_frame = self.themed_widget(tk.Frame(self.hdr_main), bg="header_bg")
         self.tabs_frame.pack(side=tk.LEFT)
         for key, text in (("todas", "Todas"), ("aguardando", "Aprovadas aguardando"), ("arquivada", "Arquivadas")):
             tab = Tab(self.tabs_frame, self, text, lambda k=key: self.set_filter(None if k == "todas" else k))
             tab.pack(side=tk.LEFT, padx=(0, self.px(2)))
             self.tabs[key] = tab
-        self.hdr_right = self.themed_widget(tk.Frame(self.top_frame), bg="header_bg")
+        self.hdr_right = self.themed_widget(tk.Frame(self.hdr_main), bg="header_bg")
         self.hdr_right.pack(side=tk.RIGHT)
         self.make_button(self.hdr_right, "about", "about", "Sobre", self.open_about, "Sobre: versão, autor e diagnóstico (F1)", bg_token="header_bg", icon_token="accent_text", icon_only=True).pack(side=tk.RIGHT, padx=(self.px(8), 0))
         self.make_button(self.hdr_right, "theme", "theme", self.theme_button_text(), self.show_theme_menu, "Escolher tema e estilo de ícones", bg_token="header_bg", icon_token="accent_text").pack(side=tk.RIGHT, padx=(self.px(8), 0))
@@ -4013,6 +4020,7 @@ class AntigravityGateApp(tk.Tk):
         self.tree.bind("<<TreeviewSelect>>", lambda e: self.update_actions())
         self.bind("<F5>", lambda e: self.refresh())
         self.bind("<F1>", lambda e: self.open_about())
+        self.paint_header()
         self.update_actions()
 
     # --- responsividade e estados ---
@@ -4106,7 +4114,7 @@ class AntigravityGateApp(tk.Tk):
         names = ("approve", "archive", "pending", "export", "dossier", "autorun")
         self.fit_buttons(self.actions_frame, [self.btn[n] for n in names], reserved=self.px(60) + self.px(32))
         self.apply_nav_layout()
-        hdr_room = self.top_frame.winfo_width() - self.brand.winfo_reqwidth() - self.px(32)
+        hdr_room = self.hdr_main.winfo_width() - self.px(32)
         if self.tabs_frame.winfo_manager():
             hdr_room -= self.tabs_frame.winfo_reqwidth()
         both = [self.btn["limits"], self.btn["refresh"], self.btn["theme"]]
@@ -4231,6 +4239,7 @@ class AntigravityGateApp(tk.Tk):
                 self.tabs_frame.pack(side=tk.LEFT)
             else:
                 self.tabs_frame.pack_forget()
+        self.paint_header()
 
     def goto_project(self, name):
         """Leva a tabela até o projeto: abre a pasta e rola até ela. Com busca ou filtro ativo, mostra tudo antes."""
@@ -4280,6 +4289,25 @@ class AntigravityGateApp(tk.Tk):
         for w in list(self.side_items.values()) + self.proj_items + list(self.tabs.values()):
             w.repaint()
         self.paint_env()
+        self.paint_header()
+
+    def paint_header(self):
+        """Coluna da marca: com a barra lateral aberta, fica da cor dela, com a largura dela e a linha separadora (a marca isolada à esquerda);
+        sem a barra, volta a ser parte do cabeçalho e ocupa só o espaço do nome."""
+        if not hasattr(self, "sidebar") or not hasattr(self, "brand"):
+            return
+        t = self.t
+        side = bool(self.sidebar.winfo_manager())
+        bg, fg = (t['panel'], t['fg']) if side else (t['header_bg'], t['header_fg'])
+        for w in (self.brand, self.logo, self.title_lbl):
+            w.configure(bg=bg)
+        self.title_lbl.configure(fg=fg)
+        self.logo.configure(fg=fg)
+        self.top_frame.grid_columnconfigure(0, minsize=self.px(232) if side else 0)
+        if side:
+            self.brand_sep.grid()
+        else:
+            self.brand_sep.grid_remove()
 
     def update_env_status(self):
         """Lê o ambiente: `agy` no PATH (ou AGY_EXE) e o daemon na chave Run. Roda ao abrir e no Atualizar (F5)."""

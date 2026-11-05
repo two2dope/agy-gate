@@ -1,14 +1,14 @@
 # AntigravityGate: estado do projeto
 
-Atualizado em 2026-11-04. Versão **1.2.0** publicada (PR para a `main` e Release `v1.2.0`; o SHA-256 do `.exe` está nas notas da Release). Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
+Atualizado em 2026-11-05. Última versão publicada: **1.2.0** (Release `v1.2.0`; SHA-256 do `.exe` nas notas da Release). **1.2.1** na branch `claude/funny-tesla-4w2i3q` (cabeçalho alinhado com o painel de sessões), à espera da conferência do usuário no Windows e do ok para PR, merge e tag. Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
 
 ## Snapshot
 
 | | |
 |---|---|
-| **Feito** | 1.0.2, 1.1.0 e **1.2.0 publicadas**. 1.2.0 (considerações do usuário de 30/10): recibo de retomada com salvar em arquivo; janela do Auto-Run única em 3 etapas (Preparar, Executando, Resumo), com o estado de cada sessão, detalhe, recibo, relatório salvável e pasta dos dossiês escolhível; cabeçalho e busca com menos texto. 31 conjuntos de teste; CI verde no último commit de código (`663026f`, execução 40992325095). Antes: Antigravity restaurado (27/10), auditoria `reviews/audit-full-v1.0.0.md`, 1.0.1 (C1), 1.0.2 (alerta em dois níveis) e 1.1.0 (pacote visual) |
-| **Faltando** | Conferir a 1.2.0 no Windows (fontes, ícones, cabeçalho, janela do Auto-Run). Teste do PowerShell piscando no remote control (pelo usuário; ver `handoffs/2026-10-27-antigravity-sync.md` no `zuvuya`). **Retomada real de sessão com projeto: em espera** (o usuário avisou em 30/10 que surgiu uma implantação que muda o curso do pipeline; volta ao tema depois). Lixeira com prazo (1.3). **Prazo de 03/11 vencido:** apagar `D:\backup_gemini_2026-10-27` e `.gemini\projects-backup-27-10`, se tudo estiver estável (confirmar com o usuário). Não verificado: escala 125–150%, status 6 e 7, nome da entrada do daemon na chave Run |
-| **Próximo passo único** | Combinar com o usuário o que vem depois da 1.2.0: ajustes da conferência no Windows (1.2.1), a lixeira com prazo (1.3) ou o novo pipeline (em espera) |
+| **Feito** | 1.0.2, 1.1.0 e 1.2.0 publicadas. **1.2.1 na branch** (pedido do usuário em 05/11, "cabeçalho ainda não me agrada"): a marca (ícone e nome) isolada na esquerda, numa coluna com a largura da barra lateral e uma linha separadora; as abas começam onde começa o painel de sessões (alinhadas com a busca e a tabela) e os botões terminam na mesma borda direita. 31 conjuntos de teste, todos passam localmente. 1.2.0: recibo de retomada com salvar em arquivo, janela do Auto-Run única em 3 etapas, cabeçalho e busca com menos texto. Antes: Antigravity restaurado (27/10), auditoria `reviews/audit-full-v1.0.0.md`, 1.0.1 (C1), 1.0.2 (alerta em dois níveis), 1.1.0 (pacote visual) |
+| **Faltando** | Conferir a 1.2.1 no Windows (cabeçalho) e o ok do usuário para PR, merge e tag `v1.2.1`. **O usuário abandonou o `agy` por ora (05/11: bugou e travou conversas) e usa o Auto-Run em simulação para trazer as sessões como dossiês; funciona.** Ele vai apresentar um aprendizado do que viveu com o `agy`, para deliberarmos. **Backups: não apagar** (o prazo de 03/11 foi cancelado). Retomada real de sessão com projeto e testes do `agy` (PowerShell piscando, editor vazio): parados, enquanto o `agy` estiver fora de uso. Lixeira com prazo (1.3). Não verificado: escala 125–150%, status 6 e 7, nome da entrada do daemon na chave Run |
+| **Próximo passo único** | Usuário confere o cabeçalho da 1.2.1 e diz se publica; depois apresenta o aprendizado do `agy` para deliberarmos (o que entra no Gate, o que sai do plano) |
 
 ## Pendências (backlog pós-1.0)
 
@@ -49,6 +49,8 @@ Fora do alcance do app: o editor do Antigravity abre vazio a cada chamada do `ag
 - **Lixeira com prazo** pedida pelo usuário: decidido fazer pela exclusão oficial do `agy`, sem o Gate apagar nada nos bancos, depois da 1.1 (item 2 das pendências).
 
 ### Observações do usuário em 27/10 (sem diagnóstico)
+
+Atualização de 05/11: o usuário abandonou o `agy` por ora (travou conversas); os dois itens abaixo ficam parados.
 
 1. **O editor do Antigravity continua abrindo vazio a cada chamada do `agy`.** O Gate só executa o `agy` no Auto-Run: `agy.exe` de `%LOCALAPPDATA%\agy\bin` (verificado em 26/10), com `CREATE_NO_WINDOW`. O Sobre só localiza o arquivo, sem executá-lo. O changelog oficial (até a 1.4.8; o usuário tem a 1.4.7) não cita o efeito. Guias da comunidade relatam conflito entre o `agy` da linha de comando e o do aplicativo de desktop [não verificado; o caminho conferido em 26/10 é o da linha de comando]. Diagnóstico de 2 passos, no PowerShell, com o editor fechado: `Get-Command agy -All | Format-List Source` (todos os `agy` no PATH, na ordem); depois `agy --version`. Se o editor abrir já no `--version`, o problema está no lançador ou na instalação. Se abrir só nas execuções com `--print`, é do modo sem interação: reportar ao Google e conviver. O Gate não fecha o editor (nunca encerrar processo do usuário).
 2. **O remote control faz piscar janelas do PowerShell a cada interação no chat.** Não é do Gate. Registrado no repositório `zuvuya` (`handoffs/2026-10-27-antigravity-sync.md`, pendências), com a hipótese e o teste.
