@@ -1,14 +1,14 @@
 # AntigravityGate: estado do projeto
 
-Atualizado em 2026-11-05. Versão **1.2.1** publicada (PR two2dope/agy-gate#7, Release `v1.2.1`, SHA-256 do `.exe` `469EE122BD7C473C2304E4830EC128BF5766F1D4FB515C43DA3F9DBA9597E12F`). Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
+Atualizado em 2026-11-05. Versão **1.2.1** publicada (PR two2dope/agy-gate#7, Release `v1.2.1`, SHA-256 do `.exe` `469EE122BD7C473C2304E4830EC128BF5766F1D4FB515C43DA3F9DBA9597E12F`); 1.2.2 na branch, sem PR. Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
 
 ## Snapshot
 
 | | |
 |---|---|
-| **Feito** | 1.0.2, 1.1.0, 1.2.0 e **1.2.1 publicadas** (1.2.1: cabeçalho alinhado com o painel de sessões, conferido pelo usuário no Windows). 1.2.0: recibo de retomada com salvar em arquivo, janela do Auto-Run única em 3 etapas, cabeçalho e busca com menos texto. 1.2.0 SHA-256 `6D3007E2B4AF4D4243EF8483FE353E14F4A1D1B8DCB0AE06B0DD2EA89085296E`. 31 conjuntos de teste |
-| **Faltando** | **Analisar a pasta local `C:\Users\Thomáz\Projetos\01_dev-systems\04_apps-games\agy-gate\handoffs`** (dossiês das sessões que o usuário rodou no Antigravity): conhecimento e aprendizado a aproveitar de forma concreta no Gate. A sessão na nuvem não conseguiu ler a pasta (Remote Control do Windows não oferece pastas a sessões na nuvem); o usuário vai abrir uma sessão **local** no PC. O usuário abandonou o `agy` por ora (05/11) e usa o Auto-Run em simulação para trazer as sessões como dossiês. Backups: não apagar. Parados enquanto o `agy` estiver fora de uso: retomada real com projeto, PowerShell piscando, editor vazio. Lixeira com prazo (1.3) |
-| **Próximo passo único** | Na sessão local: ler os arquivos de `handoffs\`, extrair o aprendizado (falhas do `agy`, o que funcionou) e propor recursos concretos para o Gate, comparados com a lixeira (1.3) |
+| **Feito** | 1.0.2, 1.1.0, 1.2.0 e 1.2.1 publicadas. **1.2.2 na branch `claude/agy-gate-handoff-analysis-702a8c`** (05/11, sessão local): dossiê com a resposta visível do modelo (antes saía o raciocínio interno), nome do modelo, seção "Artefatos da sessão" no topo e arquivos temporários recolhidos. Pasta `handoffs\` analisada (ver "Análise dos dossiês de 28 e 29/10"). 32 conjuntos de teste |
+| **Faltando** | CI da 1.2.2 e conferência do `.exe` no Windows; depois "PR + merge + tag" pelo usuário. Lixeira com prazo (1.3), agora com candidatas automáticas. Doctor passivo (1.4), com o C2. Parados enquanto o `agy` estiver fora de uso: retomada real com projeto, PowerShell piscando, editor vazio. Backups: não apagar |
+| **Próximo passo único** | Usuário confere a 1.2.2 (exportar um dossiê de sessão longa no `.exe`) e decide o PR; em seguida, a 1.3 |
 
 ## Pendências (backlog pós-1.0)
 
@@ -25,15 +25,25 @@ Em ordem de prioridade. Cada item vira uma 1.0.x com teste; nada entra sem decid
    - **M2 [feito]:** janela do Auto-Run **única, em 3 etapas** (Preparar, Executando, Resumo): lista as sessões com estado (aguardando, rodando, concluída, falhou); clicar numa linha mostra o detalhe e o sumário dela, com **salvar relatório**. Reabrir só traz a janela para frente: acaba a sobreposição e o travamento ao fechar uma delas. Textos mais claros e objetivos.
    - **Cabeçalho e busca redesenhados** (pedido do usuário em 30/10, depois do envio da 1.2: "muita informação visual de texto"): marca compacta (ícone e nome; a descrição foi para a dica), abas com sublinhado e selo de contagem, busca com a dica dentro do campo e botões só com ícone, fonte das sessões no topo da barra lateral (sem a barra, volta para a linha da busca). Sem mudar funções.
 2. **1.3 — lixeira com prazo** (pedido do usuário em 27/10; entra depois da 1.1). Sessão arquivada há N dias (padrão 30, ajustável) vai para a lixeira: o Gate a esconde da lista, apaga os próprios dossiês dela (pasta `handoffs`) e lista os IDs para o usuário apagar pela exclusão oficial do `agy` (`/resume`, tecla F4, desde a 1.1.13), que também limpa subagentes, worktrees e anotações (changelog 1.1.24, 1.1.26, 1.2.2, 1.4.8). **O Gate não apaga nada nos bancos do Antigravity:** o motor guarda índice, subagentes e worktrees fora do `.db`, e já recriou como arquivo vazio conversa apagada por fora (corrigido na 1.2.2). Data do arquivamento: `session_state.updated_at`, já gravada. Exportações salvas pelo usuário ficam. Absorve o antigo item "limpeza de dossiês antigos".
+   - **Candidatas automáticas (da análise de 05/11):** o plano de higiene de 29/10 achou 24 descartáveis em 65 sessões: 5 de teste, 4 triviais e 15 retomadas com até 6 passos, quase todas do formato do Auto-Run. A lixeira sugere essas sem esperar o prazo: poucos passos, título "Retomada…"/"Test…", primeira fala com o prompt do Auto-Run (`AGY_PROMPT_MARK`). Reforço da decisão de não apagar: com o servidor aberto, apagar arquivo põe o ID em `s.deletedIDs` e trava a sessão até reiniciar.
+2b. **1.4 — Doctor passivo** (só leitura; fecha a escolha A×B de `docs/HANDOFF_ECOSYSTEM_EVOLUTION.md` pela opção A). Inclui o C2 do item 0. Verificar: junções `antigravity-cli\conversations` e `brain` → `antigravity\` (sem elas o celular abre vazio: `dropped 64`); sessões com `source = CLI (17)` nos sumários (o `--hub` regrava a cada reload e o IDE as esconde; patch de dados não dura, 3 tentativas em 29/10); manifestos `config/projects/*.json` divergentes do SQLite (duplicatas e ausentes); `app_data_dir` de cada banco.
 3. Validar no uso real o fluxo completo (curadoria → dossiê → Auto-Run). Retomada real de sessão sem projeto feita em 27/10; falta uma de sessão com projeto (`--project`).
 4. Não verificado no Windows: escala 125% a 150%, glifos Segoe MDL2 em todos os botões, significado dos status 6 e 7 das ferramentas.
 5. Lista de modelos do Auto-Run pelo `agy models` (hoje: lista embutida + a que o `agy` devolve no erro).
-6. Campo "Modelo(s)" vazio no dossiê de algumas sessões (o banco não tinha o nome em `gen_metadata`; não investigado).
+6. **[Feito na 1.2.2]** Campo "Modelo(s)" vazio: o nome mudou para `gen_metadata` `f3.f28`.
 7. Datas `0001-01-01 00:00:00` em sessões sem horário: mostrar "-".
 
 Saiu do backlog em 27/10: divisor de altura entre a tabela e os detalhes (a faixa de alerta da 1.0.2 entrou no lugar dele).
 
 Fora do alcance do app: o editor do Antigravity abre vazio a cada chamada do `agy` (comportamento do `agy`; o `--help` não tem opção para evitar). Continua em 27/10; diagnóstico proposto em "Observações do usuário em 27/10".
+
+## Análise dos dossiês de 28 e 29/10 (sessão local de 05/11)
+
+Fonte: `handoffs\` (dossiês e diálogos de `1ff72049` e `ece4c25f`, exportados pelo Auto-Run em simulação) e os artefatos em `~/.gemini/antigravity/brain/ece4c25f…/` (session-report, plano de higiene, bug-report, handoff).
+- O conhecimento estava nos artefatos do `brain`, não no dossiê: o dossiê os escondia entre 256 arquivos, quase todos scripts de `scratch` já apagados. Corrigido na 1.2.2.
+- A "Última resposta" da `1ff72049` era raciocínio interno. Causa: campo errado (`f20.f3`). Corrigido na 1.2.2.
+- "Pasta de trabalho = `handoffs`" no relatório do Auto-Run, em sessões sem projeto: comportamento previsto desde a 1.0.1 (ver CHANGELOG), não é bug.
+- `main` local tinha 4 commits de docs da sessão do `agy` (29/10) fora do `origin/main`; entraram nesta branch, rebaseados sobre a 1.2.1.
 
 ## Registro da sessão de 2026-10-27 (1.0.0 → 1.0.1)
 
@@ -88,7 +98,7 @@ Tabelas: `steps`, `gen_metadata`, `executor_metadata`, `trajectory_meta`, `traje
 | `step_type` | Origem (`f5.f3`) | Papel | Onde está o conteúdo | Confiança |
 |---|---|---|---|---|
 | 14 | 4 | Usuário | `f19.f2` | Verificado em amostra |
-| 15 | 2 | Modelo | texto: `f20.f3`; chamada de ferramenta: `f20.f7` (`f1` id, `f2` nome, `f3` argumentos JSON) | Verificado em amostra |
+| 15 | 2 | Modelo | resposta visível: `f20.f1` (cópia em `f20.f8`); raciocínio interno: `f20.f3` (até a 1.2.1 o app lia este como resposta); chamada de ferramenta: `f20.f7` (`f1` id, `f2` nome, `f3` argumentos JSON) | Verificado em amostra |
 | 132 | 2 | Resultado de ferramenta | chamada em `f5.f4`; resultado em `f140.f2.f1`; `f140.f1` repete o parâmetro | Verificado em amostra |
 | 101 | 5 ou 6 | Sistema ou agente | tipo em `f114.f3` (`agent_message`, `hook_json_SessionStart`); texto em `f114.f1` e `f114.f2.f10.f1` | Verificado em amostra |
 | 90 | 5 | Marcador sem texto | nada | Inferência |
@@ -98,8 +108,9 @@ Outros campos:
 - Hora do passo: `f5.f1.f1` (segundos Unix UTC) e `f5.f1.f2` (nanos). Verificado.
 - Contexto: `f5.f9.f2` (entrada) + `f5.f9.f5` (cache). `f5.f9.f3` = `f9` + `f10` (saída). A saída do `agy` nomeia `input_tokens`, `cache_read_tokens`, `output_tokens` e `thinking_tokens`, o que apoia esta leitura.
 - Status do passo: 3 = concluído; 6 e 7 em passos de ferramenta (7 coincide com `error_details`). Interpretação de 6 e 7 é inferência.
-- Raciocínio do modelo não está em texto: só uma assinatura binária opaca em `f20.f7.f7.f2.f1`.
-- Nome do modelo: `gen_metadata` `f19` (id) e `f21` (nome exibido).
+- Raciocínio do modelo: texto em `f20.f3` (conferido em 05/11); a assinatura binária opaca fica em `f20.f7.f7.f2.f1`.
+- Nome do modelo: `gen_metadata` `f3.f28` nas versões atuais (ex.: `gemini-3.8-flash-high`; nem toda linha traz); nas antigas, `f19` (id) e `f21` (nome exibido).
+- Artefatos da sessão: documentos em `<raiz>/brain/<id>/` (com um `.metadata.json` ao lado de cada um); trabalho temporário em `brain/<id>/scratch` e `brain/<id>/.system_generated`.
 - Resumos: `conversation_summaries` (`title` vazio, `preview`, `agent_name`, `parent_conversation_id`, `nesting_depth`, `workspace_uris`, `raw_summary` protobuf) e índice FTS5 `conversations_fts` (`user_body`, `agent_body`).
 
 ## Contrato do `agy` (CLI)

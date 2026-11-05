@@ -26,7 +26,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from tkinter import font as tkfont
 
-__version__ = "1.2.1"  # ver CHANGELOG.md
+__version__ = "1.2.2"  # ver CHANGELOG.md
 __build__ = "código-fonte"  # o CI troca pelo commit e pela data da montagem do .exe
 APP_AUTHOR = "Thominha"
 APP_EMAIL = "twoo2dope@gmail.com"
@@ -450,7 +450,7 @@ def pb_strings(blob, depth=0):
 def decode_step(idx, step_type, status, payload, err_blob=None):
     """Converte um passo em dict com papel e conteúdo. Mapa dos campos: docs/ESTADO_DO_PROJETO.md."""
     d = {'idx': idx, 'type': step_type, 'status': status, 'ts': None, 'kind': 'unknown', 'text': '', 'label': '',
-         'calls': [], 'result': '', 'error': '', 'skills': [], 'ctx': 0}
+         'calls': [], 'result': '', 'error': '', 'skills': [], 'ctx': 0, 'thinking': ''}
     try:
         f = pb_parse(payload or b"")
     except ValueError:
@@ -485,7 +485,10 @@ def decode_step(idx, step_type, status, payload, err_blob=None):
             except ValueError:
                 pass
     elif step_type == 15:
-        d['kind'], d['text'] = 'model', pb_text(f, [20, 3]) or ''
+        # f20.1 (cópia em f20.8) é a resposta que o usuário vê; f20.3 é o raciocínio interno do modelo.
+        # Até a 1.2.1 o app lia f20.3 como resposta (conferido em 05/11 nas 65 sessões locais).
+        d['kind'], d['text'] = 'model', pb_text(f, [20, 1]) or pb_text(f, [20, 8]) or ''
+        d['thinking'] = pb_text(f, [20, 3]) or ''
         r = pb_dig(f, [20])
         if r and r[0] == 2:
             try:
@@ -527,6 +530,32 @@ def iter_steps(conn):
             yield total, n, decode_step(idx, t, st, payload, err)
 
 
+GEN_MODEL_PATHS = ([3, 28], [21])  # nome do modelo em gen_metadata: f3.f28 nas versões atuais do agy, f21 nas antigas
+GEN_MODEL_SCAN = 10                # linhas lidas de cada ponta (as linhas podem ter centenas de KB)
+
+
+def gen_models(conn):
+    """Modelos da sessão (o primeiro e o último usados), lidos de gen_metadata.
+    Nem toda linha traz o nome: lê até GEN_MODEL_SCAN linhas de cada ponta e para no primeiro nome."""
+    names = []
+    for order in ("ASC", "DESC"):
+        try:
+            rows = conn.execute(f"SELECT data FROM gen_metadata ORDER BY idx {order} LIMIT {GEN_MODEL_SCAN}")
+            for (blob,) in rows:
+                try:
+                    fields = pb_parse(blob or b"")
+                except ValueError:
+                    continue
+                name = next((n for n in (pb_text(fields, p) for p in GEN_MODEL_PATHS) if n), None)
+                if name:
+                    if name not in names:
+                        names.append(name)
+                    break
+        except sqlite3.Error:
+            break
+    return names
+
+
 def quick_meta(conn):
     """Início, fim, passos, contexto final e modelos de uma sessão, sem varrer tudo."""
     m = {'steps': 0, 'started': None, 'ended': None, 'ctx': 0, 'models': []}
@@ -545,14 +574,7 @@ def quick_meta(conn):
             if f2 is not None:
                 m['ctx'] = f2 + (f5 or 0)
                 break
-        names = []
-        for order in ("ASC", "DESC"):
-            row = conn.execute(f"SELECT data FROM gen_metadata ORDER BY idx {order} LIMIT 1").fetchone()
-            if row and row[0]:
-                n = pb_text(pb_parse(row[0]), [21])
-                if n and n not in names:
-                    names.append(n)
-        m['models'] = names
+        m['models'] = gen_models(conn)
     except (sqlite3.OperationalError, ValueError):
         pass
     return m
@@ -571,6 +593,11 @@ def fence(text):
     longest = max((len(m) for m in re.findall(r"`+", text)), default=0)
     ticks = "`" * max(3, longest + 1)
     return f"{ticks}\n{text}\n{ticks}\n"
+
+
+def quote(text):
+    """Bloco de citação Markdown (cada linha com '> ')."""
+    return "\n".join("> " + line if line.strip() else ">" for line in text.splitlines()) + "\n"
 
 
 def clip(text, n):
@@ -604,6 +631,38 @@ def disk_state(path):
         return "✔" if os.path.exists(path) else "✖ não existe mais"
     except OSError:
         return "?"
+
+
+TEMP_PATH_RE = re.compile(r"[\\/]brain[\\/][0-9a-f-]{36}[\\/](?:scratch|\.system_generated)(?:[\\/]|$)", re.I)
+
+
+def is_temp_path(path):
+    """True para os arquivos de trabalho do agente (scripts em brain/<id>/scratch e saídas em .system_generated)."""
+    return bool(TEMP_PATH_RE.search(path))
+
+
+def fmt_size(n):
+    for unit in ("B", "KB", "MB"):
+        if n < 1024 or unit == "MB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+
+
+def session_artifacts(fpath, cid):
+    """[(caminho, bytes, mtime)] dos documentos em <raiz>/brain/<cid>/ (a raiz é a pasta acima de conversations/).
+    Ficam de fora as subpastas (scratch, .system_generated) e os .metadata.json que o Antigravity grava ao lado."""
+    if not fpath or not cid:
+        return []
+    folder = os.path.join(os.path.dirname(os.path.dirname(fpath)), "brain", cid)
+    out = []
+    for e in scandir_safe(folder):
+        try:
+            if e.is_file() and not e.name.lower().endswith(".metadata.json"):
+                stt = e.stat()
+                out.append((e.path, stt.st_size, stt.st_mtime))
+        except OSError:
+            continue
+    return sorted(out, key=lambda a: -a[2])
 
 
 def classify_tool(name):
@@ -686,11 +745,13 @@ def write_full_export(fh, meta, qm, steps, progress=None, files=None):
             if st['skills']:
                 fh.write(f"_Skill invocada: {', '.join(st['skills'])}_\n\n")
         elif kind == 'model':
+            if st['thinking']:
+                fh.write("_Raciocínio interno do modelo:_\n\n" + quote(clip(st['thinking'], EXPORT_MAX_RESULT)) + "\n")
             if st['text']:
                 fh.write(st['text'] + "\n\n")
             for c in st['calls']:
                 fh.write(f"Chamada de ferramenta `{c['name']}` (`{c['id']}`):\n\n" + fence(clip(c['args'], EXPORT_MAX_ARGS)) + "\n")
-            if not st['text'] and not st['calls']:
+            if not st['text'] and not st['calls'] and not st['thinking']:
                 fh.write("_(resposta sem texto visível)_\n\n")
         elif kind == 'tool':
             if st['calls'] and st['calls'][0]['args']:
@@ -737,7 +798,7 @@ def tool_command(args):
 
 
 def build_dossier(meta, qm, steps, progress=None):
-    users, final_text, parent_task = [], '', ''
+    users, final_text, last_thinking, parent_task = [], '', '', ''
     tools, files_read, files_mod, commands, errors, agent_msgs = Counter(), {}, {}, [], [], []
     for total, n, st in steps:
         if progress and n % 20 == 0:
@@ -750,8 +811,11 @@ def build_dossier(meta, qm, steps, progress=None):
                 parent_task = st['text']
             else:
                 agent_msgs.append((st['ts'], st['label'], st['text']))
-        elif k == 'model' and st['text']:
-            final_text = st['text']
+        elif k == 'model':
+            if st['text']:
+                final_text, last_thinking = st['text'], ''
+            elif st['thinking']:
+                last_thinking = st['thinking']
         elif k == 'tool' and st['calls']:
             c = st['calls'][0]
             name, low = c['name'], c['name'].lower()
@@ -778,6 +842,13 @@ def build_dossier(meta, qm, steps, progress=None):
          "## Origem\n", meta_table(meta, qm)]
     if parent_task:
         o += ["## Tarefa recebida do agente pai\n", clip(parent_task, 2000) + "\n"]
+    arts = session_artifacts(meta.get('fpath') or '', meta['cid'])
+    if arts:
+        o.append(f"## Artefatos da sessão ({len(arts)})\n")
+        o.append("Documentos que o agente deixou na pasta da sessão (`brain`). Costumam ter o relatório, o plano e as decisões: "
+                 "leia antes do resto.\n")
+        o.append("| | Artefato | Tamanho | Modificado |\n| :-: | :-- | --: | :-- |\n"
+                 + "".join(f"| {file_icon(p)} | `{p.replace('|', chr(92) + '|')}` | {fmt_size(sz)} | {fmt_ts(mt)} |\n" for p, sz, mt in arts))
     o.append(f"## Pedidos do usuário ({len(users)})\n")
     if not users:
         o.append("_Nenhuma fala direta do usuário nesta sessão._\n")
@@ -790,13 +861,26 @@ def build_dossier(meta, qm, steps, progress=None):
         extra = f" _(skill: {', '.join(skills)})_" if skills else ""
         o.append(f"**{fmt_ts(ts)}**{extra}\n\n" + clip(" ".join(text.split()) if len(text) < 400 else text, DOSSIER_MAX_USER) + "\n")
     o.append("## Última resposta do modelo\n")
-    o.append((clip(final_text, DOSSIER_MAX_FINAL) if final_text else "_(sem texto de resposta)_") + "\n")
-    if files_mod:
-        o.append(f"## Arquivos alterados ({len(files_mod)}) — por nome da ferramenta, heurístico\n")
-        o.append(files_table({p: [n, 0] for p, n in files_mod.items()}, "mod", 40))
-    if files_read:
-        o.append(f"## Arquivos consultados ({len(files_read)})\n")
-        o.append(files_table({p: [0, n] for p, n in files_read.items()}, "read", 40))
+    if final_text:
+        o.append(clip(final_text, DOSSIER_MAX_FINAL) + "\n")
+    if last_thinking:  # o modelo pensou depois da última resposta visível (ou nunca respondeu): a sessão parou no meio
+        o.append(("_Depois dessa resposta, o modelo ainda registrou este raciocínio interno, sem resposta visível:_\n\n" if final_text
+                  else "_Sem resposta visível. Último raciocínio interno do modelo:_\n\n") + quote(clip(last_thinking, DOSSIER_MAX_FINAL)))
+    if not final_text and not last_thinking:
+        o.append("_(sem texto de resposta)_\n")
+    temp = {p for p in list(files_mod) + list(files_read) if is_temp_path(p)}
+    real_mod = {p: n for p, n in files_mod.items() if p not in temp}
+    real_read = {p: n for p, n in files_read.items() if p not in temp}
+    if real_mod:
+        o.append(f"## Arquivos alterados ({len(real_mod)}) — por nome da ferramenta, heurístico\n")
+        o.append(files_table({p: [n, 0] for p, n in real_mod.items()}, "mod", 40))
+    if real_read:
+        o.append(f"## Arquivos consultados ({len(real_read)})\n")
+        o.append(files_table({p: [0, n] for p, n in real_read.items()}, "read", 40))
+    if temp:
+        alive = sum(1 for p in temp if disk_state(p) == "✔")
+        o.append(f"_Mais {len(temp)} arquivo(s) temporário(s) do agente (`scratch` e `.system_generated` na pasta `brain` da sessão; "
+                 f"{alive} ainda no disco). A lista completa está no diálogo completo._\n")
     if commands:
         o.append(f"## Comandos executados (últimos {min(len(commands), 25)} de {len(commands)})\n")
         o.append("\n".join(f"- {fmt_ts(ts)} {'ok' if ok else '⚠ falhou'}: `{' '.join(c.split())[:200]}`" for ts, c, ok in commands[-25:]) + "\n")

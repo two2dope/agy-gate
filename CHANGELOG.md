@@ -2,6 +2,20 @@
 
 Formato: [Versionamento Semântico](https://semver.org/lang/pt-BR/). Enquanto a versão começar com 0, o app está em candidato a lançamento: funciona, mas faltam itens listados abaixo.
 
+## [1.2.2] - 2026-11-05
+
+Ajustes no dossiê, vistos ao ler os dossiês das sessões de 28 e 29/10 (pasta `handoffs`).
+
+### Corrigido
+- **Resposta do modelo trocada pelo raciocínio interno.** O app lia o campo `f20.f3` como a resposta do modelo, mas ele guarda o raciocínio interno; a resposta que o usuário vê está em `f20.f1` (com cópia em `f20.f8`). Afetava a "Última resposta do modelo" do dossiê e todo o diálogo completo. Conferido nas 65 sessões locais em 05/11. Agora o diálogo mostra a resposta e, acima dela, o raciocínio marcado como "Raciocínio interno do modelo". O dossiê mostra a última resposta visível; quando o modelo ainda pensou depois dela (ou nunca respondeu), o último raciocínio aparece em citação, avisando que a sessão parou no meio.
+- **Campo "Modelo(s)" vazio.** As versões atuais do Antigravity gravam o nome em `gen_metadata` `f3.f28` (ex.: `gemini-3.8-flash-high`), e nem toda linha o traz. O app agora lê esse campo (e o antigo `f21`) nas 10 primeiras e nas 10 últimas linhas.
+
+### Adicionado
+- **Seção "Artefatos da sessão" no topo do dossiê:** os documentos que o agente deixou em `brain/<id>/` (relatórios, planos, handoffs), com tamanho e data. Antes eles ficavam perdidos no meio de centenas de scripts temporários.
+
+### Alterado
+- **Arquivos temporários do agente recolhidos numa linha.** Scripts em `brain/<id>/scratch` e saídas em `.system_generated` saem das tabelas "Arquivos alterados" e "Arquivos consultados" do dossiê e viram uma contagem (quantos ainda estão no disco). O diálogo completo continua com a lista inteira.
+
 ## [1.2.1] - 2026-11-05
 
 ### Alterado
