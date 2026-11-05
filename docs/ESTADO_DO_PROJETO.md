@@ -1,14 +1,14 @@
 # AntigravityGate: estado do projeto
 
-Atualizado em 2026-11-05. Versão **1.3.0** publicada (PR two2dope/agy-gate#9, Release `v1.3.0`, SHA-256 do `.exe` `AA0B6A987870BD1C46038ACEFEB4756EC6D0316A13BF603284011953CE98BA6A`). Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
+Atualizado em 2026-11-05. Versão **1.4.0** publicada (PR two2dope/agy-gate#10, Release `v1.4.0`, SHA-256 do `.exe` `33076C7C490E452D156BEF802E74E53BA49B075431AD754430C8787DD9F73CB7`). Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
 
 ## Snapshot
 
 | | |
 |---|---|
-| **Feito** | 1.0.2 a 1.2.2 e **1.3.0 publicadas** (05/11, sessão local). 1.3.0: lixeira com prazo (30 dias, ajustável), sugestões de limpeza confirmadas pelo usuário, lista de UUIDs para o agy e apagar só os dossiês do Gate; conferida pelo usuário no Windows ("lixeira ok, não exclui nada"). 1.2.2: dossiê com a resposta visível, modelo e artefatos da sessão (SHA-256 `09DB7261E904FA1746A6F873A3E664D606BA8FB607583523ACEF980A0A76D4AC`). 34 conjuntos de teste |
-| **Faltando** | **1.4.0 na branch `claude/agy-gate-handoff-analysis-702a8c`**, sem PR: diagnóstico (junções, origem CLI, manifestos) e C2. Escolha de 05/11: a verificação do banco do daemon ficou de fora (os sumários a mais são de sessões apagadas, que o próprio daemon descarta ao conciliar). Janela da lixeira com o último ajuste de layout (botões fixos, campo de dias no tema) só vista em captura, não no `.exe`. Parados enquanto o `agy` estiver fora de uso: retomada real com projeto, PowerShell piscando, editor vazio. Backups: não apagar |
-| **Próximo passo único** | Usuário confere a 1.4.0 no `.exe` (linha de diagnóstico na barra lateral e a janela) e decide o PR |
+| **Feito** | 1.0.2 a 1.3.0 e **1.4.0 publicadas** (05/11, sessão local). 1.4.0: diagnóstico do ecossistema só leitura (junções do remote control, sessões escondidas na barra do IDE, manifestos de projeto) e C2. 1.3.0: lixeira com prazo (SHA-256 `AA0B6A987870BD1C46038ACEFEB4756EC6D0316A13BF603284011953CE98BA6A`). Nos dados reais em 05/11: junções ok, 69 de 69 sessões com origem CLI, manifesto do SMT1_WATCHDOG com 18 repetidas e 1 ausente. 35 conjuntos de teste |
+| **Faltando** | **1.5.0 na branch `claude/agy-gate-handoff-analysis-702a8c`**, sem PR: R2 a R5, R8, R9, R11 a R15 da auditoria e o item 7 do backlog. Ficaram de fora (escolha de 05/11): R16 (só investigação), R17 (dividir o monólito), item 4 (conferência manual) e item 5 (depende do `agy`, fora de uso). Parados enquanto o `agy` estiver fora de uso: retomada real com projeto, PowerShell piscando, editor vazio. Backups: não apagar |
+| **Próximo passo único** | Usuário confere a 1.5.0 no `.exe` (notas, copiar título, busca, exportar sem máscara) e decide o PR |
 
 ## Pendências (backlog pós-1.0)
 
@@ -26,12 +26,12 @@ Em ordem de prioridade. Cada item vira uma 1.0.x com teste; nada entra sem decid
    - **Cabeçalho e busca redesenhados** (pedido do usuário em 30/10, depois do envio da 1.2: "muita informação visual de texto"): marca compacta (ícone e nome; a descrição foi para a dica), abas com sublinhado e selo de contagem, busca com a dica dentro do campo e botões só com ícone, fonte das sessões no topo da barra lateral (sem a barra, volta para a linha da busca). Sem mudar funções.
 2. **[Feito e publicado em 05/11] 1.3 — lixeira com prazo** (pedido do usuário em 27/10; entra depois da 1.1). Sessão arquivada há N dias (padrão 30, ajustável) vai para a lixeira: o Gate a esconde da lista, apaga os próprios dossiês dela (pasta `handoffs`) e lista os IDs para o usuário apagar pela exclusão oficial do `agy` (`/resume`, tecla F4, desde a 1.1.13), que também limpa subagentes, worktrees e anotações (changelog 1.1.24, 1.1.26, 1.2.2, 1.4.8). **O Gate não apaga nada nos bancos do Antigravity:** o motor guarda índice, subagentes e worktrees fora do `.db`, e já recriou como arquivo vazio conversa apagada por fora (corrigido na 1.2.2). Data do arquivamento: `session_state.updated_at`, já gravada. Exportações salvas pelo usuário ficam. Absorve o antigo item "limpeza de dossiês antigos".
    - **Candidatas automáticas (da análise de 05/11):** o plano de higiene de 29/10 achou 24 descartáveis em 65 sessões: 5 de teste, 4 triviais e 15 retomadas com até 6 passos, quase todas do formato do Auto-Run. A lixeira sugere essas sem esperar o prazo: poucos passos, título "Retomada…"/"Test…", primeira fala com o prompt do Auto-Run (`AGY_PROMPT_MARK`). Reforço da decisão de não apagar: com o servidor aberto, apagar arquivo põe o ID em `s.deletedIDs` e trava a sessão até reiniciar.
-2b. **[Feito na branch em 05/11] 1.4 — Doctor passivo** (só leitura; fecha a escolha A×B de `docs/HANDOFF_ECOSYSTEM_EVOLUTION.md` pela opção A). Inclui o C2 do item 0. Verificar: junções `antigravity-cli\conversations` e `brain` → `antigravity\` (sem elas o celular abre vazio: `dropped 64`); sessões com `source = CLI (17)` nos sumários (o `--hub` regrava a cada reload e o IDE as esconde; patch de dados não dura, 3 tentativas em 29/10); manifestos `config/projects/*.json` divergentes do SQLite (duplicatas e ausentes); `app_data_dir` de cada banco.
+2b. **[Feito e publicado em 05/11] 1.4 — Doctor passivo** (só leitura; fecha a escolha A×B de `docs/HANDOFF_ECOSYSTEM_EVOLUTION.md` pela opção A). Inclui o C2 do item 0. Verificar: junções `antigravity-cli\conversations` e `brain` → `antigravity\` (sem elas o celular abre vazio: `dropped 64`); sessões com `source = CLI (17)` nos sumários (o `--hub` regrava a cada reload e o IDE as esconde; patch de dados não dura, 3 tentativas em 29/10); manifestos `config/projects/*.json` divergentes do SQLite (duplicatas e ausentes); `app_data_dir` de cada banco.
 3. Validar no uso real o fluxo completo (curadoria → dossiê → Auto-Run). Retomada real de sessão sem projeto feita em 27/10; falta uma de sessão com projeto (`--project`).
 4. Não verificado no Windows: escala 125% a 150%, glifos Segoe MDL2 em todos os botões, significado dos status 6 e 7 das ferramentas.
 5. Lista de modelos do Auto-Run pelo `agy models` (hoje: lista embutida + a que o `agy` devolve no erro).
 6. **[Feito na 1.2.2]** Campo "Modelo(s)" vazio: o nome mudou para `gen_metadata` `f3.f28`.
-7. Datas `0001-01-01 00:00:00` em sessões sem horário: mostrar "-".
+7. **[Feito na 1.5.0]** Datas `0001-01-01 00:00:00` em sessões sem horário: mostrar "-".
 
 Saiu do backlog em 27/10: divisor de altura entre a tabela e os detalhes (a faixa de alerta da 1.0.2 entrou no lugar dele).
 

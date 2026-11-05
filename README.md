@@ -2,9 +2,9 @@
 
 Aplicativo de janela (Windows) para **gerir o contexto e curar as conversas do Antigravity**: lista as sessões, mostra o tamanho do contexto de cada uma, avisa quando está grande demais, deixa aprovar ou arquivar, e gera um **dossiê de retomada** para continuar o trabalho numa sessão nova sem perder o fio.
 
-O app só **lê** os bancos do Antigravity. O que ele grava (estado, log, exportações) fica em `%LOCALAPPDATA%\AntigravityGate\`.
+O app só **lê** os bancos do Antigravity: nunca altera nem apaga sessões. O **Auto-Run** pede ao `agy` para criar sessões **novas** a partir dos dossiês; as originais ficam como estão. O que o app grava (estado, notas, log, exportações e dossiês) fica em `%LOCALAPPDATA%\AntigravityGate\`. Exportações e dossiês saem com os segredos conhecidos mascarados.
 
-Versão atual: **1.2.1**. Veja o [CHANGELOG](CHANGELOG.md).
+Versão atual: **1.5.0**. Veja o [CHANGELOG](CHANGELOG.md).
 
 ## Como usar (sem instalar nada)
 

@@ -78,8 +78,13 @@ assert "AssertionError: esperado 2, veio 3" in full and "Message from Parent Age
 assert "Passo de tipo 17 não interpretado" in full
 assert "Gemini 3.8 Flash (High)" in full and "112000 tokens" in full and "| Passos | 13 |" in full
 assert "````" in full, "texto com ``` dentro precisa de cerca maior"
-assert KEY in full and "hunter2abc" in full, "diálogo completo é fiel: sem mascarar (avisa no cabeçalho)"
-assert "pode conter chaves, senhas" in full
+assert KEY not in full and "hunter2abc" not in full and "[REDACTED]" in full, "diálogo completo sai mascarado por padrão (1.5.0, R4)"
+assert "foram mascarados como [REDACTED]" in full
+out_raw = os.path.join(root, "full_raw.md"); G.export_session('full', db, meta, out_raw, mask=False)
+raw = open(out_raw, encoding="utf-8").read()
+assert KEY in raw and "hunter2abc" in raw and "Exportado SEM máscara" in raw, "sem máscara só quando pedido"
+assert G.redact("chave AQ." + "Ab3_-" * 8 + " fim") == "chave [REDACTED] fim", "R3: chave AQ.…"
+assert G.redact("AQ.curta") == "AQ.curta"
 assert prog == [] or prog[-1][1] == 13
 # horário local no formato esperado
 from datetime import datetime

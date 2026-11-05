@@ -70,6 +70,15 @@ info = []
 for n in ("showinfo", "showwarning", "showerror"): setattr(messagebox, n, lambda *a, _n=n, **k: info.append((_n, a)))
 messagebox.askyesno = lambda *a, **k: True
 G.setup_logging()
+
+def search(a, q=None):
+    """Busca (a parte no conteúdo roda em thread desde a 1.5.0): espera terminar."""
+    if q is not None: a.search_var.set(q)
+    a.run_search()
+    end = time.time() + 10
+    while a.searching and time.time() < end: a.update(); time.sleep(0.01)
+    a.update()
+
 def wait(a):
     end = time.time() + 20
     while (a.loading or a.exporting or a.autorunning) and time.time() < end: a.update(); time.sleep(0.01)
@@ -117,7 +126,7 @@ app.tree.selection_set(iid(3)); app.start_autorun(); wait(app)
 assert last()[0] == "ok" and "Auto-Run concluído" in last()[1] and "simulação" in last()[1], last()
 
 # estado vazio: busca sem resultado, com ação; fonte vazia; carregando
-app.search_var.set("zzzz-nao-existe"); app.run_search(); app.update()
+search(app, "zzzz-nao-existe"); app.update()
 assert app.empty.winfo_manager() == "place" and app.empty_title.cget("text") == "Nenhuma sessão encontrada" and "zzzz-nao-existe" in app.empty_sub.cget("text")
 assert app.btn["empty_action"].text == "Limpar busca" and app.btn["empty_action"].winfo_manager() == "pack"
 app.btn["empty_action"].invoke(); app.update()
