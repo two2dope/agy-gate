@@ -4,7 +4,7 @@ Aplicativo de janela (Windows) para **gerir o contexto e curar as conversas do A
 
 O app só **lê** os bancos do Antigravity: nunca altera nem apaga sessões. O **Auto-Run** pede ao `agy` para criar sessões **novas** a partir dos dossiês; as originais ficam como estão. O que o app grava (estado, notas, log, exportações e dossiês) fica em `%LOCALAPPDATA%\AntigravityGate\`. Exportações e dossiês saem com os segredos conhecidos mascarados.
 
-Versão atual: **1.5.0**. Veja o [CHANGELOG](CHANGELOG.md).
+Versão atual: **1.5.1**. Veja o [CHANGELOG](CHANGELOG.md).
 
 ## Como usar (sem instalar nada)
 

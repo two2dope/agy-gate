@@ -26,7 +26,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from tkinter import font as tkfont
 
-__version__ = "1.5.0"  # ver CHANGELOG.md
+__version__ = "1.5.1"  # ver CHANGELOG.md
 __build__ = "código-fonte"  # o CI troca pelo commit e pela data da montagem do .exe
 APP_AUTHOR = "Thominha"
 APP_EMAIL = "twoo2dope@gmail.com"
@@ -2227,6 +2227,15 @@ def style_titlebar(win, t):
         res["texto"] = put(36, colorref(t['header_fg']))  # DWMWA_TEXT_COLOR
         res["borda"] = put(34, colorref(t['border']))  # DWMWA_BORDER_COLOR
         user32.SetWindowPos(hwnd, None, 0, 0, 0, 0, 0x37)  # sem mover/redimensionar/ativar; só repinta a moldura
+        # O Windows 10 só repinta a barra no próximo WM_NCACTIVATE: sem isto, trocar de tema deixa a barra no visual antigo
+        # (ou sem os botões) até a janela perder e ganhar o foco. Reenvia o estado atual de ativação e repinta a moldura.
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        user32.RedrawWindow.argtypes = [wintypes.HWND, ctypes.c_void_p, ctypes.c_void_p, wintypes.UINT]
+        active = user32.GetForegroundWindow() == hwnd
+        user32.SendMessageW(hwnd, 0x0086, int(not active), 0)  # WM_NCACTIVATE
+        user32.SendMessageW(hwnd, 0x0086, int(active), 0)
+        user32.RedrawWindow(hwnd, None, None, 0x0001 | 0x0100 | 0x0400)  # RDW_INVALIDATE | RDW_UPDATENOW | RDW_FRAME
         return res
     except Exception as e:
         log.warning("Não foi possível pintar a barra de título: %s", e)
@@ -3301,7 +3310,10 @@ class NoteDialog(tk.Toplevel):
         self.transient(app)
         self.configure(bg=t['panel'], padx=app.px(14), pady=app.px(12))
         tk.Label(self, text=ellipsize(title, 70), font=app.f_bold, bg=t['panel'], fg=t['fg'], anchor="w").pack(fill=tk.X)
-        tk.Label(self, text="Fica só no AntigravityGate e entra no dossiê de retomada (com a máscara de segredos). Deixe vazio para apagar.",
+        tk.Label(self, text="Escreva o que você quer lembrar quando voltar a esta sessão: o que decidiu, onde parou, o que falta. "
+                            "Exemplo: “parei no M2; falta testar no Windows; não mexer no banco do SMT1”.\n"
+                            "A nota aparece como “✎ nota” na lista e entra no dossiê de retomada, para o agente ler na próxima sessão. "
+                            "Fica só no AntigravityGate, com a máscara de segredos. Deixe vazio e salve para apagar. Ctrl+Enter salva.",
                  font=app.f_small, bg=t['panel'], fg=t['muted'], anchor="w", justify=tk.LEFT, wraplength=app.px(520)).pack(fill=tk.X, pady=(2, 8))
         row = tk.Frame(self, bg=t['panel'])
         row.pack(side=tk.BOTTOM, fill=tk.X, pady=(app.px(10), 0))
