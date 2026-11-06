@@ -1,14 +1,14 @@
 # AntigravityGate: estado do projeto
 
-Atualizado em 2026-11-05. Versão **1.5.0** publicada (PR two2dope/agy-gate#11, Release `v1.5.0`, SHA-256 do `.exe` `610A9B2314654901E6238F0900506DCA056D4DCA0E563ED2669FC266EFB04BEC`). Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
+Atualizado em 2026-11-05. Versão **1.5.1** publicada (PR two2dope/agy-gate#12, Release `v1.5.1`, SHA-256 do `.exe` `C4BF97B3455AD4FAFA6A014879DDE685299292E2FAD5CA05525902EEF197A582`). Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
 
 ## Snapshot
 
 | | |
 |---|---|
-| **Feito** | 1.0.2 a 1.4.0 e **1.5.0 publicadas** (05/11, sessão local). 1.5.0: acabamento da auditoria (R2 a R5, R8, R9, R11 a R15) e datas sem horário: diálogo mascarado por padrão, busca no conteúdo em segundo plano, cancelar encerra a árvore do `agy`, notas por sessão no dossiê, copiar título, `--help`. 1.4.0: diagnóstico e C2 (SHA-256 `33076C7C490E452D156BEF802E74E53BA49B075431AD754430C8787DD9F73CB7`). 35 conjuntos de teste |
-| **Faltando** | Conferir a 1.5.0 no `.exe` (notas, copiar título, busca, exportar sem máscara). Encerramento da árvore do `agy` só testado com processo sintético. Fora por escolha: R16, R17, itens 4 e 5. Parados enquanto o `agy` estiver fora de uso: retomada real com projeto, PowerShell piscando, editor vazio. Backups: não apagar |
-| **Próximo passo único** | Usuário confere a 1.5.0. Backlog do Gate zerado fora dos itens adiados: a próxima frente vem do uso ou da estratégia de produto ("isso entra no lugar de quê?") |
+| **Feito** | 1.0.2 a 1.5.0 e **1.5.1 publicadas** (05/11, sessão local). 1.5.1: barra de título repinta ao trocar de tema no Windows 10; janela da nota explica o uso. 1.5.0 (SHA-256 `610A9B2314654901E6238F0900506DCA056D4DCA0E563ED2669FC266EFB04BEC`): 1.5.0: acabamento da auditoria (R2 a R5, R8, R9, R11 a R15) e datas sem horário: diálogo mascarado por padrão, busca no conteúdo em segundo plano, cancelar encerra a árvore do `agy`, notas por sessão no dossiê, copiar título, `--help`. 1.4.0: diagnóstico e C2 (SHA-256 `33076C7C490E452D156BEF802E74E53BA49B075431AD754430C8787DD9F73CB7`). 35 conjuntos de teste |
+| **Faltando** | Conferir a 1.5.1 no `.exe` (barra ao trocar de tema; notas, copiar título, busca, exportar sem máscara). Encerramento da árvore do `agy` só testado com processo sintético. Fora por escolha: R16, R17, itens 4 e 5. Parados enquanto o `agy` estiver fora de uso: retomada real com projeto, PowerShell piscando, editor vazio. Backups: não apagar |
+| **Próximo passo único** | Usuário confere a 1.5.1. Backlog do Gate zerado fora dos itens adiados: a próxima frente vem do uso ou da estratégia de produto ("isso entra no lugar de quê?") |
 
 ## Pendências (backlog pós-1.0)
 
