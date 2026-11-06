@@ -2,7 +2,7 @@
 
 Formato: [Versionamento Semântico](https://semver.org/lang/pt-BR/). Enquanto a versão começar com 0, o app está em candidato a lançamento: funciona, mas faltam itens listados abaixo.
 
-## [Não publicado]
+## [1.5.1] - 2026-11-05
 
 ### Corrigido
 - **Barra de título ao trocar de tema (Windows 10):** a barra ficava no visual do tema anterior, às vezes sem os botões, até a janela perder e ganhar o foco. Agora ela é repintada na hora. No Windows 10 a barra só pode ser clara ou escura; a cor exata do tema é só no Windows 11.
