@@ -34,7 +34,11 @@ def DwmSetWindowAttribute(hwnd, attr, ptr, size):
     calls.append((hwnd, attr, ctypes.cast(ptr, ctypes.POINTER(ctypes.c_int)).contents.value, size)); return 0
 def GetParent(h): return 4242
 def SetWindowPos(*a): pos.append(a); return 1
-fake = types.SimpleNamespace(user32=types.SimpleNamespace(GetParent=GetParent, SetWindowPos=SetWindowPos), dwmapi=types.SimpleNamespace(DwmSetWindowAttribute=DwmSetWindowAttribute))
+msgs, redraws = [], []
+def SendMessageW(h, m, w, l): msgs.append((h, m, w)); return 0
+def RedrawWindow(h, r, g, f): redraws.append((h, f)); return 1
+fake = types.SimpleNamespace(user32=types.SimpleNamespace(GetParent=GetParent, SetWindowPos=SetWindowPos, GetForegroundWindow=lambda: 4242,
+                                                          SendMessageW=SendMessageW, RedrawWindow=RedrawWindow), dwmapi=types.SimpleNamespace(DwmSetWindowAttribute=DwmSetWindowAttribute))
 real_name, real_windll = G.os.name, getattr(ctypes, "windll", None)
 G.os.name = "nt"; ctypes.windll = fake
 try:
@@ -44,6 +48,8 @@ try:
     assert by[20] == 1 and by[35] == 0x11 << 16 | 0x13 << 8 | 0x0d and by[36] == 0x4a | 0xde << 8 | 0x80 << 16, by   # header_bg #0d1311, header_fg #4ade80
     assert by[34] == 0x2a | 0x45 << 8 | 0x36 << 16 and all(h == 4242 and s == 4 for (h, _a, _v, s) in calls)   # border #2a4536
     assert pos and pos[0][-1] == 0x37
+    # Windows 10: reenvia a ativação (janela em foco termina ativa) e repinta a moldura
+    assert msgs == [(4242, 0x86, 0), (4242, 0x86, 1)] and redraws == [(4242, 0x0501)], (msgs, redraws)
     calls.clear(); G.style_titlebar(app, dict(G.THEMES["claro"])); assert {a: v for (_h, a, v, _s) in calls}[20] == 0
     # Windows sem suporte (HRESULT de erro): cai para o atributo antigo e não levanta
     calls.clear(); fake.dwmapi.DwmSetWindowAttribute = lambda *a: -2147024809
