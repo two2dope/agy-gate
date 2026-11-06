@@ -4137,6 +4137,10 @@ class AntigravityGateApp(tk.Tk):
         self.source_idx = 0
         self.create_widgets()
         self.apply_theme()
+        if os.name == "nt":
+            # Antes de a janela aparecer, a moldura do Windows ainda não existe e a pintura da barra não pega:
+            # a barra abria clara em qualquer tema. Pinta de novo quando ela aparece pela primeira vez.
+            self._tb_bind = self.bind("<Map>", self._titlebar_on_map, add="+")
         self.bind("<Configure>", self.on_resize)
         self.bind("<Configure>", self.schedule_save_window, add="+")
         self.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -4715,6 +4719,13 @@ class AntigravityGateApp(tk.Tk):
         if self._win_job:
             self.after_cancel(self._win_job)
         self._win_job = self.after(700, self.save_window)
+
+    def _titlebar_on_map(self, e):
+        # Sem unbind: em várias versões do tkinter ele apaga também o <Map> da maximização. Basta a marca.
+        if e.widget is not self or not getattr(self, "_tb_bind", None):
+            return
+        self._tb_bind = None
+        self.after(30, lambda: style_titlebar(self, self.t))
 
     def _zoom_on_map(self, e):
         if e.widget is not self or not getattr(self, "_zoom_bind", None):

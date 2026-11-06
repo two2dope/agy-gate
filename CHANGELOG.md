@@ -2,6 +2,11 @@
 
 Formato: [Versionamento Semântico](https://semver.org/lang/pt-BR/). Enquanto a versão começar com 0, o app está em candidato a lançamento: funciona, mas faltam itens listados abaixo.
 
+## [Não publicado]
+
+### Corrigido
+- **Barra de título na primeira abertura:** abria clara em qualquer tema, porque a moldura do Windows ainda não existia quando o app a pintava. Agora ela é pintada de novo quando a janela aparece.
+
 ## [1.5.1] - 2026-11-05
 
 ### Corrigido
