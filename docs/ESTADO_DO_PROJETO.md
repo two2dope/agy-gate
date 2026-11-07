@@ -1,14 +1,14 @@
 # AntigravityGate: estado do projeto
 
-Atualizado em 2026-11-05. Versão **1.5.1** publicada (PR two2dope/agy-gate#12, Release `v1.5.1`, SHA-256 do `.exe` `C4BF97B3455AD4FAFA6A014879DDE685299292E2FAD5CA05525902EEF197A582`). Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
+Atualizado em 2026-11-07. Versão **1.5.2** na `main` (a tag e a Release `v1.5.2` ainda não foram criadas: só com pedido explícito); a última publicada é a **1.5.1** (PR two2dope/agy-gate#12, Release `v1.5.1`, SHA-256 do `.exe` `C4BF97B3455AD4FAFA6A014879DDE685299292E2FAD5CA05525902EEF197A582`). Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
 
 ## Snapshot
 
 | | |
 |---|---|
-| **Feito** | 1.0.2 a 1.5.0 e **1.5.1 publicadas** (05/11, sessão local). 1.5.1: barra de título repinta ao trocar de tema no Windows 10; janela da nota explica o uso. 1.5.0 (SHA-256 `610A9B2314654901E6238F0900506DCA056D4DCA0E563ED2669FC266EFB04BEC`): 1.5.0: acabamento da auditoria (R2 a R5, R8, R9, R11 a R15) e datas sem horário: diálogo mascarado por padrão, busca no conteúdo em segundo plano, cancelar encerra a árvore do `agy`, notas por sessão no dossiê, copiar título, `--help`. 1.4.0: diagnóstico e C2 (SHA-256 `33076C7C490E452D156BEF802E74E53BA49B075431AD754430C8787DD9F73CB7`). 35 conjuntos de teste |
-| **Faltando** | Conferir a 1.5.1 no `.exe` (barra ao trocar de tema; notas, copiar título, busca, exportar sem máscara). Encerramento da árvore do `agy` só testado com processo sintético. Fora por escolha: R16, R17, itens 4 e 5. Parados enquanto o `agy` estiver fora de uso: retomada real com projeto, PowerShell piscando, editor vazio. Backups: não apagar |
-| **Próximo passo único** | Usuário confere a 1.5.1. Backlog do Gate zerado fora dos itens adiados: a próxima frente vem do uso ou da estratégia de produto ("isso entra no lugar de quê?") |
+| **Feito** | **1.5.2 (07/11, na `main`; sem tag ainda):** **fontes externas somente leitura**: abrir à mão uma pasta com sessões (cópia da instalação anterior, backup, outro PC) pelo seletor de fonte ou Ctrl+O; aceita a pasta com os `<uuid>.db` ou a que contém `conversations` (um nível, sem varredura recursiva); lista salva em `gate_state.db` (tabela `external_sources`); pasta indisponível fica na lista com aviso; remover só tira da lista; aprovar, arquivar, pendente, lixeira e Auto-Run ficam desligados nelas (o estado é por UUID e uma cópia repete os ids da ativa); para retomar a partir de um backup, exportar o dossiê e usar numa sessão nova do `agy`. Teste novo `tests/test_external_sources.py` (inclui a prova de que a pasta externa fica byte a byte igual). Também na 1.5.2: barra de título pintada na primeira abertura (`c83adb1`). Antes: 1.0.2 a 1.5.0 e **1.5.1 publicadas** (05/11, sessão local). 1.5.1: barra de título repinta ao trocar de tema no Windows 10; janela da nota explica o uso. 1.5.0 (SHA-256 `610A9B2314654901E6238F0900506DCA056D4DCA0E563ED2669FC266EFB04BEC`): 1.5.0: acabamento da auditoria (R2 a R5, R8, R9, R11 a R15) e datas sem horário: diálogo mascarado por padrão, busca no conteúdo em segundo plano, cancelar encerra a árvore do `agy`, notas por sessão no dossiê, copiar título, `--help`. 1.4.0: diagnóstico e C2 (SHA-256 `33076C7C490E452D156BEF802E74E53BA49B075431AD754430C8787DD9F73CB7`). 35 conjuntos de teste |
+| **Faltando** | Conferir a 1.5.2 no Windows com a pasta real do backup (abrir a cópia da instalação anterior, ver as sessões, exportar os dossiês). Decidir se as fontes automáticas "Backup/outros" também viram somente leitura (hoje só as externas são: ali ainda dá para aprovar e rodar o Auto-Run). **Suíte no Windows:** 15 conjuntos falham também sem a 1.5.2 (limitações do ambiente de teste: `time.tzset`, `|` em nome de arquivo, shebang do `agy` simulado, tempo e geometria); a referência é o CI no Ubuntu. Conferir a 1.5.1 no `.exe` (barra ao trocar de tema; notas, copiar título, busca, exportar sem máscara). Encerramento da árvore do `agy` só testado com processo sintético. Fora por escolha: R16, R17, itens 4 e 5. Parados enquanto o `agy` estiver fora de uso: retomada real com projeto, PowerShell piscando, editor vazio. Backups: não apagar |
+| **Próximo passo único** | Usuário abre a cópia da instalação anterior (Ctrl+O), exporta os dossiês dos projetos que quer retomar e confere a 1.5.2; depois decide a tag `v1.5.2`. Backlog do Gate zerado fora dos itens adiados: a próxima frente vem do uso ou da estratégia de produto ("isso entra no lugar de quê?") |
 
 ## Pendências (backlog pós-1.0)
 
@@ -87,6 +87,8 @@ O dossiê é extração local (sem modelo). Resumo feito pelo modelo fica como o
 - Passos de tipo desconhecido (17) aparecem como "não interpretado". Passos de tipo 90 são omitidos.
 
 ## Decisões tomadas
+
+- **Fontes externas (1.5.2, decidido em 07/11):** são somente leitura; arquivar, lixeira, aprovar, pendente e Auto-Run ficam bloqueados nelas. A escolha da pasta aceita a pasta com os `.db` ou a que contém `conversations`, só um nível. Retomar a partir de um backup = exportar o dossiê e usá-lo numa sessão nova do `agy`.
 
 - O app só lê os bancos do Antigravity (`mode=ro`). O estado fica em `%LOCALAPPDATA%\AntigravityGate\gate_state.db`.
 - Padrão de leitura: `antigravity\conversations`. Backups (`.bak`, `bkp`, `backup`, `corrupt_quarantine`) aparecem como fontes separadas no seletor.
