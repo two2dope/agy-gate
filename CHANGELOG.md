@@ -2,6 +2,18 @@
 
 Formato: [Versionamento Semântico](https://semver.org/lang/pt-BR/). Enquanto a versão começar com 0, o app está em candidato a lançamento: funciona, mas faltam itens listados abaixo.
 
+## [1.5.2] - 2026-11-07
+
+### Adicionado
+- **Abrir outras pastas com sessões** (entrada "＋ Abrir pasta de sessões…" no seletor de fonte, ou Ctrl+O): cópia da instalação anterior, backup, outro computador. Escolha a pasta com os `<uuid>.db` ou a pasta que a contém (por exemplo, a cópia inteira de `antigravity`); o app procura só nesses dois níveis, sem varredura recursiva. O `conversation_summaries.db` é achado ao lado da pasta de sessões ou dentro dela (sem ele, a fonte abre com menos metadados). As pastas ficam salvas entre as execuções; "－ Remover esta fonte da lista" só tira da lista e não apaga nada.
+- Pasta indisponível (disco desconectado, pasta movida) continua na lista, com um aviso claro, sem erro. A pasta ativa, um backup já achado automaticamente ou uma pasta já aberta não entram duas vezes.
+
+### Alterado
+- **As fontes externas são somente leitura.** Dá para ver, buscar, usar as notas e exportar o diálogo e o dossiê de retomada. Aprovar, arquivar, voltar para pendente, lixeira e Auto-Run ficam desligados, com o motivo na dica do botão: o estado é guardado por UUID e uma cópia tem os mesmos ids da pasta ativa, então marcar ali mexeria nas sessões de verdade. Os bancos continuam sendo abertos com `mode=ro`, e o teste confere que a pasta externa fica byte a byte igual.
+
+### Corrigido
+- **Barra de título na primeira abertura:** abria clara em qualquer tema, porque a moldura do Windows ainda não existia quando o app a pintava. Agora ela é pintada de novo quando a janela aparece.
+
 ## [1.5.1] - 2026-11-05
 
 ### Corrigido

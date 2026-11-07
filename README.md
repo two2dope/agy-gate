@@ -4,7 +4,7 @@ Aplicativo de janela (Windows) para **gerir o contexto e curar as conversas do A
 
 O app só **lê** os bancos do Antigravity: nunca altera nem apaga sessões. O **Auto-Run** pede ao `agy` para criar sessões **novas** a partir dos dossiês; as originais ficam como estão. O que o app grava (estado, notas, log, exportações e dossiês) fica em `%LOCALAPPDATA%\AntigravityGate\`. Exportações e dossiês saem com os segredos conhecidos mascarados.
 
-Versão atual: **1.5.1**. Veja o [CHANGELOG](CHANGELOG.md).
+Versão atual: **1.5.2**. Veja o [CHANGELOG](CHANGELOG.md).
 
 ## Como usar (sem instalar nada)
 
@@ -18,6 +18,7 @@ A conferência da integridade do download: a Release mostra o SHA-256 do `.exe`.
 ## Principais recursos
 
 - Tabela de sessões por projeto, com sub-agentes, contexto em tokens (medidor), passos e falhas de ferramenta.
+- **Abrir outras pastas com sessões** (seletor de fonte, "＋ Abrir pasta de sessões…", ou Ctrl+O): cópia da instalação anterior, backup, outro computador. Escolha a pasta com os `<uuid>.db` ou a pasta que a contém (a cópia de `antigravity`). A lista fica salva entre as execuções. Essas fontes são **somente leitura**: dá para ver, buscar, exportar o diálogo e o dossiê, mas não aprovar, arquivar, mandar para a lixeira nem rodar o Auto-Run (o estado é por UUID e uma cópia tem os mesmos ids da pasta ativa). Para retomar um projeto a partir de um backup: exporte o dossiê de retomada e use-o numa sessão nova do `agy`, na pasta do projeto. Remover uma fonte só tira da lista; nada é apagado.
 - **Limites de contexto** (botão Limites): três faixas prontas e uma personalizada. Alerta acima da tabela em dois níveis: crítico (vermelho, em destaque) e atenção (âmbar).
 - Barra lateral (categorias e projetos, Ctrl+B) e abas no cabeçalho (Todas, Aprovadas aguardando, Arquivadas, Lixeira) sobre um filtro só.
 - Lixeira com prazo: arquivadas há 30 dias (ajustável) e as sessões de teste ou sem trabalho que você confirmar saem da lista; o Gate lista os UUIDs para apagar pelo agy (`/resume`, F4) e apaga só os dossiês que ele mesmo gravou. Nada é apagado nos bancos do Antigravity.
@@ -45,7 +46,7 @@ tests/run_all.sh              # todos
 tests/run_all.sh test_theme   # um só
 ```
 
-São 31 conjuntos (leitura, exportação, Auto-Run com `agy` simulado, salvaguardas do Auto-Run e do fechamento, temas e contraste, janelas e interface). Usam bancos sintéticos; não tocam nos seus dados. Foram escritos e validados em Linux com Xvfb; não foram validados no Windows (o `agy` simulado usa a linha `#!` do arquivo).
+São 36 conjuntos (leitura, exportação, Auto-Run com `agy` simulado, salvaguardas do Auto-Run e do fechamento, temas e contraste, janelas e interface). Usam bancos sintéticos; não tocam nos seus dados. Foram escritos e validados em Linux com Xvfb; não foram validados no Windows (o `agy` simulado usa a linha `#!` do arquivo).
 
 ## Gerar o `.exe` e publicar uma versão
 

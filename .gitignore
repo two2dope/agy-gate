@@ -8,3 +8,7 @@ dist/
 .vscode/
 Thumbs.db
 *.exe
+
+*.zip
+handoffs/*
+!handoffs/handoff_*.md
