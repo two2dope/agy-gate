@@ -1,6 +1,6 @@
 # AntigravityGate: estado do projeto
 
-Atualizado em 2026-11-07. Versão **1.5.2** publicada (PR two2dope/agy-gate#13, Release `v1.5.2`, SHA-256 do `.exe` `9E4EFD491D05969D883F0027CEE81BB6ACE3AF6E01C45C82A3BE703C048DA7A5`). Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
+Atualizado em 2026-11-07. Versão **1.5.2** publicada (PR two2dope/agy-gate#13, Release `v1.5.2`, SHA-256 do `.exe` `B78A07CFAEAF4B075D709C5311487432EBDC4337DD43D822C5F80F298D70E113`). Repositório próprio: `two2dope/agy-gate` (privado), separado do `zuvuya`. Ao retomar, leia só a seção "Snapshot".
 
 ## Snapshot
 
