@@ -26,7 +26,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from tkinter import font as tkfont
 
-__version__ = "1.5.1"  # ver CHANGELOG.md
+__version__ = "1.5.2"  # ver CHANGELOG.md
 __build__ = "código-fonte"  # o CI troca pelo commit e pela data da montagem do .exe
 APP_AUTHOR = "Thominha"
 APP_EMAIL = "twoo2dope@gmail.com"
@@ -991,6 +991,7 @@ class StateStore:
             conn.execute("CREATE TABLE IF NOT EXISTS state_log(id INTEGER PRIMARY KEY AUTOINCREMENT, cid TEXT NOT NULL, status TEXT NOT NULL, at TEXT NOT NULL)")
             conn.execute("CREATE TABLE IF NOT EXISTS handoffs(id INTEGER PRIMARY KEY AUTOINCREMENT, src_cid TEXT NOT NULL, new_cid TEXT, "
                          "dossier_path TEXT, status TEXT NOT NULL, detail TEXT, at TEXT NOT NULL)")
+            conn.execute("CREATE TABLE IF NOT EXISTS external_sources(path TEXT PRIMARY KEY, added_at TEXT NOT NULL)")  # 1.5.2
             have = {r[1] for r in conn.execute("PRAGMA table_info(handoffs)")}
             for col, kind in HANDOFF_EXTRA:  # recibo de retomada (1.2): colunas novas em bancos antigos
                 if col not in have:
@@ -1012,6 +1013,22 @@ class StateStore:
     def load(self):
         with self._connect() as c:
             return dict(c.execute("SELECT cid, status FROM session_state").fetchall())
+
+    def external_sources(self):
+        """Caminhos das fontes externas que o usuário abriu à mão, na ordem em que foram adicionados."""
+        with self._connect() as c:
+            return [r[0] for r in c.execute("SELECT path FROM external_sources ORDER BY added_at, rowid")]
+
+    def add_external_source(self, path):
+        with self._connect() as c:
+            with c:
+                c.execute("INSERT OR IGNORE INTO external_sources(path, added_at) VALUES(?,?)", (path, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+
+    def remove_external_source(self, path):
+        """Tira o caminho da lista. Só o registro do app: nada é apagado em disco."""
+        with self._connect() as c:
+            with c:
+                c.execute("DELETE FROM external_sources WHERE path=?", (path,))
 
     def add_handoff(self, src_cid, new_cid, dossier_path, status, detail='', **extra):
         """Registra uma tentativa de retomada. `extra`: campos do recibo (HANDOFF_EXTRA); os None não são gravados."""
@@ -1587,6 +1604,17 @@ def scandir_safe(folder):
         return []
 
 
+def has_session_dbs(folder):
+    """A pasta tem ao menos um banco de sessão (arquivo com nome de UUID)?"""
+    return any(UUID_DB_RE.match(e.name) for e in scandir_safe(folder) if e.is_file())
+
+
+def find_summaries(conv_dir):
+    """conversation_summaries.db da pasta de sessões: ao lado dela (pasta pai) ou dentro dela. None se não houver."""
+    return next((p for p in (os.path.join(os.path.dirname(conv_dir), "conversation_summaries.db"),
+                             os.path.join(conv_dir, "conversation_summaries.db")) if os.path.isfile(p)), None)
+
+
 def discover_sources():
     """Fontes de sessões: (rótulo, pasta com os .db, conversation_summaries.db ou None).
     A primeira é sempre a pasta ativa. Cópias de backup e quarentena ficam em fontes separadas,
@@ -1597,15 +1625,65 @@ def discover_sources():
     for top in sorted((e for e in scandir_safe(BASE_DIR) if e.is_dir()), key=lambda e: e.name.lower()):
         for folder in [top] + sorted((e for e in scandir_safe(top.path) if e.is_dir()), key=lambda e: e.name.lower()):
             key = os.path.normcase(os.path.realpath(folder.path))
-            if key in seen or not any(UUID_DB_RE.match(e.name) for e in scandir_safe(folder.path) if e.is_file()):
+            if key in seen or not has_session_dbs(folder.path):
                 continue
             seen.add(key)
-            parent = os.path.dirname(folder.path)
-            summ = next((p for p in (os.path.join(parent, "conversation_summaries.db"),
-                                     os.path.join(folder.path, "conversation_summaries.db")) if os.path.isfile(p)), None)
             rel = os.path.relpath(folder.path, BASE_DIR).replace(os.sep, "/")
-            sources.append((f"Backup/outros: {rel}", folder.path, summ))
+            sources.append((f"Backup/outros: {rel}", folder.path, find_summaries(folder.path)))
     return sources
+
+
+# --- fontes externas (1.5.2): pastas com sessões salvas, abertas à mão (cópia da instalação, backup, outro PC) ---
+# Só leitura: os bancos são abertos com mode=ro e nenhuma ação que grave estado por sessão vale nelas.
+
+EXT_PREFIX = "Externa: "
+EXT_ADD_ENTRY = "＋ Abrir pasta de sessões…"
+EXT_REMOVE_ENTRY = "－ Remover esta fonte da lista"
+
+
+def resolve_session_folder(path):
+    """Pasta escolhida pelo usuário -> (pasta com os .db, conversation_summaries.db ou None, problema).
+    Aceita a própria pasta com os .db ou a pasta de uma instalação (com `conversations` dentro): só um nível,
+    sem varredura recursiva (rápido em disco grande ou de rede). `problema` é "" quando deu certo."""
+    path = os.path.abspath(path)
+    if not os.path.isdir(path):
+        return None, None, "A pasta não existe ou está indisponível (disco desconectado?)."
+    for cand in (path, os.path.join(path, "conversations")):
+        if os.path.isdir(cand) and has_session_dbs(cand):
+            return cand, find_summaries(cand), ""
+    return None, None, ("Nenhuma sessão encontrada nesta pasta. Procurei arquivos com nome de UUID (<uuid>.db) nela e na subpasta "
+                        "`conversations`. Escolha a pasta `conversations` ou a pasta que a contém (por exemplo, a cópia de `antigravity`).")
+
+
+def external_label(path, taken):
+    """Rótulo da fonte externa: as duas últimas partes do caminho escolhido (só `conversations` não diz nada).
+    Se já existir, usa o caminho inteiro."""
+    parts = [p for p in os.path.normpath(path).replace("\\", "/").split("/") if p and not p.endswith(":")]
+    label = EXT_PREFIX + "/".join(parts[-2:])
+    if label in taken:
+        label = EXT_PREFIX + os.path.normpath(path)
+    return label
+
+
+def external_sources(paths, sources):
+    """Fontes externas a juntar às de `sources`. Devolve (lista de (rótulo, pasta, summaries), {rótulo: {'path', 'problem'}}).
+    Pasta indisponível continua na lista (com o problema), para o usuário poder removê-la. Pasta que já é a ativa, um backup
+    automático ou outra externa não entra duas vezes (comparação por realpath, como a das junções)."""
+    real = lambda p: os.path.normcase(os.path.realpath(p))
+    taken_real = {real(s[1]) for s in sources}
+    taken_labels = {s[0] for s in sources}
+    out, info = [], {}
+    for path in paths:
+        conv, summ, problem = resolve_session_folder(path)
+        if conv is not None:
+            if real(conv) in taken_real:
+                continue
+            taken_real.add(real(conv))
+        label = external_label(path, taken_labels)
+        taken_labels.add(label)
+        out.append((label, conv or os.path.abspath(path), summ))
+        info[label] = {'path': path, 'problem': problem}
+    return out, info
 
 
 # --- diagnóstico do ecossistema (só leitura) ---------------------------------------------------
@@ -3241,7 +3319,7 @@ class TrashDialog(tk.Toplevel):
             save_settings(self.app.settings)
 
     def apply(self, cids, status, text):
-        if not cids:
+        if not cids or self.app.source_readonly():  # a janela pode ter ficado aberta enquanto o usuário trocou para uma fonte externa
             return
         try:
             self.app.state.set_many(cids, status)
@@ -4133,7 +4211,8 @@ class AntigravityGateApp(tk.Tk):
         self.update_icon_font()
         self.apply_theme()
 
-        self.sources = discover_sources()
+        self.ext_info = {}
+        self.sources = self.build_sources()
         self.source_idx = 0
         self.create_widgets()
         self.apply_theme()
@@ -4526,7 +4605,7 @@ class AntigravityGateApp(tk.Tk):
         self.side_sep.pack(side=tk.LEFT, fill=tk.Y)
         sec = lambda text: self.themed_widget(tk.Label(self.sidebar, text=text, font=self.f_small, anchor="w", padx=self.px(14)), bg="panel", fg="muted")
         sec("FONTE DE DADOS").pack(fill=tk.X, pady=(self.px(14), self.px(4)))
-        self.src_box = ttk.Combobox(self.sidebar, state="readonly", values=[x[0] for x in self.sources])
+        self.src_box = ttk.Combobox(self.sidebar, state="readonly", values=self.source_values())
         self.src_box.bind("<<ComboboxSelected>>", self.on_source_change)
         self.src_box.pack(fill=tk.X, padx=self.px(14))
         Tooltip(self.src_box, self, lambda: self.sources[self.source_idx][0])
@@ -4587,6 +4666,7 @@ class AntigravityGateApp(tk.Tk):
         self.bind("<Control-k>", lambda e: self.focus_search())
         self.search_entry.bind("<Control-k>", lambda e: self.focus_search())
         self.bind("<Control-b>", lambda e: self.toggle_sidebar())
+        self.bind("<Control-o>", self.open_external_folder)
         self.search_entry.bind("<Control-b>", lambda e: self.toggle_sidebar())
 
         # Ações sobre a seleção
@@ -4809,6 +4889,8 @@ class AntigravityGateApp(tk.Tk):
             b.set_compact(compact)
 
     def autorun_candidates(self):
+        if self.source_readonly():  # o estado por sessão vem da fonte ativa: uma cópia externa nunca vira candidata
+            return []
         return [r for grp in self.grouped.values() for r in grp if self.states.get(r['cid']) == "aprovada" and r['fpath']]
 
     def update_actions(self):
@@ -4818,8 +4900,11 @@ class AntigravityGateApp(tk.Tk):
         sel = self.tree.selection()
         first_session = bool(sel) and self.is_session(sel[0])
         fpath = self.db_files.get(self.cid_of(sel[0]), '') if first_session else ''
+        ro = self.source_readonly()
         for name in ("approve", "archive", "pending"):
-            self.btn[name].set_enabled(bool(sel) and not self.loading, "" if sel else "Selecione uma ou mais sessões (ou uma pasta de projeto).")
+            self.btn[name].set_enabled(bool(sel) and not self.loading and not ro,
+                                       self.READONLY_REASON if ro else ("" if sel else "Selecione uma ou mais sessões (ou uma pasta de projeto)."))
+        self.btn["trash"].set_enabled(not ro, self.READONLY_REASON if ro else "")
         if self.exporting:
             reason = "Exportação em andamento."
         elif not first_session:
@@ -4834,7 +4919,8 @@ class AntigravityGateApp(tk.Tk):
             self.btn[name].set_enabled(not reason, reason)
         cands = self.autorun_candidates()
         pend = [r for r in cands if r['cid'] not in self.handoffs]
-        ar_reason = "Auto-Run em andamento." if self.autorunning else ("" if cands else "Nenhuma sessão aprovada com arquivo nesta fonte. Aprove sessões primeiro.")
+        ar_reason = (self.READONLY_REASON if ro else "Auto-Run em andamento." if self.autorunning
+                     else "" if cands else "Nenhuma sessão aprovada com arquivo nesta fonte. Aprove sessões primeiro.")
         self.btn["autorun"].set_enabled(not ar_reason, ar_reason)
         self.btn["autorun"].set_badge(len(pend))
         if "d_export" in self.btn:
@@ -5139,6 +5225,9 @@ class AntigravityGateApp(tk.Tk):
         return list(dict.fromkeys(cids)), from_project
 
     def mark_selected(self, status):
+        if self.source_readonly():
+            messagebox.showinfo("Fonte externa", self.READONLY_REASON, parent=self)
+            return
         cids, from_project = self.selected_cids()
         if not cids:
             messagebox.showwarning("Aviso", "Selecione uma sessão ou uma pasta de projeto.")
@@ -5184,6 +5273,9 @@ class AntigravityGateApp(tk.Tk):
 
     def open_trash(self):
         """Janela da lixeira (só uma: abrir de novo traz a mesma para frente)."""
+        if self.source_readonly():
+            messagebox.showinfo("Fonte externa", self.READONLY_REASON, parent=self)
+            return None
         win = getattr(self, "trash_win", None)
         if win is not None and win.winfo_exists():
             win.reload()
@@ -5602,8 +5694,9 @@ class AntigravityGateApp(tk.Tk):
             if self.handoffs.get(self.cid_of(iid)):
                 m.add_command(label="Ver recibo da retomada", command=lambda: self.show_receipt(self.cid_of(iid)))
             m.add_separator()
+        ro = self.source_readonly()
         for status, text in (("aprovada", "✔ Aprovar"), ("arquivada", "▣ Arquivar"), ("pendente", "↩ Pendente"), ("lixeira", "✖ Mover para a lixeira")):
-            m.add_command(label=text, command=lambda st=status: self.mark_selected(st))
+            m.add_command(label=text, command=lambda st=status: self.mark_selected(st), state=tk.DISABLED if ro else tk.NORMAL)
         return m
 
     def show_receipt(self, cid=None):
@@ -5643,18 +5736,112 @@ class AntigravityGateApp(tk.Tk):
             return
         self.open_path(os.path.dirname(fpath))
 
+    def build_sources(self):
+        """Fontes automáticas (ativa e backups achados na pasta do Antigravity) mais as externas que o usuário abriu à mão."""
+        sources = discover_sources()
+        try:
+            paths = self.state.external_sources()
+        except sqlite3.Error as e:
+            log.warning("Falha ao ler as fontes externas: %s", e)
+            paths = []
+        extra, self.ext_info = external_sources(paths, sources)
+        return sources + extra
+
+    def source_readonly(self):
+        """A fonte selecionada é externa? Nela só se lê, busca e exporta: nenhuma ação grava estado por sessão (o estado é por
+        UUID e vale para todas as fontes: uma cópia tem os mesmos ids da pasta ativa)."""
+        return self.sources[self.source_idx][0] in self.ext_info
+
+    READONLY_REASON = "Fonte externa: somente leitura. Aqui só dá para ver, buscar e exportar (diálogo e dossiê)."
+
+    def source_values(self):
+        """Rótulos das fontes, mais as entradas de ação no fim do seletor (abrir pasta; remover, se a atual é externa)."""
+        values = [x[0] for x in self.sources] + [EXT_ADD_ENTRY]
+        if self.source_readonly():
+            values.append(EXT_REMOVE_ENTRY)
+        return values
+
     def on_source_change(self, event=None):
-        self.source_idx = (event.widget if event is not None else self.src_box).current()
+        box = event.widget if event is not None else self.src_box
+        idx = box.current()
+        if idx >= len(self.sources):  # entrada de ação: executa e deixa o seletor na fonte atual
+            action = box.get()
+            self.sync_source_boxes()
+            if action == EXT_REMOVE_ENTRY:
+                self.remove_external_source()
+            else:
+                self.open_external_folder()
+            return
+        self.source_idx = idx
         self.sync_source_boxes()
         self.load_data()
 
     def sync_source_boxes(self):
         """O seletor de fonte existe na barra lateral e (só sem a barra) na linha da busca: os dois mostram sempre o mesmo."""
-        values = [x[0] for x in self.sources]
+        values = self.source_values()
         for box in (getattr(self, "src_box", None), getattr(self, "src_box_top", None)):
             if box is not None:
                 box.configure(values=values)
                 box.current(self.source_idx)
+
+    def open_external_folder(self, _e=None):
+        """Escolher à mão uma pasta com sessões salvas (cópia da instalação, backup, outro PC) e abri-la como fonte externa."""
+        start = os.path.dirname(self.ext_info[self.sources[self.source_idx][0]]['path']) if self.source_readonly() else os.path.expanduser("~")
+        folder = filedialog.askdirectory(parent=self, title="Abrir pasta com sessões do Antigravity (somente leitura)",
+                                         initialdir=start if os.path.isdir(start) else None, mustexist=True)
+        if not folder:
+            return None
+        return self.add_external_source(folder)
+
+    def add_external_source(self, path):
+        """Valida a pasta, grava na lista (persiste entre execuções) e seleciona a fonte. Devolve o rótulo, ou None se não entrou."""
+        conv, _summ, problem = resolve_session_folder(path)
+        if conv is None:
+            messagebox.showwarning("Abrir pasta de sessões", problem, parent=self)
+            return None
+        real = lambda p: os.path.normcase(os.path.realpath(p))
+        existing = next((i for i, s in enumerate(self.sources) if real(s[1]) == real(conv)), None)
+        if existing is not None:
+            where = "é a fonte ativa do Antigravity" if existing == 0 else f"já está na lista como \"{self.sources[existing][0]}\""
+            messagebox.showinfo("Abrir pasta de sessões", f"Esta pasta {where}. Selecionei essa fonte.", parent=self)
+            self.select_source(existing)
+            return None if existing == 0 else self.sources[existing][0]
+        try:
+            self.state.add_external_source(os.path.abspath(path))
+        except sqlite3.Error as e:
+            log.exception("Falha ao gravar a fonte externa")
+            messagebox.showerror("Abrir pasta de sessões", f"Não foi possível guardar a pasta na lista:\n{e}", parent=self)
+            return None
+        if not self.state.persistent:
+            messagebox.showwarning("Aviso", "O estado não pôde ser salvo em disco: a pasta fica na lista só até fechar o app.", parent=self)
+        self.sources = self.build_sources()
+        label = next((lb for lb, inf in self.ext_info.items() if os.path.abspath(inf['path']) == os.path.abspath(path)), None)
+        self.select_source(next((i for i, s in enumerate(self.sources) if s[0] == label), 0))
+        return label
+
+    def select_source(self, idx):
+        self.source_idx = idx
+        self.sync_source_boxes()
+        self.load_data()
+
+    def remove_external_source(self):
+        """Tira a fonte externa selecionada da lista. Só o registro do app: nada é apagado em disco."""
+        if not self.source_readonly():
+            messagebox.showinfo("Remover fonte", "Só as fontes externas (abertas à mão) saem da lista. Esta é uma fonte do Antigravity.", parent=self)
+            return
+        label = self.sources[self.source_idx][0]
+        path = self.ext_info[label]['path']
+        if not messagebox.askyesno("Remover fonte", f"Tirar \"{label}\" da lista?\n\n{path}\n\nNenhum arquivo é apagado: a pasta continua onde está "
+                                   "e pode ser aberta de novo quando quiser.", parent=self):
+            return
+        try:
+            self.state.remove_external_source(path)
+        except sqlite3.Error as e:
+            log.exception("Falha ao remover a fonte externa")
+            messagebox.showerror("Remover fonte", f"Não foi possível remover da lista:\n{e}", parent=self)
+            return
+        self.sources = self.build_sources()
+        self.select_source(0)
 
     def update_search_hint(self):
         if self.search_var.get():
@@ -5666,7 +5853,7 @@ class AntigravityGateApp(tk.Tk):
         """Relê as fontes do disco (pode haver novas pastas) e recarrega a fonte selecionada."""
         self.update_env_status()
         label = self.sources[self.source_idx][0]
-        self.sources = discover_sources()
+        self.sources = self.build_sources()
         self.source_idx = next((i for i, s in enumerate(self.sources) if s[0] == label), 0)
         self.sync_source_boxes()
         self.load_data()
@@ -5685,6 +5872,13 @@ class AntigravityGateApp(tk.Tk):
         gen = self.gen
         label, conv_dir, sum_db = self.sources[self.source_idx]
         is_active = self.source_idx == 0
+        problem = self.ext_info.get(label, {}).get('problem')
+        if problem:  # fonte externa que sumiu (disco desconectado, pasta movida): lista vazia e aviso claro, sem varrer
+            self.render({'proj_map': {}, 'summaries': {}, 'db_files': {}, 'warnings': [], 'grouped': {}, 'total': 0})
+            gone = "pasta indisponível (disco desconectado ou pasta movida?). Reconecte e clique em Atualizar, ou remova da lista" \
+                if not os.path.isdir(conv_dir) else "nenhuma sessão nesta pasta (ela mudou?). Remova da lista ou abra a pasta certa"
+            self.set_status(f"{label}  |  somente leitura  |  ⚠ {gone}")
+            return
         self.loading = True
         self.btn["refresh"].set_busy(True)
         for item in self.tree.get_children():
@@ -5806,7 +6000,7 @@ class AntigravityGateApp(tk.Tk):
         if self.tree.get_children():
             self.tree.item(self.tree.get_children()[0], open=True)
 
-        text = f"{label}  |  " + (self.search_note if self.match is not None else f"{self.total} sessões")
+        text = f"{label}{'  |  somente leitura' if self.source_readonly() else ''}  |  " + (self.search_note if self.match is not None else f"{self.total} sessões")
         if self.warnings:
             text += f"  |  ⚠ {self.warnings} aviso(s) de leitura — ver {LOG_FILE}"
         self.set_status(text)
@@ -5926,6 +6120,10 @@ class AntigravityGateApp(tk.Tk):
         return list(dict.fromkeys([m for m in recent if m in known] + known + recent))
 
     def start_autorun(self):
+        if self.source_readonly():
+            messagebox.showinfo("Auto-Run", f"{self.READONLY_REASON}\n\nPara retomar o trabalho de uma sessão daqui, exporte o dossiê de retomada "
+                                            "e use-o numa sessão nova do agy, na pasta do projeto.", parent=self)
+            return
         if self.autorunning:
             messagebox.showinfo("Aviso", "O Auto-Run já está em andamento.")
             return
